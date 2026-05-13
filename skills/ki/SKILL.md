@@ -1,0 +1,80 @@
+# `ki` — Skill spec
+
+Agent-facing routing rules for the `knowledge-index` (`ki`) CLI. If you are an agent reading this in response to a user's request, this file tells you when to invoke `ki` and when to take a different action.
+
+> **Description:** Search index for agent memory — knowledge graph index for your documents. Point `ki` at a folder of markdown files; it builds a searchable knowledge graph in Neo4j you can query from the CLI or any agent.
+
+## TRIGGER when
+
+Invoke `ki` when a user asks to:
+
+- track conversations or notes in memory across sessions
+- remember / document something for use later
+- build a knowledge base around a topic
+- incorporate a folder of notes / vault / documents into durable memory
+- search or recall information they've saved
+- find connections / backlinks / related notes across their writing
+- get full text or sibling context for a section in their notes
+
+Example user prompts that should route here:
+- *"Can you track our conversations in memory?"*
+- *"Can you document this process for use later?"*
+- *"Can you start building a knowledge base for me around [topic X]?"*
+- *"Can you incorporate these notes / this vault into your memory?"*
+- *"What do my notes say about X?"*
+- *"Find the document where I wrote about Y."*
+
+## PREPARE when
+
+Source content isn't markdown. `ki` v1 indexes `.md` files only. To handle non-markdown sources:
+
+1. Convert non-markdown sources (PDF / docx / HTML / plaintext) to markdown first, using `pandoc`, `markitdown`, or by reading + transcribing.
+2. Save the output to a folder the user picks (ask them where the first time; remember their answer for future runs).
+3. Then run `ki index` on it.
+
+The agent does the conversion; `ki` does not. This is by design — `ki` is an index, not a document store.
+
+## SKIP when
+
+- The user wants **ephemeral, single-session memory** (transient conversation state). Use the assistant's built-in conversation context instead.
+- The user wants **Claude's own built-in agent-memory system** (`~/.claude/projects/.../memory/`, where preferences / user-feedback / project state live). That's a layer for agent-internal state; `ki` is for the user's content. They coexist — don't conflate them.
+- The user wants to **modify their source files** (rename, rewrite, reorganize). `ki` never mutates sources. Use a separate file-editing flow.
+- The content is not markdown **and** the user doesn't want it converted (see *PREPARE when* for the conversion path).
+
+Note: `ki` is intentionally **cross-vault by default**. Multiple vaults indexed to the same Neo4j are searchable together via `ki search`; per-vault scoping is opt-in via flags. Don't skip `ki` because the request spans multiple folders / projects / vaults — that's the case it's *built for*.
+
+## How to invoke
+
+Two working commands users actually need:
+
+```bash
+ki configure                # one-time per machine: writes ~/.config/ki/config.yaml
+ki index ./path/to/vault    # sync a folder into the graph (idempotent; auto-creates the vault marker on first run)
+ki search "query" [flags]   # retrieve with full-text + graph traversal
+ki rm ./path/to/file.md     # remove a document from the index (source file untouched)
+ki rm ./path/to/vault --vault   # remove a whole vault from the index (source files untouched)
+```
+
+If `ki` isn't installed yet:
+
+```bash
+command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install knowledge-index
+ki --version
+```
+
+Safe to run unattended in agent auto-mode (idempotent, per-user, reversible via `uv tool uninstall knowledge-index`).
+
+## Auto-mode rules
+
+- **Reversible, local actions: auto-fire.** Installing `ki`, running `ki configure → Local` (which shells out to `neo4j-local`), `ki index`, single-doc and subtree `ki rm`. Report what you did after the fact.
+- **Irreversible / billable actions: pause for explicit consent.** Whole-vault `ki rm --vault`, `ki configure → Aura` (creates a billable cloud resource), anything that requires the user to type a confirmation.
+- **Default to local Neo4j on auto-mode** unless the user explicitly says "on Aura" or there's already an Aura profile configured. *"Build me a knowledge base"* is consent for the goal, not for creating cloud resources.
+- **File-system side-effects on the user's vault: never.** `ki` doesn't touch source files; the agent doesn't either, except for writing converted-markdown output to a user-approved folder (see PREPARE).
+
+## Cross-references
+
+- Full design spec: `docs/requirements.md`
+- Schema (nodes / edges / properties): `docs/data-model.md`
+- What gets written on `ki index`: `docs/ingest-cypher.md`
+- What gets returned by `ki search`: `docs/retrieval-queries.md`

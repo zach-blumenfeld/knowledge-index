@@ -1,0 +1,50 @@
+# AGENTS.md
+
+Instructions for AI agents (Claude, Codex, Cursor, etc.) working **on** the `knowledge-index` codebase. If you are an agent being asked by a user to *use* `ki` (index their notes, search their knowledge base, etc.), read `skills/ki/SKILL.md` instead.
+
+## What this repo is
+
+`knowledge-index` (CLI: `ki`) is a personal knowledge index backed by Neo4j. It reads a local folder of markdown files and maintains a searchable knowledge graph over them. Two working commands: `ki index` (sync) and `ki search` (query). For the full design spec see `docs/requirements.md`.
+
+## Non-negotiable design principles
+
+These constrain every change you make. If a proposed feature violates one of these, reject the proposal rather than working around it.
+
+1. **`ki` is an index, not a document store.** Never mutate user-owned source files (`.md`). All `ki` output lives in `~/.config/ki/` (config), Neo4j (the index), or `.ki/vault-id` (one UUID file per vault). No `--purge` flag, no "auto-organize my notes," no rewriting frontmatter. See `docs/requirements.md` *Core design principle* for the long form.
+2. **The backend is opaque to the user.** From the user's and the agent-as-user's perspective, `ki` is a search tool. They don't need to know about Cypher, Neo4j, or graph traversal. Don't surface backend concepts (Cypher errors, node labels, etc.) in default output.
+3. **One source of truth per concern.** Config lives at `~/.config/ki/config.yaml`; vault identity lives in `.ki/vault-id`; graph data lives in Neo4j. Don't introduce parallel state.
+4. **Safe by default, dangerous by flag.** Destructive operations (whole-vault removal) require explicit flags AND typed confirmation. Cloud-resource creation (Aura) requires explicit consent even on agent auto-mode. See `docs/requirements.md` *Agent auto-mode behavior*.
+
+## Project map
+
+| Path                              | What's there                                                                                                                                |
+|-----------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| `docs/requirements.md`            | Full design spec. Read this before making non-trivial changes — name, CLI shape, configuration model, auto-mode rules, all live here.       |
+| `docs/data-model.md`              | Neo4j schema: `User`, `Vault`, `Document`, `Section` node properties; `USES_VAULT`, `LOADED`, `HAS_DOCUMENT`, `HAS_SECTION`, `NEXT_SECTION`, `LINKS_TO` edges. |
+| `docs/ingest-cypher.md`           | Batched `UNWIND` ingest queries (§4.3) and constraints / fulltext index (§4.4). Modify here when changing what `ki index` writes to Neo4j.   |
+| `docs/retrieval-queries.md`       | Retrieval queries `B.1`–`B.10` (fulltext search, neighbourhood, document text, windowing, backlinks, shortest path). Modify here when changing what `ki search` exposes. |
+| `skills/ki/SKILL.md`              | Agent-as-user routing rules (TRIGGER / PREPARE / SKIP). Ships with the published tool.                                                       |
+| `CLAUDE.md`                       | Claude-Code-specific notes; defers to this file.                                                                                            |
+
+## Conventions
+
+- **Python, built with `uv` and `hatchling`.** `uv venv && uv sync` to set up; `uv run pytest tests/` for tests; `uv run ruff check src/ tests/` for linting.
+- **No `pip install`, no `python -m venv`** — use `uv` exclusively to keep environments reproducible.
+- **Cypher lives in `.md` files under `docs/`, not in `.cypher` files or string literals.** When implementation lands, `src/ki/queries/` should parse Cypher *out of* `docs/*.md` so the docs are the source of truth — no drift between spec and code.
+- **One `uri` MERGE key per node label.** Composite keys (the old `{userId, vaultId, name}` pattern) are explicitly rejected. See `docs/data-model.md`.
+- **Batched ingest via `UNWIND $rows AS row`.** Single-row MERGE is ~10–100× slower against Neo4j; always batch.
+- **`LOADED` provenance props (`agentName`, `agentVersion`, `os`, `hostname`, ...) are lifted out of `UNWIND`** into a top-level `$loadProps` map. Don't duplicate them per row.
+
+## Don't
+
+- Don't add a `:Folder` node label. Hierarchy lives in `Document.uri` and prefix-matches handle subtree queries (`docs/data-model.md` *Path conventions*).
+- Don't add vector indexes in v1. Embeddings are deferred; fulltext is the retrieval substrate. The `genai` plugin in `neo4j-local` is loaded for the upgrade path but unused.
+- Don't bake conversion logic (PDF→markdown, docx→markdown) into `ki`. If the agent-as-user needs that, *the agent* does the conversion; `ki` only indexes whatever `.md` files exist. See `docs/requirements.md` *Prepare when* clause.
+- Don't write a `curl | sh` installer for v1. `uvx knowledge-index` is the install path. Standalone binaries are post-v1 if real demand appears.
+- Don't reach back into the parent project. This repo originated as a design-doc folder inside `create-context-graph/scratch/`. It is now independent. Don't import from or reference paths in the old location.
+
+## When you're unsure
+
+- Open `docs/requirements.md` and search for the keyword. The full design intent is captured there.
+- For schema / Cypher questions, `docs/data-model.md` is normative; `docs/ingest-cypher.md` and `docs/retrieval-queries.md` are the working queries that *match* the model.
+- For agent-as-user behavior (TRIGGER / PREPARE / SKIP, auto-mode rules), `skills/ki/SKILL.md` is the contract; don't change it without updating `docs/requirements.md` in the same PR.
