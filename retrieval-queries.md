@@ -1,0 +1,291 @@
+## Retrieval queries for the new data model
+
+Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
+`(User)–(Vault)–(Document)–(Section)` schema.
+
+### Mapping cheatsheet
+| Old (Wikipedia)                            | New (Graph Vault)                                                                  |
+|--------------------------------------------|------------------------------------------------------------------------------------|
+| `:Article (title, embedding)`              | `:Document (uri, displayName, content, frontmatter, aliases)`                      |
+| `:Section`                                 | `:Section (uri, displayName, headingLevel, content)`                               |
+| `:Paragraph (text)`                        | — folded into `Section.content`                                                    |
+| `:Chunk (text, embedding)`                 | — deferred (v1 has no embeddings)                                                  |
+| `:HAS_SECTION` / `:HAS_PARAGRAPH` (linear) | `:HAS_SECTION` (tree from `Document`\|`Section` → `Section`)                       |
+| `:NEXT_SECTION` / `:NEXT_PARAGRAPH`        | `:NEXT_SECTION` — threads ALL sections of a document in DFS reading order          |
+| `:MENTIONS` (article-to-article projected) | `:LINKS_TO` (`Document`\|`Section` → `Document`\|`Section`)                        |
+| `:REDIRECTS_TO`                            | `Document.aliases` (wikilinks resolved at ingest time)                             |
+| Vector indexes on title / chunk            | Fulltext index `doc_section_search` on `displayName` + `content` + `aliases`       |
+
+> **`NEXT_SECTION` semantics.** The new model threads every section of a
+> document into a single linear chain in DFS reading order — top to bottom as
+> a human would read the file. The chain crosses heading levels: the last
+> descendant of an `H1` points to the next `H1`, not to a sibling at the same
+> level. This makes "read the whole doc" and "give me ±N peers" cheap walks
+> rather than tree gymnastics. See `target-data-model-cypher.md` §4.3 step 4.
+
+### Parameters
+- `$uri` — the `Document.uri` (UUID-prefixed slugified path, see §4.3).
+- `$section_uri`, `$section_uris` — same convention for sections.
+- `$index_name` — `'doc_section_search'` (the fulltext index from §4.4).
+- `$query` — fulltext query string (Lucene syntax).
+- `$k`, `$n` — limit / window size.
+
+### Per-query design notes
+- **B.1 / B.2 (vector → fulltext)** — v1 has no vector index per §4.4, so both use `doc_section_search` (the unified `Document|Section` fulltext index, over `displayName` + `content` + `aliases`). Filter to `:Document` or `:Section` post-yield. Notes on swapping to vector when added.
+- **B.3 neighbourhood** — `:MENTIONS` → `:LINKS_TO`; alias-based redirect resolution happens at ingest, so no `REDIRECTS_TO*` canonicalisation needed. Traversal flows through `(doc)-[:HAS_SECTION*0..]->(elem)` to handle section-as-link-endpoint, then projects each hop back to its owning document.
+- **B.4 document text** — walks `NEXT_SECTION*0..` from the first section (the direct `HAS_SECTION` child with no incoming `NEXT_SECTION`), orders by path length, adds `reading_order` to the output. Defensive `(start)-[:HAS_SECTION*]->(section)` keeps the walk inside this document. Matches the shape of old A.4 closely.
+- **B.5 frontmatter** — `infobox` → `frontmatter` (the natural structured-metadata analog); same row shape (`kind`, `uri`, `text`). Sections returned in strict DFS reading order via the `NEXT_SECTION` walk.
+- **B.6 get sections** — straight URI lookup; sections own their content directly (no paragraph hop).
+- **B.7 windowing (full content)** — near-verbatim port of old A.7's paragraph windowing. Symmetric `back_path` / `fwd_path` collect-and-merge over `NEXT_SECTION` with `offset`, full content. Old A.7 + A.8 collapse here since the new model has no `Paragraph`.
+- **B.8 windowing (summary)** — same `±N` walk as B.7 over `NEXT_SECTION` but returns `heading`, `first_child_section_uri`, `child_count` instead of full content. The `first_child` lookup exploits the DFS property: a section's first child is the section it points to via `NEXT_SECTION` that is also a `HAS_SECTION` child of it. Mirrors A.8's summary semantics.
+- **B.9 / B.10** — straightforward `LINKS_TO` ports with endpoint-projection (any section endpoint → its owning `Document`) so the result shape stays at document granularity like the originals.
+
+
+B.1 Document title fulltext search
+```cypher
+// Vector replacement: `doc_section_search` indexes displayName + content +
+// aliases. To bias toward titles, boost in the Lucene query
+// (e.g. `displayName:"foo"^3 foo`) or post-filter by displayName.
+// When a vector index is added (deferred — see §4.4), swap to `db.index.vector.queryNodes`.
+CALL db.index.fulltext.queryNodes($index_name, $query)
+YIELD node, score
+WHERE node:Document
+RETURN node.uri AS document_uri,
+       node.displayName AS title,
+       score
+ORDER BY score DESC
+LIMIT toInteger($k)
+```
+
+B.2 Section content fulltext search
+```cypher
+// Section is the smallest content unit in the new model (no Paragraph / Chunk).
+// Roll each section hit up to its owning document so callers get both
+// granularities — the section for retrieval, the document for context.
+CALL db.index.fulltext.queryNodes($index_name, toInteger($k * 4))
+YIELD node AS section, score
+WHERE section:Section
+WITH section, score
+ORDER BY score DESC
+LIMIT toInteger($k)
+MATCH (doc:Document)-[:HAS_SECTION*]->(section)
+RETURN doc.uri AS document_uri,
+       doc.displayName AS document_title,
+       section.uri AS section_uri,
+       section.displayName AS heading,
+       section.headingLevel AS heading_level,
+       section.content AS content,
+       score
+```
+
+B.3 Document neighbourhood
+```cypher
+// Closest analog to A.3. `:LINKS_TO` replaces `:MENTIONS`; aliases replace
+// redirects (wikilink resolution already happens at ingest, so we don't
+// canonicalise here). Traversal goes through any element of the start doc
+// (the doc itself or any of its sections) via `:HAS_SECTION*0..`, then jumps
+// across documents via `:LINKS_TO`, and projects each endpoint back to its
+// owning Document.
+MATCH (start:Document {uri: $uri})
+MATCH (start)-[:HAS_SECTION*0..]->(startElem)
+MATCH linkPath = (startElem)-[:LINKS_TO*1..$n]->(endElem)
+WITH endElem, length(linkPath) AS distance
+OPTIONAL MATCH (endDoc:Document)-[:HAS_SECTION*]->(endElem)
+WHERE endElem:Section
+WITH coalesce(endDoc, endElem) AS neighbour, distance
+WHERE neighbour:Document AND neighbour.uri <> $uri
+WITH neighbour, min(distance) AS distance
+RETURN neighbour.uri AS document_uri,
+       neighbour.displayName AS title,
+       distance
+ORDER BY distance, document_uri
+```
+
+B.4 Document text
+```cypher
+// Walks the document's NEXT_SECTION chain from first section to last. The
+// first section is the direct child of the document with no incoming
+// NEXT_SECTION edge. The `(start)-[:HAS_SECTION*]->(section)` filter is
+// defensive — keeps the walk inside this document if the chain ever
+// accidentally crosses documents.
+MATCH (start:Document {uri: $uri})-[:HAS_SECTION]->(first:Section)
+WHERE NOT (:Section)-[:NEXT_SECTION]->(first)
+MATCH path = (first)-[:NEXT_SECTION*0..]->(section:Section)
+WHERE (start)-[:HAS_SECTION*]->(section)
+RETURN section.uri AS section_uri,
+       section.displayName AS heading,
+       section.headingLevel AS heading_level,
+       section.content AS content,
+       length(path) AS reading_order
+ORDER BY reading_order
+```
+
+B.5 Document frontmatter and section titles
+```cypher
+// `frontmatter` (structured YAML metadata) replaces `infobox`; section
+// displayNames replace section titles. Sections returned in strict DFS
+// reading order via NEXT_SECTION. Row shape matches A.5: one row per
+// "thing" (kind = 'frontmatter' | 'section title').
+MATCH (start:Document {uri: $uri})
+OPTIONAL MATCH (start)-[:HAS_SECTION]->(first:Section)
+WHERE NOT (:Section)-[:NEXT_SECTION]->(first)
+OPTIONAL MATCH path = (first)-[:NEXT_SECTION*0..]->(section:Section)
+WHERE (start)-[:HAS_SECTION*]->(section)
+WITH start, section, length(path) AS reading_order
+ORDER BY reading_order
+WITH start, collect({
+  uri: section.uri,
+  heading: section.displayName,
+  heading_level: section.headingLevel
+}) AS sections
+WITH start, sections,
+     CASE WHEN start.frontmatter IS NULL OR start.frontmatter = ''
+          THEN []
+          ELSE [{kind: 'frontmatter', uri: start.uri, text: start.frontmatter}]
+     END AS fm_rows,
+     [s IN sections WHERE s.uri IS NOT NULL
+      | {kind: 'section title', uri: s.uri, text: s.heading}] AS section_rows
+UNWIND (fm_rows + section_rows) AS row
+RETURN row.kind AS kind, row.uri AS uri, row.text AS text
+```
+
+B.6 Get sections
+```cypher
+// Same input contract as A.6 (`$section_ids` → `$section_uris`). Sections own
+// their content directly (no paragraph hop), so this is a flat lookup.
+WITH $section_uris AS uris
+UNWIND range(0, size(uris) - 1) AS i
+WITH i, uris[i] AS section_uri
+MATCH (section:Section {uri: section_uri})
+RETURN i AS idx,
+       section.uri AS section_uri,
+       section.displayName AS heading,
+       section.headingLevel AS heading_level,
+       section.content AS content
+ORDER BY i
+```
+
+B.7 Windowing sections (full content)
+```cypher
+// Direct port of A.7 (paragraph) and A.8 (section) windowing — collapsed
+// because the new model has no Paragraph. Walks ±N steps along
+// NEXT_SECTION around the hit. Crosses heading levels (DFS order), same
+// flat semantics A.7 had for paragraphs.
+MATCH (hit:Section {uri: $section_uri})
+OPTIONAL MATCH back_path = (hit)<-[:NEXT_SECTION*1..]-(prev:Section)
+WHERE length(back_path) <= $n
+WITH hit, collect({section: prev, offset: -length(back_path)}) AS backward
+OPTIONAL MATCH fwd_path = (hit)-[:NEXT_SECTION*1..]->(next:Section)
+WHERE length(fwd_path) <= $n
+WITH hit, backward, collect({section: next, offset: length(fwd_path)}) AS forward
+WITH [{section: hit, offset: 0}] + backward + forward AS all_entries
+UNWIND all_entries AS e
+WITH e.section AS section, e.offset AS offset
+WHERE section IS NOT NULL
+RETURN section.uri AS section_uri,
+       offset,
+       section.displayName AS heading,
+       section.headingLevel AS heading_level,
+       section.content AS content
+ORDER BY offset
+```
+
+B.8 Windowing sections (summary)
+```cypher
+// Analog of A.8's summary form: same ±N NEXT_SECTION walk as B.7, but
+// returns the *shape* of each section rather than its body — heading,
+// first child section, and child count. Useful for "what's around this
+// hit?" overviews without paying for the full content.
+//
+// `first_child` exploits the DFS property of NEXT_SECTION: a section's
+// first child is the section it points to via NEXT_SECTION *that is also*
+// a HAS_SECTION child of it.
+MATCH (hit:Section {uri: $section_uri})
+OPTIONAL MATCH back_path = (hit)<-[:NEXT_SECTION*1..]-(prev:Section)
+WHERE length(back_path) <= $n
+WITH hit, collect({section: prev, offset: -length(back_path)}) AS backward
+OPTIONAL MATCH fwd_path = (hit)-[:NEXT_SECTION*1..]->(next:Section)
+WHERE length(fwd_path) <= $n
+WITH hit, backward, collect({section: next, offset: length(fwd_path)}) AS forward
+WITH [{section: hit, offset: 0}] + backward + forward AS all_entries
+UNWIND all_entries AS e
+WITH e.section AS section, e.offset AS offset
+WHERE section IS NOT NULL
+OPTIONAL MATCH (section)-[:NEXT_SECTION]->(first_child:Section)
+WHERE (section)-[:HAS_SECTION]->(first_child)
+OPTIONAL MATCH (section)-[:HAS_SECTION]->(child:Section)
+WITH section, offset, first_child, count(child) AS child_count
+RETURN section.uri AS section_uri,
+       offset,
+       section.displayName AS heading,
+       section.headingLevel AS heading_level,
+       first_child.uri AS first_child_section_uri,
+       first_child.displayName AS first_child_heading,
+       child_count
+ORDER BY offset
+```
+
+B.9 Get backlinks
+```cypher
+// Sources pointing TO the target document or any of its sections via LINKS_TO.
+// Each source is projected back to its owning document so callers get
+// "which document mentions me, and in which section."
+MATCH (target:Document {uri: $uri})
+OPTIONAL MATCH (target)-[:HAS_SECTION*]->(targetSection:Section)
+WITH collect(DISTINCT target) + collect(DISTINCT targetSection) AS targets
+UNWIND targets AS tgt
+MATCH (src)-[link:LINKS_TO]->(tgt)
+WHERE src:Document OR src:Section
+OPTIONAL MATCH (srcDoc:Document)-[:HAS_SECTION*]->(src)
+WHERE src:Section
+WITH coalesce(srcDoc, src) AS source_document,
+     src AS source_element,
+     tgt,
+     link
+WHERE source_document:Document AND source_document.uri <> $uri
+RETURN source_document.uri AS source_document_uri,
+       source_document.displayName AS source_title,
+       source_element.uri AS source_element_uri,
+       source_element.content AS source_content,
+       tgt.uri AS target_uri,
+       link.wikilink AS is_wikilink,
+       link.embed AS is_embed
+ORDER BY source_document_uri, source_element_uri
+```
+
+B.10 Shortest path
+```cypher
+// Shortest LINKS_TO chain between two documents, with per-hop evidence
+// (the section snippet that contains the outbound link). Mirrors A.10:
+// `:MENTIONS` → `:LINKS_TO`, articles → documents. We allow the path to
+// start from either the document node or any of its sections, since
+// LINKS_TO sources are mixed.
+MATCH (a:Document {uri: $uri_a})
+MATCH (b:Document {uri: $uri_b})
+MATCH (a)-[:HAS_SECTION*0..]->(aElem)
+MATCH (b)-[:HAS_SECTION*0..]->(bElem)
+WITH a, b, aElem, bElem
+MATCH path = shortestPath((aElem)-[:LINKS_TO*..6]->(bElem))
+WITH path
+ORDER BY length(path)
+LIMIT 1
+WITH path, nodes(path) AS elems
+UNWIND range(0, size(elems) - 2) AS i
+WITH elems[i] AS fromElem, elems[i+1] AS toElem, i
+OPTIONAL MATCH (fromDoc:Document)-[:HAS_SECTION*]->(fromElem)
+WHERE fromElem:Section
+OPTIONAL MATCH (toDoc:Document)-[:HAS_SECTION*]->(toElem)
+WHERE toElem:Section
+WITH i,
+     coalesce(fromDoc, fromElem) AS from_document,
+     coalesce(toDoc, toElem) AS to_document,
+     fromElem
+RETURN i AS hop,
+       from_document.uri AS from_document_uri,
+       from_document.displayName AS from_title,
+       to_document.uri AS to_document_uri,
+       to_document.displayName AS to_title,
+       fromElem.uri AS evidence_element_uri,
+       fromElem.content AS evidence_content
+ORDER BY hop
+```
