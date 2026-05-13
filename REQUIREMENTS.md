@@ -2,11 +2,11 @@
 > Search index for agent memory — knowledge graph index for your documents
 
 ## Human Description
-Index local markdown files with a knowledge graph, then search/query from an agent or the CLI. 
+Index markdown files in a knowledge graph, then search from agent or CLI. 
 
-Scale across folders, vaults, and users. 
+Scale across multiple folders, vaults, and users.
 
-Wrapped in an easy to use cli for instant setup integration and one line `index` and `search` commands. 
+CLI for instant setup integration and one line `index` and `search` commands. 
 
 Backed by Neo4j for performance. 
 
@@ -27,7 +27,7 @@ Two working commands: `ki index` (sync a folder into the graph) and `ki search` 
 
 ## Core design principle: ki is an index, not a document store
 
-`ki` **never mutates source documents.** The user's markdown files are owned by the user (and by their editor, their git, their Dropbox sync, their Obsidian vault) — `ki` only reads them and maintains a *derived index* in Neo4j. Anything `ki` writes lives in `~/.config/ki/` (config) or in Neo4j (the index), or — in the single exception — in `.graph-vault/vault-id`, which is opaque metadata, not content.
+`ki` **never mutates source documents.** The user's markdown files are owned by the user (and by their editor, their git, their Dropbox sync, their Obsidian vault) — `ki` only reads them and maintains a *derived index* in Neo4j. Anything `ki` writes lives in `~/.config/ki/` (config) or in Neo4j (the index), or — in the single exception — in `.ki/vault-id`, which is opaque metadata, not content.
 
 Practical consequences:
 - No `ki rm --purge`, no `ki rewrite`, no "fix this frontmatter," no "auto-organize my notes." If a feature requires writing into a `.md` file, it's out of scope.
@@ -46,6 +46,37 @@ The four canonical prompts this is meant to catch:
 - "Can you incorporate these notes/vault/etc. into your memory/process?"
 
 Name alone isn't the load-bearing signal for tool selection — the skill description, `TRIGGER when:` / `SKIP when:` clauses, and example prompts do most of the work. Name primarily affects user-facing trust ("I'll use the knowledge-index" reads obviously) and cross-session recall.
+
+## Install
+
+```bash
+# Recommended — install ki globally so it's on PATH from anywhere
+uv tool install knowledge-index
+
+# Or run one-off without installing (uvx caches the package)
+uvx knowledge-index --help
+```
+
+If `uv` isn't installed yet:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Agent install (auto-mode)
+
+If a user asks an agent to install `ki`, the safe, reversible sequence is:
+
+```bash
+command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install knowledge-index
+ki --version
+```
+
+Three commands, idempotent, ~10 seconds end-to-end. Reversible via `uv tool uninstall knowledge-index`. Per-user (no `sudo`), no system-state mutation — safe for agent auto-mode without confirmation.
+
+### Packaging
+
+Primary: **PyPI** (Python, built with `hatchling`). The Node ecosystem gets an optional `npx @zach-blumenfeld/knowledge-index` wrapper that shells out to the Python CLI — same dual-publish pattern as `create-context-graph`. Standalone binaries / Homebrew / `curl | sh` installers are deferred to v2 if real demand appears; for a Python CLI, `uvx` is already the install script.
 
 ## CLI shape
 
@@ -72,13 +103,13 @@ KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents /
 
 `ki index` is intentionally do-the-right-thing on first run rather than gated behind a separate init step. Specifically:
 
-- **Missing `.graph-vault/vault-id`** → auto-create the marker (one UUID v4 written to one file; reversible with `rm -rf .graph-vault/`). Prints a one-line notice: *"Initialized vault at ./my-vault (id: 7f3c…)."*
+- **Missing `.ki/vault-id`** → auto-create the marker (one UUID v4 written to one file; reversible with `rm -rf .ki/`). Prints a one-line notice: *"Initialized vault at ./my-vault (id: 7f3c…)."*
 - **Missing `~/.config/ki/config.yaml`** → drop into the `ki configure` flow interactively. On agent auto-mode, default to local `neo4j-local` and tell the user (see *Agent auto-mode behavior* below).
 - **Re-index of unchanged files** → skip via `Document.fileHash` (SHA-256 stored per document; that's literally what `fileHash` is for in the schema). Only changed / new files hit Neo4j.
 
 ### `ki init` (optional, advanced)
 
-A thin alias that writes `.graph-vault/vault-id` *without* indexing. Useful only in narrow cases — e.g., pre-creating the marker so it's committed to git before any content exists. Not part of the quick-start; most users never run it.
+A thin alias that writes `.ki/vault-id` *without* indexing. Useful only in narrow cases — e.g., pre-creating the marker so it's committed to git before any content exists. Not part of the quick-start; most users never run it.
 
 ### Removal (`ki rm`)
 
@@ -93,7 +124,7 @@ ki rm 7f3c-vault-uuid --vault        # remove by Vault.uri when the path isn't h
 
 ki rm <path> --dry-run               # show what would be removed; touch nothing
 ki rm <path> --yes                   # skip prompts (scripts / agent auto-mode)
-ki rm <vault> --vault --keep-marker  # remove vault data but keep .graph-vault/vault-id;
+ki rm <vault> --vault --keep-marker  # remove vault data but keep .ki/vault-id;
                                      #   next `ki index` rebuilds onto the same Vault.uri
                                      #   (clean reset idiom)
 ```
@@ -102,7 +133,7 @@ ki rm <vault> --vault --keep-marker  # remove vault data but keep .graph-vault/v
 
 - **Source files are never touched.** `ki rm` removes nodes from Neo4j; that's all. If the user wants files gone, they use `rm`. (See *Core design principle*.)
 - **Blast radius scales confirmation.** Single doc = no prompt. Subtree = prompt with count. Whole vault = require `--vault` *and* typed confirmation.
-- **Marker stays unless told otherwise.** Removing a vault removes its `.graph-vault/vault-id` by default (full removal). `--keep-marker` preserves it so the next `ki index` rebuilds onto the same `Vault.uri` — the natural "reset this vault" idiom.
+- **Marker stays unless told otherwise.** Removing a vault removes its `.ki/vault-id` by default (full removal). `--keep-marker` preserves it so the next `ki index` rebuilds onto the same `Vault.uri` — the natural "reset this vault" idiom.
 - **`LOADED` provenance edges are deleted with their endpoints** via `DETACH DELETE`. Provenance is moot once the entity is gone; if anyone needs ingest history, it's reconstructable from logs.
 
 **Agent auto-mode handling:** single-doc and subtree `rm` are auto-fine (reversible by re-running `ki index`). Whole-vault `rm` requires explicit user consent every time, regardless of harness permission, because it destroys the graph for that vault. See *Agent auto-mode behavior* for the full partition.
@@ -124,8 +155,8 @@ ki rm <vault> --vault --keep-marker  # remove vault data but keep .graph-vault/v
 $ ki configure
 No Neo4j connection found. Set one up?
 
-  1) Local         → wraps `neo4j-local` (native install, no Docker; APOC + GDS + GenAI plugins by default)
-  2) Aura          → wraps `neo4j-cli aura create` (cloud — billable; creates a real instance)
+  1) Local         → wraps `neo4j-local` (native install, no Docker; APOC + GDS + GenAI plugins by default) see https://github.com/johnymontana/neo4j-local
+  2) Aura          → wraps `neo4j-cli aura create` (cloud — billable; creates a real instance) see https://github.com/neo4j-labs/neo4j-cli
   3) Existing      → prompts for URI + credentials
 
 Choice [1]:
@@ -140,7 +171,7 @@ Both option 1 and option 2 shell out to existing tools, parse the resulting cred
 **Auto without asking** (reversible, local, no cost):
 - Start `neo4j-local` (downloads Neo4j + JRE on first run; reversible via `neo4j-local stop && neo4j-local clear-cache`).
 - Write `~/.config/ki/config.yaml` with the resulting credentials.
-- Write `.graph-vault/vault-id` markers.
+- Write `.ki/vault-id` markers.
 - Index the vault.
 - Re-run idempotent operations.
 
@@ -163,7 +194,7 @@ Both option 1 and option 2 shell out to existing tools, parse the resulting cred
 ## Key design decisions
 
 ### Vault identity via marker file
-Vault `uri` is a UUID v4 written to `.graph-vault/vault-id` on first ingest (mirrors `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user and machine. This makes `USES_VAULT` load-bearing: multiple users can use the same vault.
+Vault `uri` is a UUID v4 written to `.ki/vault-id` on first ingest (mirrors `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user and machine. This makes `USES_VAULT` load-bearing: multiple users can use the same vault.
 
 ### Node schema: User / Vault / Document / Section
 All non-User nodes identified by `uri` (single-property MERGE key):
@@ -201,5 +232,5 @@ Documents, sections, and edges all use the standard `UNWIND` pattern — driver-
 - Re-ingest correctness: `NEXT_SECTION` clear-and-rebuild is correct but blunt; if section counts get large, switch to a diff-based update.
 - Confirm `neo4j-local` has a `--detach` mode (or wrap with a PID file) so `ki configure → Local` doesn't tie up a foreground process.
 - Credential storage upgrade path: plaintext-in-`~/.config/ki/config.yaml` for v1 → OS keyring (Python `keyring` lib, or 1Password CLI integration) for v2.
-- Ignore-patterns for `ki index`: hidden directories (`.git/`, `.obsidian/`, `.graph-vault/`, anything starting with `.`) excluded by default. Open question: introduce a `.kiignore` file, reuse `.gitignore` if present, or both? See `target-data-model.md` *Path conventions* for how nested directories are encoded.
+- Ignore-patterns for `ki index`: hidden directories (`.git/`, `.obsidian/`, `.ki/`, anything starting with `.`) excluded by default. Open question: introduce a `.kiignore` file, reuse `.gitignore` if present, or both? See `target-data-model.md` *Path conventions* for how nested directories are encoded.
 - `:Folder` nodes are intentionally absent in v1 — hierarchy lives in `Document.uri` and prefix-matches handle subtree queries. Revisit if a use case appears for folder-level metadata that isn't captured by a folder-note Document (Obsidian folder notes, Hugo `_index.md`).
