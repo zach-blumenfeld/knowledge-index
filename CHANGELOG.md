@@ -13,6 +13,57 @@ line, up to the next `## [` heading. Keep version sections under that
 exact pattern. Editorial prose is fine; just don't change the heading.
 -->
 
+## [0.2.0] — 2026-05-14
+
+### Added
+
+- **`ki skill` command group** for installing the bundled agent routing
+  rules (`skills/ki/SKILL.md`) into the right config path for each
+  supported AI agent — no more hand-copying or `curl`-ing the file.
+  - `ki skill list` — show the supported-agent catalog, which agents are
+    detected on the machine, and which already have the skill installed.
+  - `ki skill install [agent]` — install into one agent (case-insensitive
+    name lookup), or into every *detected* agent if no name is given.
+  - `ki skill install [agent] --path <FILE>` — escape hatch for agents
+    not in the catalog (or non-standard install locations).
+  - `ki skill remove [agent]` — idempotent removal; cleans up the per-tool
+    directory when empty.
+  - `ki skill print` — write the bundled SKILL.md to stdout.
+- Supported-agent catalog mirrors
+  [`neo4j-cli skill`](https://github.com/neo4j-labs/neo4j-cli) so users
+  have one mental model across both tools: `claude-code, cursor, windsurf,
+  copilot, gemini-cli, cline, codex, pi, opencode, junie`. `$XDG_CONFIG_HOME`
+  resolution supported (used by `opencode`).
+- README restructured into three audience-shaped Getting Started subsections
+  (coding agent / direct CLI / chat app) plus a named-deferrals Roadmap
+  section (local-Neo4j wrapper not ready, fulltext-only retrieval,
+  markdown-only ingest, no MCP server) and a Development section
+  (setup / tests / lint / fixtures / contributing / release flow).
+
+### Changed
+
+- `skills/ki/SKILL.md` synced with the actual v0.2 CLI:
+  - Replaced the stale "two working commands" line with the real
+    five-command surface (`configure / index / search / rm / init`) plus
+    a pointer to `ki skill`.
+  - New **Picking a search mode** subsection — table mapping user intent
+    to `--type {section|document|neighbors}` so agents pick the right
+    retrieval shape instead of always defaulting to section search.
+  - Auto-mode Neo4j-picking guidance updated — no more "default to Local"
+    (which depends on the unpublished `neo4j-local` binary). Ordered
+    fallback: reachable existing Neo4j → ask the user. Never pick Aura
+    silently.
+  - New **Capabilities not yet wired** section names B.4, B.7/B.8, B.9,
+    B.10, vector search, and chat-app integration so agents don't promise
+    features `ki` can't deliver in v1.
+
+### Packaging
+
+- Wheel now bundles `skills/ki/SKILL.md` at `ki/_resources/SKILL.md`
+  (hatchling `force-include`) so `ki skill install` works from a
+  `uv tool install knowledge-index` without any external download.
+  Dev/editable checkouts fall back to the canonical repo path.
+
 ## [0.1.0] — 2026-05-13
 
 Initial release.
