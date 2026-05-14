@@ -45,17 +45,31 @@ Note: `ki` is intentionally **cross-vault by default**. Multiple vaults indexed 
 
 ## How to invoke
 
-Two working commands users actually need:
+The commands you'll actually use:
 
 ```bash
-ki configure                # one-time per machine: writes ~/.config/ki/config.yaml
-ki index ./path/to/vault    # sync a folder into the graph (idempotent; auto-creates the vault marker on first run)
-ki search "query" [flags]   # retrieve with full-text + graph traversal
-ki rm ./path/to/file.md     # remove a document from the index (source file untouched)
-ki rm ./path/to/vault --vault   # remove a whole vault from the index (source files untouched)
+ki configure                     # one-time per machine: writes ~/.config/ki/config.yaml
+ki index ./path/to/vault         # sync a folder into the graph (idempotent; auto-creates the vault marker)
+ki search "query" [flags]        # retrieve via fulltext + graph traversal
+ki rm ./path/to/file.md          # remove a document from the index (source file untouched)
+ki rm ./path/to/vault --vault    # remove a whole vault from the index (source files untouched)
 ```
 
-If `ki` isn't installed yet:
+Also available: `ki init <path>` (advanced: write the vault marker without indexing), and `ki skill {list, install, remove, print}` for installing this routing-rules file into other agents (Cursor, Windsurf, etc.). See `ki skill list` for the full agent catalog.
+
+### Picking a search mode
+
+`ki search` takes `--type` to choose the retrieval shape. Match the flag to the user's intent:
+
+| User intent                                              | Flag                                            | Underlying query |
+|----------------------------------------------------------|-------------------------------------------------|------------------|
+| *"What did I write about X?"* (default; finest grain)    | `--type section` (default)                      | B.2 — section content fulltext |
+| *"Find the doc called Y"* / *"the note where I…"*        | `--type document --k 5`                         | B.1 — document title fulltext  |
+| *"What's related to this doc?"*                          | `--type neighbors --doc-uri <uri> --k 2`        | B.3 — 1-hop `LINKS_TO` neighbourhood |
+
+Add `--json` for machine-readable output. `--k` is the result limit (or hop depth for `neighbors`). `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
+
+### If `ki` isn't installed yet
 
 ```bash
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -67,10 +81,23 @@ Safe to run unattended in agent auto-mode (idempotent, per-user, reversible via 
 
 ## Auto-mode rules
 
-- **Reversible, local actions: auto-fire.** Installing `ki`, running `ki configure → Local` (which shells out to `neo4j-local`), `ki index`, single-doc and subtree `ki rm`. Report what you did after the fact.
+- **Reversible, local actions: auto-fire.** Installing `ki`, `ki index`, single-doc and subtree `ki rm`, `ki skill install`. Report what you did after the fact.
 - **Irreversible / billable actions: pause for explicit consent.** Whole-vault `ki rm --vault`, `ki configure → Aura` (creates a billable cloud resource), anything that requires the user to type a confirmation.
-- **Default to local Neo4j on auto-mode** unless the user explicitly says "on Aura" or there's already an Aura profile configured. *"Build me a knowledge base"* is consent for the goal, not for creating cloud resources.
+- **Picking a Neo4j on first run.** The `Local` option in `ki configure` depends on the `neo4j-local` binary, which isn't published yet — don't pick it on auto-mode. Order to try:
+  1. **An existing reachable Neo4j** (env vars, a `docker ps` showing `neo4j` on `:7687`, or a profile already in `~/.config/ki/config.yaml`) — use `ki configure` option `3) Existing` and report what you connected to.
+  2. **Otherwise, ask the user.** "I need a Neo4j to point ki at. Should I (a) walk you through Aura — billable cloud, or (b) wait for you to bring up a local one?" Don't pick Aura silently — *"Build me a knowledge base"* is consent for the goal, not for creating cloud resources.
 - **File-system side-effects on the user's vault: never.** `ki` doesn't touch source files; the agent doesn't either, except for writing converted-markdown output to a user-approved folder (see PREPARE).
+
+## Capabilities not yet wired
+
+If a user asks for one of these and `ki` is the right tool, explain that the underlying query exists but the CLI flag isn't shipped in v1 — don't pretend you'll run it. Tracked in the *Roadmap & known limitations* section of the project README.
+
+- Backlinks ("which docs link to this one?") — query B.9 in `docs/retrieval-queries.md`, not on the CLI.
+- Full document text in reading order — query B.4.
+- ±N section windowing — queries B.7 / B.8.
+- Shortest path between two documents — query B.10.
+- Vector / semantic search — fulltext is the only retrieval substrate in v1.
+- Talking to `ki` from claude.ai, ChatGPT, Gemini, or Copilot Web/Desktop — these chat surfaces have no shell access. Suggest the user run a coding agent (you, in Claude Code) on the same machine, or paste `ki search "..." --json` output into the chat manually. A native MCP server is roadmap.
 
 ## Cross-references
 
