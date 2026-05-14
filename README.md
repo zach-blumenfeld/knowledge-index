@@ -1,8 +1,8 @@
 # <img src="img/ki.png" alt="ki logo" width="120" align="left" />  Knowledge Index (`ki`)
-> Search index for agent memory — knowledge graph index for your documents
+> Scale memory across agents and docs
 <br clear="left">
 
-One searchable graph index across all your documents — point `ki` at a folder (or many) and query the result from the CLI or any AI agent. Multiple folders and users can share the same index. Source files are never modified, so it's safe on an Obsidian vault, a git repo, or a research folder. Backed by Neo4j.
+Point `ki` at a folder (or many), sync to graph index, and query from the CLI or any AI agent. Multiple folders and users can share the same index. Source files are never modified, so it's safe on an Obsidian vault, a git repo, or a research folder. Backed by Neo4j.
 
 
 install `ki`, wire into Claude Code, ask Claude what's in your notes:
