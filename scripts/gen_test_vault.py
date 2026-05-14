@@ -230,7 +230,13 @@ def build_topic_graph(size_cfg: dict, rng: random.Random) -> list[Topic]:
     n = size_cfg["topics"]
     names = build_topic_names(n, rng)
     # Folder buckets — gives nested structure without forcing every doc N deep.
-    buckets = ["notes", "tech", "science", "history", "philosophy", "inbox"]
+    # `Notes` (capital N) matches the case used by FIXED_EDGE_CASE_PATHS
+    # below — without this, procedural topics under "notes/" and fixed
+    # paths under "Notes/" create two distinct directories on
+    # case-sensitive filesystems (Linux CI) but collapse into one on
+    # case-insensitive ones (macOS default), breaking reproducibility of
+    # the committed fixture across platforms.
+    buckets = ["Notes", "tech", "science", "history", "philosophy", "inbox"]
     topics: list[Topic] = []
     for i, name in enumerate(names):
         slug = slugify(name)
