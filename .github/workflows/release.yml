@@ -1,0 +1,88 @@
+name: Release to PyPI
+
+# Manual trigger from the Actions tab. Reads the version from
+# pyproject.toml (you bump it in your release PR), creates the tag,
+# builds, publishes via PyPI Trusted Publishing, and cuts a GitHub
+# Release with notes pulled from CHANGELOG.md.
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/p/knowledge-index
+    permissions:
+      contents: write    # push tag, create GitHub Release
+      id-token: write    # PyPI Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Resolve version from pyproject
+        id: v
+        run: |
+          V=$(uv run python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "version=$V"  >> "$GITHUB_OUTPUT"
+          echo "tag=v$V"     >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to release a version that already has a tag
+        # Forces a version bump before re-running. Without this, a
+        # re-run after a successful tag-and-publish would try to
+        # double-publish.
+        run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.v.outputs.tag }}" | grep -q .; then
+            echo "::error::tag ${{ steps.v.outputs.tag }} already exists. Bump pyproject.toml before re-running."
+            exit 1
+          fi
+
+      - name: Build distributions
+        # Done before tagging so a build failure leaves the repo clean.
+        run: |
+          rm -rf dist/
+          uv build
+
+      - name: Extract release notes from CHANGELOG.md
+        # Pulls the section under `## [<version>] ...` up to (but not
+        # including) the next `## [...` heading. Empty file is fine —
+        # the GitHub Release just won't have a body.
+        run: |
+          awk -v ver="${{ steps.v.outputs.version }}" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "----- release-notes.md -----"
+          cat release-notes.md
+
+      - name: Create and push tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.v.outputs.tag }}" -m "Release ${{ steps.v.outputs.tag }}"
+          git push origin "${{ steps.v.outputs.tag }}"
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: Create GitHub Release
+        # Runs after PyPI so a publish failure doesn't leave behind a
+        # GitHub Release pointing at nothing on PyPI. Tag already exists
+        # at this point — softprops/action-gh-release will attach to it.
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.tag }}
+          name: ${{ steps.v.outputs.tag }}
+          body_path: release-notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
