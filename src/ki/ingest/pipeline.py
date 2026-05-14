@@ -22,8 +22,10 @@ Order of operations per ingest run:
      - Update the resolver with this doc's name/aliases.
      - Stash links for the post-pass.
   6. Resolve wikilinks/markdown-links against the resolver; emit LINKS_TO.
+  7. Aggregate piped-wikilink display texts per target URI, normalize, and
+     union into the target's `aliases` (docs/ingest-cypher.md §4.3 step 7).
 
-Scalability levers (docs/requirements.md):
+Scalability levers (docs/requirements_v01_mvp.md):
   1. fileHash skip                    — implemented in step 5
   2. configurable batch size          — `batch_size` (default 1000)
   3. concurrent file reads            — `concurrency` (default 16)
@@ -47,6 +49,7 @@ import aiofiles
 
 from ..config import Profile
 from ..neo4j_client import driver_for, ensure_schema
+from ..parser.aliases import normalize_display_texts
 from ..parser.markdown import (
     ParsedDocument,
     ParsedLink,
@@ -406,7 +409,9 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                 )
 
             # 8. Resolve wikilinks and write LINKS_TO.
-            link_rows = _build_links_to_rows(pending_links, resolver)
+            link_rows, display_texts_per_target = _build_links_to_rows(
+                pending_links, resolver
+            )
             written = run_batched(
                 session,
                 Q.WRITE_LINKS_TO,
@@ -416,6 +421,23 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                 on_shrink=on_shrink,
             )
             result.links_written = written
+
+            # 9. Wikilink display-text → target aliases (docs/ingest-cypher.md
+            # §4.3 step 7). Runs after LINKS_TO so we can read the target's
+            # current displayName + aliases for normalization, then union the
+            # derived aliases without clobbering frontmatter.
+            alias_rows = _build_display_text_alias_rows(
+                session, display_texts_per_target
+            )
+            if alias_rows:
+                run_batched(
+                    session,
+                    Q.WRITE_DISPLAY_TEXT_ALIASES,
+                    "aliasRows",
+                    alias_rows,
+                    batch_size=opts.batch_size,
+                    on_shrink=on_shrink,
+                )
 
     result.batch_shrunk_to = shrink_state["size"]
     return result
@@ -515,40 +537,101 @@ def _load_resolver(session: Any, vault_uri: str) -> WikilinkResolver:
 def _build_links_to_rows(
     pending: list[tuple[str, list, list[tuple[str, list]]]],
     resolver: WikilinkResolver,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
+    """Resolve LINKS_TO edges and collect per-target wikilink display texts.
+
+    Returns (link_rows, display_texts_per_target). Display texts are
+    aggregated independently of the LINKS_TO dedup `seen` set — even if we
+    skip writing a duplicate edge, the display text on that occurrence is
+    still relevant for the target's alias list (see docs/ingest-cypher.md
+    §4.3 step 7).
+    """
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    display_texts: dict[str, list[str]] = {}
     for doc_uri, doc_links, section_links in pending:
         for link in doc_links:
-            row = _resolve_link(doc_uri, link, resolver, seen)
-            if row:
-                rows.append(row)
+            _process_link(doc_uri, link, resolver, seen, rows, display_texts)
         for sec_uri, links in section_links:
             for link in links:
-                row = _resolve_link(sec_uri, link, resolver, seen)
-                if row:
-                    rows.append(row)
+                _process_link(sec_uri, link, resolver, seen, rows, display_texts)
+    return rows, display_texts
+
+
+def _build_display_text_alias_rows(
+    session: Any,
+    display_texts_per_target: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    """Normalize the per-target display-text batches and shape them for write.
+
+    Reads each target's current (`displayName`, `aliases`) from Neo4j so the
+    normalizer can drop entries that equal the target's name or are already
+    in its alias list (case-insensitive). Returns one row per target whose
+    normalized batch is non-empty.
+    """
+    if not display_texts_per_target:
+        return []
+    target_uris = list(display_texts_per_target.keys())
+    res = session.run(
+        """
+        UNWIND $uris AS u
+        MATCH (n {uri: u})
+        WHERE n:Document OR n:Section
+        RETURN n.uri AS uri,
+               n.displayName AS displayName,
+               coalesce(n.aliases, []) AS aliases
+        """,
+        uris=target_uris,
+    )
+    target_meta: dict[str, tuple[str | None, list[str]]] = {}
+    for row in res:
+        target_meta[row["uri"]] = (row["displayName"], list(row["aliases"] or []))
+
+    rows: list[dict[str, Any]] = []
+    for uri, texts in display_texts_per_target.items():
+        meta = target_meta.get(uri)
+        if meta is None:
+            # Target wasn't written this run (e.g. WIKILINK_UNRESOLVED edge
+            # case) — skip aliasing it.
+            continue
+        display_name, existing = meta
+        new_aliases = normalize_display_texts(
+            texts,
+            target_display_name=display_name,
+            existing_aliases=existing,
+        )
+        if new_aliases:
+            rows.append({"uri": uri, "aliases": new_aliases})
     return rows
 
 
-def _resolve_link(
+def _process_link(
     src_uri: str,
     link: ParsedLink,
     resolver: WikilinkResolver,
     seen: set[tuple[str, str]],
-) -> dict[str, Any] | None:
+    rows: list[dict[str, Any]],
+    display_texts: dict[str, list[str]],
+) -> None:
     target = resolver.resolve(link.target)
     if target is None:
-        return None
+        return
     if target == src_uri:
-        return None  # self-link: skip
+        return  # self-link: skip
+    # Aggregate display texts independent of LINKS_TO edge dedup — multiple
+    # wikilinks from the same source to the same target should still all
+    # contribute to the target's alias frequency count.
+    if link.wikilink and link.display_text:
+        display_texts.setdefault(target, []).append(link.display_text)
     key = (src_uri, target)
     if key in seen:
-        return None
+        return
     seen.add(key)
-    return {
-        "srcUri": src_uri,
-        "tgtUri": target,
-        "wikilink": link.wikilink,
-        "embed": link.embed,
-    }
+    rows.append(
+        {
+            "srcUri": src_uri,
+            "tgtUri": target,
+            "wikilink": link.wikilink,
+            "embed": link.embed,
+        }
+    )

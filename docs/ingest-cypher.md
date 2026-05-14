@@ -45,7 +45,7 @@ Run after the per-vault-ingest write. All document/section/relationship writes f
 
 Each `row` is a plain dict. `row.props` is the mutable property bag fed into `SET n += row.props`; create-only fields are split out into `row.createOnly` so they're only applied on `ON CREATE`.
 
-**Write order matters:** documents and sections first (so their `uri`s exist as MATCH targets), then `HAS_SECTION` (tree edges), then `NEXT_SECTION` (linear reading-order chain — cleared and rebuilt each ingest), then User→Document `LOADED` provenance edges, then `LINKS_TO` (last, so cross-document wikilink targets resolve).
+**Write order matters:** documents and sections first (so their `uri`s exist as MATCH targets), then `HAS_SECTION` (tree edges), then `NEXT_SECTION` (linear reading-order chain — cleared and rebuilt each ingest), then User→Document `LOADED` provenance edges, then `LINKS_TO` (so cross-document wikilink targets resolve), and finally the wikilink-display-text → target `aliases` aggregation (step 7), which depends on the vault-wide set of `LINKS_TO` display texts already being gathered client-side.
 
 ```cypher
 // 1. Documents — batched upsert.
@@ -152,6 +152,42 @@ SET l.embed = row.embed,
     l.wikilink = row.wikilink
 ```
 
+```cypher
+// 7. Wikilink display-text → target aliases.
+//
+// When the parser sees `[[Target|Display]]` or `[[Target#Section|Display]]`,
+// the display text is the alternate name *the user* gave the target in
+// running prose. Today, fulltext search against `aliases` already covers
+// both `Document` and `Section` (see the `doc_section_search` index in
+// §4.4), but the alias list itself is only populated from frontmatter —
+// so a vault that pipes `[[Darth Vader|Anakin]]` everywhere never matches
+// the literal query "Anakin". This step closes the gap: aggregate display
+// texts client-side per target URI, normalize, and union them into the
+// target's `aliases` field.
+//
+// Normalization happens client-side (trim, length >= 3, stopword filter,
+// drop if equal to the target's displayName, lowercase-dedup within the
+// new batch, per-target cap at 50, sorted by occurrence count desc then
+// alphabetically). Frontmatter aliases are the user's ground truth and
+// must not be displaced — we UNION (via apoc.coll.toSet-equivalent) rather
+// than overwrite.
+//
+// $aliasRows: list of { uri, aliases } where `aliases` is the already-
+//             normalized list of new display-text aliases for this target.
+// Targets that have section endpoints update `Section.aliases`; targets
+// that have document endpoints update `Document.aliases`. A single MATCH
+// keyed on `uri` covers both labels because Document and Section URIs
+// share the same uniqueness namespace.
+UNWIND $aliasRows AS row
+MATCH (n {uri: row.uri})
+WHERE n:Document OR n:Section
+WITH n, row.aliases AS newAliases,
+     coalesce(n.aliases, []) AS existing
+WITH n, existing,
+     [a IN newAliases WHERE NONE (x IN existing WHERE toLower(x) = toLower(a))] AS toAdd
+SET n.aliases = existing + toAdd
+```
+
 ### 4.4 Schema / constraints
 
 Emit once at `graph-vault init` time:
@@ -177,10 +213,11 @@ CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
 
 // Fulltext is the *primary* retrieval substrate in v1 (no embeddings).
 // Index `displayName` (human-readable heading / filename), `content`, and
-// `aliases` (Document-only, list-valued — frontmatter alternate names so
-// wikilink targets like "JFK" / "John F Kennedy" hit the same doc). Section
-// nodes don't carry `aliases`; Neo4j fulltext silently skips the missing
-// property, so a single combined index covers both labels.
+// `aliases` (list-valued — frontmatter alternate names plus piped-wikilink
+// display texts, so queries like "JFK" / "John F Kennedy" or "Anakin" hit
+// the right target). Both `Document` and `Section` carry `aliases` as of
+// v0.3.0 — Neo4j fulltext silently skips a missing property, so a single
+// combined index covers both labels.
 // The mapper writes `content` with `uri:` child-pointer lines appended, which
 // add some junk tokens to the index; if recall suffers, switch to a sanitised
 // `contentForIndex` copy that strips those pointer lines.

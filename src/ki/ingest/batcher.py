@@ -6,7 +6,7 @@ batch as a separate transaction.
 
 If Neo4j raises `TransientError: ... Out of memory`, we halve the batch
 size, retry the failed slice, and continue with the smaller size for
-subsequent batches (with one user-visible warning). Per docs/requirements.md
+subsequent batches (with one user-visible warning). Per docs/requirements_v01_mvp.md
 *Two kinds of OOM* — this is the recoverable case.
 """
 

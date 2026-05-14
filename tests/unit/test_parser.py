@@ -127,6 +127,44 @@ def test_wikilink_and_markdown_link_extraction():
     assert ("./other.md", False, False) in targets
 
 
+def test_piped_wikilink_captures_display_text():
+    """`[[Target|Display]]` should expose `Display` as display_text."""
+    text = "# Top\n\nsee [[Darth Vader|Anakin]] here.\n"
+    doc = parse_markdown(text, filename="d.md")
+    top = doc.sections[0]
+    wl = [link for link in top.links if link.wikilink and not link.embed]
+    assert len(wl) == 1
+    assert wl[0].target == "Darth Vader"
+    assert wl[0].display_text == "Anakin"
+
+
+def test_unpiped_wikilink_has_no_display_text():
+    """`[[Darth Vader]]` (no pipe) → display_text is None."""
+    text = "# Top\n\nsee [[Darth Vader]] here.\n"
+    doc = parse_markdown(text, filename="d.md")
+    top = doc.sections[0]
+    wl = [link for link in top.links if link.wikilink and not link.embed]
+    assert len(wl) == 1
+    assert wl[0].target == "Darth Vader"
+    assert wl[0].display_text is None
+
+
+def test_section_target_wikilink_carries_display_text():
+    """`[[Doc#Section|Display]]` keeps `Doc#Section` as target and `Display` as text.
+
+    The pipeline routes the display text to whichever endpoint the resolver
+    picks (section URI here), but the parser's job is just to surface both
+    fields verbatim. Resolution / routing is tested in the ingest tests.
+    """
+    text = "# Top\n\nsee [[Darth Vader#Origins|Anakin]] here.\n"
+    doc = parse_markdown(text, filename="d.md")
+    top = doc.sections[0]
+    wl = [link for link in top.links if link.wikilink and not link.embed]
+    assert len(wl) == 1
+    assert wl[0].target == "Darth Vader#Origins"
+    assert wl[0].display_text == "Anakin"
+
+
 def test_content_construction_shallow_with_pointers():
     """Rule 1: Section.content = body + uri: lines for direct children."""
     text = (

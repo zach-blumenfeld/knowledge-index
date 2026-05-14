@@ -69,6 +69,23 @@ Also available: `ki init <path>` (advanced: write the vault marker without index
 
 Add `--json` for machine-readable output. `--k` is the result limit (or hop depth for `neighbors`). `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
 
+### Query expansion for semantic equivalence
+
+`ki search` is fulltext on `displayName + content + aliases`. Wikilink display texts get folded into target aliases at ingest, so vaults that link `[[Darth Vader|Anakin]]` match "Anakin" already — but cultural / world-knowledge synonyms the *vault* never spells out won't.
+
+**When to expand.** Top-`k` results look weak: zero hits, a single hit with a low fulltext score, or no document-level match for what was clearly a document-level query.
+
+**How to expand.** Rewrite the user's term to a small set of plausible alternates you know from world knowledge (e.g. "Anakin" → also try "Darth Vader", "Vader", "Skywalker"; "JFK" → also try "John F Kennedy", "Kennedy"). Run alternates as additional `ki search` calls, or one OR-form Lucene query: `ki search 'JFK OR "John F Kennedy" OR Kennedy'`.
+
+**Limits.** This relies on what *you* know. Personal-vault aliases ("BB" = "Project Bluebird") won't be expanded this way unless the user has linked them in their notes — in which case the ingest-side wikilink-alias path already covers them.
+
+Example:
+
+```bash
+ki search Anakin --json          # 0 hits
+ki search 'Anakin OR "Darth Vader" OR Vader' --json   # retry expanded
+```
+
 ### If `ki` isn't installed yet
 
 ```bash
@@ -101,7 +118,7 @@ If a user asks for one of these and `ki` is the right tool, explain that the und
 
 ## Cross-references
 
-- Full design spec: `docs/requirements.md`
+- Full design spec: `docs/requirements_v01_mvp.md`
 - Schema (nodes / edges / properties): `docs/data-model.md`
 - What gets written on `ki index`: `docs/ingest-cypher.md`
 - What gets returned by `ki search`: `docs/retrieval-queries.md`
