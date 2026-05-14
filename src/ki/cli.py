@@ -22,6 +22,10 @@ from .commands.index import cmd_index
 from .commands.init import cmd_init
 from .commands.rm import cmd_rm
 from .commands.search import cmd_search
+from .commands.skill import cmd_install as cmd_skill_install
+from .commands.skill import cmd_list as cmd_skill_list
+from .commands.skill import cmd_print as cmd_skill_print
+from .commands.skill import cmd_remove as cmd_skill_remove
 from .ingest.batcher import DEFAULT_BATCH_SIZE
 from .ingest.pipeline import DEFAULT_CONCURRENCY, DEFAULT_MAX_FILE_SIZE
 
@@ -157,6 +161,43 @@ def rm_cmd(
 @click.argument("path", type=click.Path(file_okay=False, dir_okay=True, path_type=Path))
 def init_cmd(path: Path) -> None:
     sys.exit(cmd_init(path))
+
+
+@main.group("skill", help="Install / remove the agent-skill bundle for supported AI agents.")
+def skill_group() -> None:
+    pass
+
+
+@skill_group.command("list", help="Show supported agents and per-agent install state.")
+def skill_list_cmd() -> None:
+    sys.exit(cmd_skill_list())
+
+
+@skill_group.command(
+    "install",
+    help="Install the skill into one agent, or all detected agents if omitted. "
+         "Pass --path to write to an arbitrary location (escape hatch for unsupported agents).",
+)
+@click.argument("agent", required=False)
+@click.option(
+    "--path", "path",
+    type=click.Path(file_okay=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Write the skill to this exact file path (overrides catalog lookup).",
+)
+def skill_install_cmd(agent: str | None, path: Path | None) -> None:
+    sys.exit(cmd_skill_install(agent, path=path))
+
+
+@skill_group.command("remove", help="Remove the installed skill from one agent, or all installed.")
+@click.argument("agent", required=False)
+def skill_remove_cmd(agent: str | None) -> None:
+    sys.exit(cmd_skill_remove(agent))
+
+
+@skill_group.command("print", help="Write the bundled SKILL.md to stdout.")
+def skill_print_cmd() -> None:
+    sys.exit(cmd_skill_print())
 
 
 if __name__ == "__main__":
