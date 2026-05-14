@@ -15,9 +15,49 @@ ki skill install claude-code       # drops the routing rules into ~/.claude/skil
 
 Then in Claude Code:
 
-> "Incorporate `~/Notes` into your memory
+```sh
+❯ index your memory                                                                                                                     
 
-> tell me what I've written about retrieval."*
+...
+
+⏺ Bash(ki index /Users/zachblumenfeld/.claude/projects/ 2>&1 | tail -40)
+  ⎿  ✓ Initialized vault at /Users/zachblumenfeld/.claude/projects (id: 85f4be4d…)
+     Indexed: 13 added, 0 updated, 0 unchanged, 3 sections, 10 links.
+
+⏺ Indexed. 13 docs added across your project memory dirs (3 sections, 10 cross-doc links). Try ki search "..." to query — e.g. ki search
+   "decision graph" or ki search "naming" --type section.
+
+...
+
+❯ what retrieval stuff have we built lately?                                                                                            
+
+⏺ Bash(ki search "retrieval" --k 10 --json 2>&1)
+  ⎿  [
+       {
+         "document_uri": "ce2cc5c8-2968-44fd-8ea8-caca79cfd747/retrieval-queries.md",
+     … +121 lines (ctrl+o to expand)
+
+  Listed 1 directory (ctrl+o to expand)
+
+⏺ Based on the indexed memory, here's what's there on retrieval (current working dir ~/demo/retrieval is empty, so this is from
+  notes/docs):
+
+  ki (Knowledge Index) — the main retrieval project
+  - retrieval-queries.md — 10 retrieval queries (B.1–B.10) ported from the old Wikipedia-graph queries to the new
+  User–Vault–Document–Section schema
+  - requirements.md + ingest-cypher.md — schema, constraints, and the doc_section_search fulltext index over Document|Section on
+  displayName + content + aliases
+  - Key design call: fulltext is the v1 retrieval substrate; vector/embeddings deferred. Wikilink aliases ("JFK" / "John F Kennedy")
+  indexed so alternates hit the same doc.
+  - Validated approach: what-worked.md notes that section-level retrieval beat whole-document retrieval when dogfooded against the
+  repo's own docs/.
+  
+  Other hits (Clojure / internals-markdown notes mentioning "information retrieval") are unrelated tangents — noise from the broader
+  vault.
+
+  Want me to pull the full retrieval-queries doc or a specific section?
+
+```
 
 That's the whole loop. Read on for the same flow with other agents, direct CLI use, and what's not in this release.
 
