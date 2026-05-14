@@ -35,8 +35,11 @@ from ..vault import slugify_segment
 from .frontmatter import FrontmatterFields, parse_frontmatter
 
 # Wikilink and embed forms. Order matters: embed must be matched first.
-_EMBED_RE = re.compile(r"!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
-_WIKILINK_RE = re.compile(r"(?<!\!)\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+# Capture both the target and an optional piped display text so the ingest
+# pipeline can route `[[Target|Display]]` display texts back to the target's
+# aliases list (see docs/ingest-cypher.md §4.3 step 7).
+_EMBED_RE = re.compile(r"!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]")
+_WIKILINK_RE = re.compile(r"(?<!\!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]")
 # Markdown link to an .md file (relative or absolute). Captures href.
 _MD_LINK_RE = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)\s]+\.md(?:#[^)]*)?)\)")
 
@@ -46,6 +49,11 @@ class ParsedLink:
     target: str  # raw target text (wikilink name or markdown href)
     wikilink: bool
     embed: bool
+    # Display text after the pipe in a wikilink (`[[Target|Display]]`).
+    # `None` for unpiped wikilinks, embeds-without-pipe, and markdown links.
+    # Routed to the *target's* `aliases` at ingest — see docs/ingest-cypher.md
+    # §4.3 step 7.
+    display_text: str | None = None
 
 
 @dataclass
@@ -174,9 +182,25 @@ def _build_tree(
 def _extract_links(text: str) -> list[ParsedLink]:
     links: list[ParsedLink] = []
     for m in _EMBED_RE.finditer(text):
-        links.append(ParsedLink(target=m.group(1).strip(), wikilink=True, embed=True))
+        display = m.group(2)
+        links.append(
+            ParsedLink(
+                target=m.group(1).strip(),
+                wikilink=True,
+                embed=True,
+                display_text=display.strip() if display else None,
+            )
+        )
     for m in _WIKILINK_RE.finditer(text):
-        links.append(ParsedLink(target=m.group(1).strip(), wikilink=True, embed=False))
+        display = m.group(2)
+        links.append(
+            ParsedLink(
+                target=m.group(1).strip(),
+                wikilink=True,
+                embed=False,
+                display_text=display.strip() if display else None,
+            )
+        )
     for m in _MD_LINK_RE.finditer(text):
         links.append(ParsedLink(target=m.group(1).strip(), wikilink=False, embed=False))
     return links

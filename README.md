@@ -170,7 +170,7 @@ Coding agents (Claude Code, Cursor, …) run on your machine and can shell out t
 
 These are unlikely to change soon but worth being explicit about:
 
-- **Single-machine ingest, single Neo4j write session.** Concurrent writers would deadlock on shared `MERGE` targets and the throughput at v1 scales doesn't justify the complexity — see [`docs/requirements.md`](docs/requirements.md) §Scalability lever 5.
+- **Single-machine ingest, single Neo4j write session.** Concurrent writers would deadlock on shared `MERGE` targets and the throughput at v1 scales doesn't justify the complexity — see [`docs/requirements_v01_mvp.md`](docs/requirements_v01_mvp.md) §Scalability lever 5.
 - **No `:Folder` node label.** Hierarchy lives in `Document.uri` and prefix-matches handle subtree queries.
 - **Plaintext passwords in `~/.config/ki/config.yaml`** (file mode `0600`). OS keyring integration is the v2 upgrade path.
 - **No `--purge`, ever.** `ki` removes data from the index; source files are *always* untouched. See [`AGENTS.md`](AGENTS.md) §Non-negotiable design principles.
@@ -225,17 +225,17 @@ uv run python scripts/gen_test_vault.py --size tiny --seed 42 \
   --output tests/fixtures/sample_vault
 ```
 
-Same `--seed` → byte-identical output across runs. The generator supports `tiny / small / medium / large` matching the §Scalability envelopes in [`docs/requirements.md`](docs/requirements.md).
+Same `--seed` → byte-identical output across runs. The generator supports `tiny / small / medium / large` matching the §Scalability envelopes in [`docs/requirements_v01_mvp.md`](docs/requirements_v01_mvp.md).
 
 ### Contributing
 
 Before opening a PR:
 
 1. Read [`AGENTS.md`](AGENTS.md) — design principles, project map, and the *Don't* list.
-2. Skim [`docs/requirements.md`](docs/requirements.md) — anything in there is normative. If your change conflicts with the spec, update the spec in the same PR.
+2. Skim [`docs/requirements_v01_mvp.md`](docs/requirements_v01_mvp.md) — anything in there is normative. If your change conflicts with the spec, update the spec in the same PR.
 3. If you're changing the schema, update [`docs/data-model.md`](docs/data-model.md) before the code.
 4. If you're changing Cypher, update [`docs/ingest-cypher.md`](docs/ingest-cypher.md) or [`docs/retrieval-queries.md`](docs/retrieval-queries.md) before the code — those are the source of truth.
-5. If you're changing CLI behavior, keep [`docs/requirements.md`](docs/requirements.md), [`skills/ki/SKILL.md`](skills/ki/SKILL.md), and the implementation in lockstep — drift between those is the #1 source of agent-routing bugs.
+5. If you're changing CLI behavior, keep [`docs/requirements_v01_mvp.md`](docs/requirements_v01_mvp.md), [`skills/ki/SKILL.md`](skills/ki/SKILL.md), and the implementation in lockstep — drift between those is the #1 source of agent-routing bugs.
 
 ### Release flow
 
@@ -250,7 +250,7 @@ The workflow refuses to re-release an existing tag (forces a version bump on re-
 
 ## Learn more
 
-- [`docs/requirements.md`](docs/requirements.md) — full design spec (CLI shape, schema, scalability, auto-mode rules)
+- [`docs/requirements_v01_mvp.md`](docs/requirements_v01_mvp.md) — full design spec (CLI shape, schema, scalability, auto-mode rules)
 - [`docs/data-model.md`](docs/data-model.md) — Neo4j schema (nodes, edges, properties)
 - [`docs/ingest-cypher.md`](docs/ingest-cypher.md) — what `ki index` writes
 - [`docs/retrieval-queries.md`](docs/retrieval-queries.md) — what `ki search` exposes (B.1–B.10)

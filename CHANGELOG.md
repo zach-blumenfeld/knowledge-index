@@ -13,6 +13,48 @@ line, up to the next `## [` heading. Keep version sections under that
 exact pattern. Editorial prose is fine; just don't change the heading.
 -->
 
+## [0.3.0] — 2026-05-14
+
+### Added
+
+- **Wikilink display-text → target aliases.** When the parser sees a piped
+  wikilink (`[[Darth Vader|Anakin]]` or `[[Darth Vader#Origins|Anakin]]`),
+  the display text now propagates to the *target's* `aliases` list at
+  ingest time. The existing `doc_section_search` fulltext index already
+  covers `aliases`, so `ki search "Anakin"` starts matching the Darth
+  Vader document without any retrieval-query changes. Display texts are
+  normalized (trimmed, length-thresholded, stopword-filtered, deduped
+  case-insensitively, capped at 50 per target) and unioned with — never
+  overwriting — any frontmatter aliases the user authored.
+- **Skill: query-expansion pattern.** `skills/ki/SKILL.md` now documents
+  a "Query expansion for semantic equivalence" pattern for the calling
+  LLM — when top-`k` looks weak, retry with plausible alternates from
+  world knowledge (e.g. "JFK" → "John F Kennedy", "Kennedy"). Covers the
+  long tail the ingest-side alias path can't reach.
+
+### Changed
+
+- **Schema:** `Section.aliases` (list[string], optional) added for parity
+  with `Document.aliases`, so wikilinks that target sections
+  (`[[Doc#Heading|Display]]`) feed the section's alias list. The fulltext
+  index already declared `aliases` on both labels — no DDL change needed.
+- **Docs:** stale `docs/requirements.md` path references updated to
+  `docs/requirements_v01_mvp.md` across `AGENTS.md`, `CLAUDE.md`,
+  `README.md`, `CHANGELOG.md`, `skills/ki/SKILL.md`, and module docstrings
+  under `src/ki/` and `scripts/`. The renamed v0.1 design spec is still
+  load-bearing for everything not changed by this release.
+- **Docs:** new `docs/ingest-cypher.md` §4.3 step 7 (display-text
+  aggregation) documents the post-`LINKS_TO` write that unions normalized
+  display texts into target aliases.
+
+### Fixed
+
+- **Version sources are in sync again.** `pyproject.toml` and
+  `src/ki/__init__.py` both report `0.3.0`; the prior release shipped
+  with the latter still at `0.1.0`. A new
+  `tests/unit/test_version_in_sync.py` makes future drift a test
+  failure.
+
 ## [0.2.0] — 2026-05-14
 
 ### Added
@@ -92,7 +134,7 @@ Initial release.
   `KI_PROFILE` env-var override).
 - Deterministic test-vault generator (`scripts/gen_test_vault.py`) producing
   byte-identical Obsidian-style vaults at four sizes (tiny / small / medium /
-  large) matching the §Scalability envelopes in `docs/requirements.md`.
+  large) matching the §Scalability envelopes in `docs/requirements_v01_mvp.md`.
 
 ### Known limitations
 

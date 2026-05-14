@@ -137,10 +137,26 @@ SET l.embed = row.embed,
 """.strip()
 
 
+# 4.3 step 7 — Wikilink display-text → target aliases (Document or Section).
+# Normalization happens client-side (see src/ki/parser/aliases.py); this
+# query just unions the already-normalized batch into the target's aliases,
+# preserving any pre-existing frontmatter aliases.
+WRITE_DISPLAY_TEXT_ALIASES = """
+UNWIND $aliasRows AS row
+MATCH (n {uri: row.uri})
+WHERE n:Document OR n:Section
+WITH n, row.aliases AS newAliases,
+     coalesce(n.aliases, []) AS existing
+WITH n, existing,
+     [a IN newAliases WHERE NONE (x IN existing WHERE toLower(x) = toLower(a))] AS toAdd
+SET n.aliases = existing + toAdd
+""".strip()
+
+
 # --- Removal queries (used by `ki rm`). Not in ingest-cypher.md but follow the
 # same single-uri MERGE-key model. `DETACH DELETE` removes incident
 # relationships (HAS_SECTION, HAS_DOCUMENT, LOADED, LINKS_TO, NEXT_SECTION)
-# along with their endpoints, per docs/requirements.md *Removal*.
+# along with their endpoints, per docs/requirements_v01_mvp.md *Removal*.
 #
 # Re-stitching NEXT_SECTION across removals is unnecessary for whole-doc
 # deletion: NEXT_SECTION threads sections *within a single document* (see

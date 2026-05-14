@@ -20,7 +20,7 @@ For ad-hoc runs outside the project venv:
     uv run --with python-frontmatter --with pyyaml \\
         python scripts/gen_test_vault.py ...
 
-See prompts/build-test-vault.md and docs/requirements.md §Scalability for the
+See prompts/build-test-vault.md and docs/requirements_v01_mvp.md §Scalability for the
 sizing contract this script implements.
 """
 from __future__ import annotations

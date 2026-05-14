@@ -1,6 +1,6 @@
 """`ki rm <path>` — remove nodes from the index. Source files untouched.
 
-Blast-radius scaling (docs/requirements.md *Removal*):
+Blast-radius scaling (docs/requirements_v01_mvp.md *Removal*):
   - single doc       → no prompt
   - subtree (dir)    → prompt with count, suppressed by --yes
   - whole vault      → requires --vault flag AND typed display-name confirm
