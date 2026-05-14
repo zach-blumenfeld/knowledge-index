@@ -1,3 +1,5 @@
+<img src="img/ki.png" alt="ki logo" width="120" align="right" />
+
 # Knowledge Index (`ki`)
 > Search index for agent memory — knowledge graph index for your documents
 
