@@ -213,6 +213,40 @@ Documents, sections, and edges all use the standard `UNWIND` pattern — driver-
 ### Fulltext as v1 retrieval substrate (no embeddings)
 `doc_section_search` fulltext index over `Document|Section` on `displayName + content + aliases`. Vector indexes deferred. Indexing `aliases` lets wikilink alternates ("JFK", "John F Kennedy") hit the same doc.
 
+## Scalability
+
+`ki` should handle a realistic personal vault without surprises and without exotic infrastructure. The numbers below set the v1 envelope; the levers below describe how the implementation gets there.
+
+### Target envelopes for v1
+
+- Single vault: up to **10,000 markdown files** / **1 GB of content**.
+- Single document: up to **1 MB** / **~10,000 sections**. Files above the threshold are skipped with a warning, not silently truncated (see lever 6).
+- Re-index of an **unchanged** vault: **< 5 seconds** (fileHash skip makes this near-instant).
+- Initial index of a **10k-document vault**: **< 5 minutes** on a developer laptop against local Neo4j (`neo4j-local`).
+
+### Levers (in order of impact)
+
+1. **`Document.fileHash` (SHA-256) skip on unchanged files.** Most re-indexes touch <1% of files; everything else short-circuits before any Cypher runs. This is the biggest single win and is already in the schema.
+2. **Configurable batched `UNWIND $rows AS row` ingest, default 1,000 rows / transaction.** Expose `--batch-size N`. Optimal batch size is **bounded by Neo4j's configured heap**, not by Python memory, and depends on per-row payload (a vault of small notes can batch 5–10×bigger than one of long-form documents). Heuristic: ~1,000 is safe on a small local instance (`neo4j-local` defaults); on Aura the right number scales with RAM. YOu should be able to see via neo4j-cli, but if not, as a general heuristic, assume Aura PRO and above tiers can comfortably handle 5,000+ rows / batch and ingest. Tune empirically; there is no general "right" answer.
+3. **Concurrent file reading via `asyncio` + `aiofiles` (or `concurrent.futures.ThreadPoolExecutor`) with bounded parallelism.** Reading is I/O-bound and benefits from concurrency. Default ~16 workers; configurable. This is the only place concurrency lives.
+4. **Process one document at a time end-to-end** (parse → batch → write → release). Peak parse-side memory is bounded by the largest single file's section tree, not by the whole vault. Critical for predictability — vault size grows linearly in time, memory stays flat.
+5. **Single Neo4j write session — no concurrent writes.** Even two concurrent writers can deadlock on shared `MERGE` targets (`Vault`, `User`, parent `Section` for `HAS_SECTION`). Batching does the heavy lifting; concurrency on writes is a foot-gun with no real throughput payoff at v1 scales.
+6. **Per-file size guard (Python-side OOM defense).** Pre-check file size *before* parsing. Default skip threshold: **10 MB per file**, configurable via `--max-file-size`. Files exceeding the threshold are listed in the run summary and excluded — never silently truncated, never partially indexed. Cheap defense against pathological inputs that would otherwise OOM the Python parser process (which the OS would kill before any code could recover).
+
+### Two kinds of OOM — different defenses
+
+- **Neo4j-side OOM** (transaction exceeds the database's configured heap): driver returns `TransientError: Out of memory`. **Recoverable** — Python catches it cleanly. v1 behavior should be: on this error, halve the batch size, retry the failed batch, and continue with the smaller size for subsequent batches (with a one-line warning suggesting the user pass a lower `--batch-size` next run). Levers 2 and 5 prevent it; this is the recovery path when prevention misses.
+- **Python-side OOM** (parser holding a single giant file's section tree): OS kills the process; no recovery possible. **Prevented** by lever 6 (file-size guard) + lever 4 (one document at a time, parse tree released before the next).
+
+### Explicitly NOT in v1
+
+- **pyarrow / arrow-based pipelines.** The data is string-heavy, not columnar-numeric. The framework overhead doesn't earn its keep on markdown ingest at v1 scales.
+- **Concurrent Neo4j write sessions.** Deadlock risk > throughput gain. See lever 5.
+- **Distributed ingest (Ray / Dask / Spark).** Workload doesn't justify it.
+- **Streaming markdown parser for huge files.** Deferred until measurements show the file-size guard isn't enough.
+- **Programmatic recovery from Python-side OOM.** The OS kills the process; no `try / except` can catch it. Prevention via the file-size guard + processing one document at a time is the real defense. (Neo4j-side OOM is different — that one **is** recoverable; see *Two kinds of OOM*.)
+- **Handing oversized files back to the agent for re-formatting.** Lossy (the agent has to guess split points), wasteful (re-parse on re-run), and unnecessary — the file-size guard catches the problem up-front and the agent can decide what to do without `ki` having parsed anything.
+
 ## Files in this directory
 
 | File                          | Contents                                                                                                                                                                                                                  |
