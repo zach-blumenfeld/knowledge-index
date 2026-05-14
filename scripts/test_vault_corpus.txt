@@ -1,0 +1,373 @@
+The history of computing is a story of trade-offs. Memory has always been
+expensive and slow relative to the speed at which processors can consume it,
+and every successful architecture has been organised around that imbalance.
+Caches, registers, pipelines, prefetchers — all of them exist to paper over
+the fact that fetching a byte from RAM costs hundreds of cycles. The
+discipline of systems programming is, in large part, the discipline of
+keeping the working set hot and the cold paths short.
+
+Distributed systems are different in degree, not in kind. The latency from
+one machine to another is again a thousand times worse than the latency from
+RAM to cache, and the engineering vocabulary shifts accordingly. We talk
+about consensus rather than coherence, quorums rather than barriers, and the
+slow-and-eventual rather than the fast-and-strong. But the underlying motion
+is the same: keep the work near the data, and only pay the long latency when
+the answer is worth the wait.
+
+Consensus algorithms have a deserved reputation for being slippery. Paxos in
+particular has a reputation that exceeds the difficulty of the algorithm
+itself, partly because the original paper was written as a parable and
+partly because the algorithm has many small variations that all answer to
+the same name. Raft was designed largely as a reaction to this — a protocol
+that solves the same problem but admits to its own concreteness, with a
+strong leader, an explicit log, and a state machine that any practitioner
+can recite from memory.
+
+The strong leader in Raft is doing a great deal of work. It is the single
+serializer for writes, the source of truth for replication, and the entity
+that must be heart-beating constantly so that followers do not despair and
+call an election. When the leader fails, the cluster must choose a new
+leader, and that election is the most subtle part of the protocol. The
+randomised timeouts that drive elections are not decoration; they are a
+load-bearing detail that prevents repeated split votes.
+
+Machine learning is a discipline that has only recently learned to take
+software engineering seriously. For decades the field was dominated by
+hand-tuned models, ad hoc experiments, and a culture in which reproducibility
+was an aspiration rather than a constraint. The arrival of large pre-trained
+models, and the cost of training them, changed the calculus. You cannot
+afford to discover three months in that your training run is non-deterministic.
+
+Reproducibility in machine learning has many layers. There is the dataset, which
+must be versioned and checksummed; the preprocessing pipeline, which must be
+captured in code rather than in notebook cells; the model architecture, which
+must be specified to the bit; and the random seeds, which must be propagated
+through every library that uses them. Each layer of the stack hides its own
+sources of nondeterminism, and a single un-seeded shuffle is enough to make
+two runs disagree on the eighth decimal place.
+
+Type systems are interesting because they sit at the boundary between proofs
+and engineering. A type checker is a small, fast theorem prover that runs on
+every save. The proofs it discharges are modest — that this function does
+not call that one with an integer where a string was expected — but the
+cumulative effect of running such a prover across a million-line codebase
+is substantial. Languages that lack one tend to develop runtime equivalents
+in the form of tests, and the engineering folklore around them.
+
+Refinement types, dependent types, and effect systems are different attempts
+to push the boundary further out. Each carries a cost in cognitive load and
+in tooling, and each pays for itself only when the system being built has a
+correctness budget that justifies the investment. A scripting language for
+data analysis can get along fine without a fancy type system; a flight
+control computer cannot.
+
+Graph algorithms have a reputation for being arcane, but most of the useful
+ones reduce to a handful of patterns. Breadth-first search is the substrate
+for finding shortest paths in an unweighted graph; depth-first search is
+the substrate for cycle detection, topological sort, and strongly-connected
+components. Dijkstra and A-star generalise BFS for weighted graphs. Almost
+every named graph problem in an interview, and a fair number of those in
+production, is a thin wrapper around one of these.
+
+Neo4j is interesting as an engineering artifact because it commits to a
+model — labelled property graphs — and then optimises for it ruthlessly.
+The indices, the query planner, and the storage format are all designed
+around the assumption that traversals are the dominant access pattern, and
+that joins are an anti-pattern to be avoided. The Cypher query language
+exists to make graph patterns as readable as SQL makes relational ones, and
+the achievement of that goal is one of the larger engineering successes in
+the database world of the last fifteen years.
+
+Information retrieval, like compression and cryptography, is a field where
+mathematics and engineering pull in opposite directions. The theory says
+that the optimal ranking function would treat every term as a probability
+mass and every document as a distribution over a vocabulary. The engineering
+says that the optimal ranking function fits in a few kilobytes and runs in
+a single pass over the index. BM25 is what you get when the theorists and
+the engineers reach a truce.
+
+Vector indices are the new entrant in retrieval. They are not, on their own,
+a replacement for full-text search; they are a complement to it. Full text
+catches the proper nouns, the rare terms, the things you would search for
+exactly. Vector catches the paraphrase, the analogy, the question phrased
+in words the indexed document never used. A serious retrieval system has
+both, and a way of combining their scores.
+
+Embeddings turn text into vectors by training a model to put related text
+near in space and unrelated text far. The trained model is the unit of
+work; once trained, the embedding is cheap. Older approaches like LSA and
+LDA solved a similar problem with linear algebra and had the virtue of
+being interpretable. Neural embeddings are larger, slower to train, and
+better at capturing semantic similarity, which is the trade-off the field
+has accepted.
+
+Programming languages evolve. C was invented in the early 1970s and it is
+still, by some measures, the most influential language ever designed. Its
+descendants include C++, Java, JavaScript, C-Sharp, Go, Rust, Swift, and
+roughly every other major imperative language in current use. The reason
+is not nostalgia; it is that C committed to a small set of decisions about
+memory, types, and syntax that the descendants found worth keeping.
+
+Rust is the most recent language to take the C inheritance and aggressively
+rework one part of it. It keeps the syntax, the manual memory model, and the
+zero-cost abstraction philosophy. It throws out the unsafe pointer model and
+replaces it with a type-and-borrow system that proves at compile time that
+data races and use-after-free cannot occur. The trade is steep — Rust has
+the steepest learning curve of any mainstream language in current use — but
+the result is a language in which it is genuinely difficult to write certain
+classes of bug.
+
+Go went the other direction. It accepted that some classes of bug are worth
+the simplicity of letting a garbage collector handle memory, and it focused
+on making concurrency tractable. The goroutine and channel model is borrowed
+from Hoare's CSP, and the runtime is engineered so that spawning a hundred
+thousand goroutines is a normal thing to do rather than a stunt. The
+language is small enough to learn in a weekend, and the resulting programs
+are dense, fast, and easy to read.
+
+Object-oriented programming is older than most programmers realise. The
+original Simula 67 language introduced classes and inheritance to model
+discrete-event simulations of physical systems. Smalltalk took the idea and
+ran with it, making everything an object and message-passing the only form
+of computation. Most current object-oriented languages descend from C++,
+which made compromises that the purists never forgave but that millions
+of working programmers found acceptable.
+
+Functional programming has a longer pedigree than its current popularity
+suggests. Lisp was invented in 1958, and the mathematical roots reach back
+further to Church's lambda calculus. The functional renaissance of the
+last twenty years has been driven less by theoretical advances and more by
+the engineering reality that mutable state is hard to reason about in
+multi-core systems. Immutable data and pure functions parallelise without
+locks; mutable state requires careful coordination.
+
+Cryptography has an unusual relationship with engineering. A correct
+cryptographic algorithm is mathematically provable, in a way that almost
+nothing else in software is. But a correct implementation of that algorithm
+can leak through timing, through power consumption, through cache misses,
+through any side channel that the underlying hardware exposes. The art of
+cryptographic engineering is largely about closing side channels, and it is
+the side of the discipline that does not appear in the textbook proofs.
+
+The history of cryptography is the history of an arms race between the
+designers of ciphers and the cryptanalysts who break them. For most of
+recorded history the attackers were ahead. The advent of public-key
+cryptography in the 1970s changed the balance for the first time. RSA, the
+first practical public-key algorithm, was for a long time the only one most
+practitioners had heard of. Elliptic-curve schemes have largely replaced it
+in modern systems because they reach the same security level with much
+shorter keys.
+
+Quantum computing threatens to upend the balance again. A sufficiently
+large quantum computer running Shor's algorithm would break RSA and ECC in
+a single afternoon. The hardware does not yet exist, and there is honest
+disagreement about whether it ever will at the scales required. But the
+field is taking the threat seriously enough that post-quantum cryptography
+is now a discipline of its own, and standards bodies are well along the
+path to selecting algorithms that will resist a quantum attack.
+
+Operating systems are perhaps the most underrated engineering artifacts in
+modern life. A typical desktop runs millions of lines of operating system
+code, schedules thousands of tasks per second, manages megabytes of caches
+across multiple memory tiers, and presents to the user the illusion of a
+single quiet machine doing one thing at a time. The illusion is held
+together by decades of accumulated tricks, and the people who maintain it
+are a small and devoted minority of working programmers.
+
+The Unix model has proven remarkably durable. The decision in the early
+1970s to model everything as a file, to compose small programs through
+pipes, and to expose the system through a uniform command-line interface
+has outlasted every architectural fashion since. Linux, macOS, the various
+BSDs, and even Windows-Subsystem-for-Linux all preserve the model in
+broad strokes. The model is not perfect — pipes are unidirectional, files
+are not the right abstraction for everything, and the security model has
+required substantial extension — but the durability is a fact.
+
+Networking is the oldest of the modern software disciplines that the working
+programmer is expected to understand at least a little of. The OSI model
+gave us a vocabulary for layering, even if the seven layers do not map
+cleanly onto the four layers of the TCP-IP stack that actually shipped. The
+IP layer is connectionless and best-effort; the TCP layer above it provides
+the illusion of a reliable byte stream; the application layer treats that
+stream as whatever it wants — HTTP, SMTP, SSH, a custom protocol.
+
+The web is a wildly successful application of TCP-IP. HTTP began as a thin
+document-fetching protocol and accreted layers of complexity over thirty
+years until it became the substrate for nearly every interactive
+application in modern life. HTTPS, which threads TLS through HTTP, is now
+the default in most browsers and a hard requirement for most APIs.
+HTTP-version-2 multiplexes streams; HTTP-version-3 swaps TCP for QUIC and
+takes responsibility for connection management out of the kernel.
+
+Databases are perhaps the most varied software category in current use. A
+relational database, a document store, a graph database, a key-value
+store, a time-series database, a search index — these are all databases,
+and they share the goal of persisting data and answering queries against
+it. But the engineering trade-offs are wildly different, and selecting the
+right database for the workload is one of the more consequential decisions
+a system designer makes.
+
+The relational model has been the default for fifty years and is likely to
+remain the default for the foreseeable future. The mathematical foundation
+— Codd's algebra — gives the model a regularity that the alternatives lack.
+SQL is the lingua franca, and a working database administrator can move
+between Postgres, MySQL, SQL Server, and Oracle with relatively modest
+retraining. The model has weaknesses — it is awkward at hierarchical data,
+expensive at graph traversal, and unfriendly to schema evolution — but the
+strengths overwhelm them for most workloads.
+
+Document databases solve the schema-evolution problem at the cost of giving
+up referential integrity and consistent joins. MongoDB is the most-deployed
+example, and it works well when the data has a natural document shape and
+the application is willing to coordinate consistency in code rather than
+in the database. Graph databases solve the traversal problem and pay for
+it in less mature operational tooling. Time-series databases solve the
+volume-and-recency problem by accepting that most queries care about the
+recent past and most data is written sequentially.
+
+Search engines, especially modern ones based on Lucene, are databases of a
+particular kind. They are optimised for retrieving documents by content
+rather than by key, and the data structure that makes this efficient — the
+inverted index — has been the dominant search data structure for fifty
+years. Elasticsearch and Solr are the two best-known Lucene-based
+distributions; OpenSearch is the open-source fork that emerged from the
+Elasticsearch license change in 2021.
+
+The license change itself was a notable event in the open-source world. A
+small number of companies had been making substantial money by hosting
+Elasticsearch on behalf of customers, and Elastic the company decided to
+change the license so that they could not. Amazon, which had been hosting
+Elasticsearch as a managed service, forked the project. The community split
+roughly in half, and the long-term effects on the search-engine ecosystem
+are still being worked out.
+
+Compilers are the most thoroughly engineered software in regular use. A
+modern compiler accepts a high-level language, performs hundreds of
+analyses and transformations, and emits machine code that is often within
+a few percent of what a skilled assembly programmer would produce. The
+analyses are sophisticated — escape analysis, alias analysis, control-flow
+analysis, dataflow analysis, and dozens of named optimisations whose
+effects are individually modest but cumulatively profound.
+
+LLVM is the most influential compiler infrastructure project of the last
+twenty years. It separates the front end of compilation, which understands
+the source language, from the back end, which generates machine code for a
+specific target. A new language can be implemented by writing only the
+front end and reusing all of LLVM's optimisations and back ends. The
+project has become the substrate for Clang, Swift, Rust, Julia, and
+roughly every other recent systems language.
+
+Garbage collection is a topic that working programmers have feelings about.
+The objections are usually a combination of historical and theoretical:
+collectors used to pause the program for long enough to be felt, and the
+theoretical objection that collection imposes a cost the programmer cannot
+control or measure. Both objections are weaker than they used to be.
+Modern collectors pause the program for fractions of a millisecond, and
+their costs are well-characterised in published benchmarks.
+
+The original generational hypothesis — that most objects die young — has
+held up remarkably well across decades of measurement. Young generations
+are collected frequently with a copying collector; old generations are
+collected rarely with a mark-and-sweep or mark-and-compact collector. The
+hybrid is what makes modern garbage collection practical, and the
+engineering since the 1980s has been about reducing the cost of the rare
+full collections.
+
+Concurrency is the area where modern languages diverge most sharply. The
+shared-memory model with locks is the historical default, and it remains
+the most widely used. The actor model, embodied in Erlang and revived in
+languages like Akka and Pony, is a viable alternative that avoids locks by
+forbidding shared memory. The CSP model, embodied in Go's goroutines, is a
+third option that shares memory but coordinates through channels. Each
+model has its proponents, and none has won.
+
+Software-transactional memory was proposed in the 1990s as a way to bring
+the elegance of database transactions to in-memory concurrency. The idea
+is that a programmer marks a block of code as a transaction, and the
+runtime ensures it executes atomically with respect to other transactions.
+The implementations have had mixed success. Clojure ships with one and
+some programmers swear by it; most other languages have tried and either
+removed it or relegated it to a corner.
+
+The lambda calculus is one of the oldest models of computation. It was
+formalised by Alonzo Church in the 1930s, before there were any working
+computers. It is equivalent in power to the Turing machine, and a great
+many results in computer science were first proved in the lambda calculus
+and only later translated. Functional programming languages are direct
+descendants of it; many other languages have been retrofitted with
+features that the lambda calculus had from the start.
+
+Type theory is the modern continuation of the lambda calculus. The Curry-
+Howard correspondence revealed in the 1970s that types are propositions
+and programs are proofs — a result so surprising that it took the field a
+generation to absorb. Modern dependently-typed languages like Coq, Agda,
+Lean, and Idris use the correspondence directly: a program in these
+languages is also a proof of the proposition encoded by its type, and the
+type checker is also a proof checker.
+
+The history of operating systems shows a slow accretion of abstractions on
+top of bare hardware. The earliest systems offered little more than a
+program loader. Then came the file system, the process model, the
+shell, the networking stack, virtual memory, the windowing system,
+permissions, audit logs, and so on. Each abstraction added a layer that
+hid more of the hardware and made writing applications easier. The cost
+was that the abstractions sometimes leaked, and that diagnosing problems
+required understanding several layers at once.
+
+Virtualisation, in its various forms, is the most recent major addition.
+Hypervisors run multiple operating systems on a single piece of hardware;
+containers run multiple isolated processes on a single operating system;
+sandboxes run untrusted code with limited capabilities. Each layer trades
+some performance for more isolation, and the right level of isolation
+depends on the threat model. Public-cloud datacenters mostly run
+hypervisors at the bottom and containers within them.
+
+Cloud computing has changed the economics of running software more than any
+other development in the last two decades. The cost of standing up a server
+went from weeks of capital procurement to seconds of API calls; the cost
+of running ten servers became almost exactly ten times the cost of running
+one; and the cost of running a thousand became almost exactly a thousand
+times. The implications for system design have been profound. Workloads
+that used to require dedicated hardware can be rented by the second.
+
+Engineering disciplines absorb new tools slowly. The methods that work
+today — version control, code review, automated testing, continuous
+integration, observability — are all younger than most senior engineers.
+Each was unfamiliar when introduced and is now considered essential, and
+the resistance to adopting each followed a similar pattern: the senior
+engineers who had built systems without the new tool resented the
+suggestion that they had been doing it wrong, and the field moved on
+anyway.
+
+Version control is perhaps the most consequential of these tools. The
+ability to maintain a complete history of every change, to branch and
+merge, to attribute every line to the commit that introduced it, has
+changed how software is engineered. Git won this battle in the early 2010s
+and has not been seriously challenged since. The data model — content-
+addressed objects in a directed acyclic graph — is elegant enough that it
+deserves to be more widely understood than it is.
+
+Continuous integration emerged from the extreme-programming movement of the
+late 1990s. The premise is that every change is tested in isolation,
+automatically, immediately. The discipline forces the test suite to be
+comprehensive enough to be trusted, and it forces engineers to keep their
+changes small enough to be reviewable. The compounding effect over years
+is substantial: a project on continuous integration accumulates technical
+debt much more slowly than one without.
+
+Observability is a younger discipline. It is the practice of designing
+systems so that their internal state can be inferred from their external
+output — logs, metrics, traces. The discipline overlaps with monitoring
+but is broader: monitoring tells you whether the system is healthy;
+observability tells you why it is unhealthy. Modern distributed systems
+require it, and the tooling — Prometheus, Grafana, OpenTelemetry — has
+matured enough that adopting it is no longer a major undertaking.
+
+The history of programming is full of ideas that were ahead of their time.
+Smalltalk introduced live programming, image-based persistence, and a
+fully reflective environment in the late 1970s; most current programming
+environments do not yet match it. Hypertext was prototyped in the 1960s
+and only became universal with the web thirty years later. Object-
+orientation was used in Simula in 1967 and only became mainstream in the
+1990s. The pattern repeats: an idea is invented, dismissed, rediscovered,
+and finally adopted, usually under a slightly different name.

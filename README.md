@@ -23,12 +23,18 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ## Quick start
 
 ```bash
-ki configure                    # one-time: pick local Neo4j, Aura, or an existing instance
-ki index ./my-vault             # sync the folder into the graph (idempotent)
-ki search "what did I write about retrieval?"
+ki configure                                  # one-time: pick local Neo4j, Aura, or an existing instance
+ki index ./my-vault                           # sync the folder into the graph (idempotent)
 
-ki rm ./my-vault/notes/old.md   # remove a doc from the index (source file untouched)
+ki search "retrieval"                         # default: section content (B.2)
+ki search "graph" --type document --k 5       # document title (B.1)
+ki search "" --type neighbors --doc-uri <uri> # 1-hop link neighbourhood (B.3)
+
+ki rm ./my-vault/notes/old.md                 # remove a doc from the index (source file untouched)
+ki rm ./my-vault --vault                      # remove a whole vault (typed confirmation)
 ```
+
+All five commands: `ki configure | index | search | rm | init`. Run any with `--help` for flags. `KI_PROFILE=work ki index ./vault` overrides the profile per-invocation.
 
 ## What ki indexes
 

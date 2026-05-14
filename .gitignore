@@ -42,6 +42,7 @@ docs/.docusaurus/
 
 # Generated test output
 /foobar/
+/out/
 
 tmp-e2e-tests/
 tmp*/

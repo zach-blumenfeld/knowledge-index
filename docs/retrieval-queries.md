@@ -86,9 +86,15 @@ B.3 Document neighbourhood
 // (the doc itself or any of its sections) via `:HAS_SECTION*0..`, then jumps
 // across documents via `:LINKS_TO`, and projects each endpoint back to its
 // owning Document.
+//
+// We use a *quantified path pattern* for the `:LINKS_TO` hop chain rather
+// than legacy `*1..n` variable-length syntax, because legacy variable-length
+// requires a literal upper bound; quantified path patterns accept a parameter
+// in the quantifier. See:
+//   https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/
 MATCH (start:Document {uri: $uri})
 MATCH (start)-[:HAS_SECTION*0..]->(startElem)
-MATCH linkPath = (startElem)-[:LINKS_TO*1..$n]->(endElem)
+MATCH linkPath = (startElem) (()-[:LINKS_TO]->()){1,$n} (endElem)
 WITH endElem, length(linkPath) AS distance
 OPTIONAL MATCH (endDoc:Document)-[:HAS_SECTION*]->(endElem)
 WHERE endElem:Section

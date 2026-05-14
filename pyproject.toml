@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "knowledge-index"
+version = "0.1.0"
+description = "Search index for agent memory — knowledge graph index for your documents."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Zach Blumenfeld" }]
+keywords = ["knowledge-graph", "neo4j", "obsidian", "markdown", "search", "agent-memory"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Database",
+  "Topic :: Text Processing :: Markup :: Markdown",
+]
+dependencies = [
+  "click>=8.1",
+  "rich>=13.7",
+  "neo4j>=5.20",
+  "markdown-it-py>=3.0",
+  "python-frontmatter>=1.1",
+  "aiofiles>=23.2",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+ki = "ki.cli:main"
+knowledge-index = "ki.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/zach-blumenfeld/knowledge-index"
+Repository = "https://github.com/zach-blumenfeld/knowledge-index"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ki"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/ki", "README.md", "LICENSE", "docs/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "integration: integration tests that require a running Neo4j (auto-skipped when unavailable)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "W", "UP"]
+ignore = [
+  "E501",  # line length is enforced by formatter; rare overruns OK
+  "B008",  # function-call default args (click idiom)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]

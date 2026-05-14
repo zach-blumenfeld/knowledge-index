@@ -2,7 +2,7 @@
 
 All `Vault`, `Document`, and `Section` nodes MERGE on `uri`:
 
-- `Vault.uri`    = UUID v4 from the `.graph-vault/vault-id` marker file in the vault root.
+- `Vault.uri`    = UUID v4 from the `.ki/vault-id` marker file in the vault root.
 - `Document.uri` = `<vaultId>/<file path within vault>` (slugified).
 - `Section.uri`  = `<vaultId>/<file path within vault>#<slugified heading path>`.
 
@@ -10,7 +10,7 @@ All `Vault`, `Document`, and `Section` nodes MERGE on `uri`:
 
 `LOADED` relationships can be parallel (one per ingest) and so require a relationship-level MERGE key: a system-generated UUID stored as `loadId`. All other relationships (`USES_VAULT`, `HAS_DOCUMENT`, `HAS_SECTION`, `LINKS_TO`) are non-parallel and MERGE on the endpoint pair alone.
 
-**Vault marker file.** On first ingest of a folder, the writer reads `.graph-vault/vault-id`. If present, that UUID is the vault identity. If absent, a fresh UUID is generated and written into the marker. Treating the marker as authoritative means a folder synced across machines (Dropbox, iCloud, git) resolves to the same `:Vault` node across users and machines, and `USES_VAULT` becomes load-bearing (multiple users can `USES_VAULT` the same vault). Identity is independent of user and machine; only `Vault.path` is machine-scoped.
+**Vault marker file.** On first ingest of a folder, the writer reads `.ki/vault-id`. If present, that UUID is the vault identity. If absent, a fresh UUID is generated and written into the marker. Treating the marker as authoritative means a folder synced across machines (Dropbox, iCloud, git) resolves to the same `:Vault` node across users and machines, and `USES_VAULT` becomes load-bearing (multiple users can `USES_VAULT` the same vault). Identity is independent of user and machine; only `Vault.path` is machine-scoped.
 
 #### Per-vault-ingest write
 
