@@ -4,7 +4,7 @@
 
 One searchable graph index across all your documents — point `ki` at a folder (or many) and query the result from the CLI or any AI agent. Multiple folders and users can share the same index. Source files are never modified, so it's safe on an Obsidian vault, a git repo, or a research folder. Backed by Neo4j.
 
-**The fast path to harmonious memory**
+
 install `ki`, wire into Claude Code, ask Claude what's in your notes:
 
 ```bash
@@ -16,6 +16,7 @@ ki skill install claude-code       # drops the routing rules into ~/.claude/skil
 Then in Claude Code:
 
 > "Incorporate `~/Notes` into your memory
+
 > tell me what I've written about retrieval."*
 
 That's the whole loop. Read on for the same flow with other agents, direct CLI use, and what's not in this release.
