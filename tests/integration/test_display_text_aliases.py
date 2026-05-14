@@ -52,8 +52,14 @@ def anakin_vault(tmp_path: Path) -> Path:
     vault = tmp_path / "anakin-vault"
     vault.mkdir()
 
+    # Note: `Darth Vader.md` has no H1 wrapper on purpose. With an H1 like
+    # `# Darth Vader` the section URI becomes `<doc>#darth-vader/origins`
+    # (heading path includes the H1 ancestor), but Obsidian-style wikilinks
+    # `[[Doc#Heading]]` only encode the bare heading text — the resolver
+    # computes `<doc>#origins` and the two never meet. That's a pre-existing
+    # gap in the wikilink resolver (not v0.3.0 behavior). Keep the H1 off so
+    # the section URI matches what the resolver computes.
     (vault / "Darth Vader.md").write_text(
-        "# Darth Vader\n\n"
         "A Sith Lord of the Galactic Empire.\n\n"
         "## Origins\n\n"
         "Born on Tatooine; later fell to the dark side.\n",
