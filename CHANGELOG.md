@@ -13,6 +13,23 @@ line, up to the next `## [` heading. Keep version sections under that
 exact pattern. Editorial prose is fine; just don't change the heading.
 -->
 
+## [0.3.1] — 2026-05-14
+
+### Fixed
+
+- **Integration test `test_section_target_display_text_aliases_the_section`
+  no longer fails when run live.** The fixture wrote `Darth Vader.md` with
+  an `# Darth Vader` H1, which makes the `## Origins` section's URI
+  `<doc>#darth-vader/origins` (heading path includes the H1 ancestor). The
+  Obsidian-style wikilink `[[Darth Vader#Origins|…]]` only encodes the
+  bare heading text, so the resolver computed `<doc>#origins` and the link
+  never landed on the real section — which meant v0.3.0's display-text
+  alias step had nothing to alias. Dropped the H1 from the fixture so the
+  section URI matches what the resolver computes. This is a test fixture
+  fix only; the v0.3.0 alias code is unchanged. The underlying resolver
+  gap (`[[Doc#Heading]]` against sections nested under an H1) is
+  pre-existing and out of scope for this release.
+
 ## [0.3.0] — 2026-05-14
 
 ### Added
