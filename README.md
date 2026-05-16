@@ -156,7 +156,7 @@ Of the ten queries defined in [`docs/retrieval-queries.md`](docs/retrieval-queri
 | `--type document`             | B.1   | Document title fulltext            |
 | `--type neighbors --doc-uri`  | B.3   | 1-hop `LINKS_TO` neighbourhood     |
 
-Not yet exposed: B.4 (full document text), B.5 (frontmatter + section titles), B.6 (get sections), B.7/B.8 (±N section windowing), B.9 (backlinks), B.10 (shortest path between two documents).
+The remaining seven retrieval shapes — full-document text, frontmatter + section titles, section get-by-URI, ±N section windowing (full and summary), backlinks, shortest path — are tracked at [#6](https://github.com/zach-blumenfeld/knowledge-index/issues/6).
 
 ### Markdown (`.md`) only — convert other formats first
 
@@ -175,6 +175,8 @@ These are unlikely to change soon but worth being explicit about:
 - **Plaintext passwords in `~/.config/ki/config.yaml`** (file mode `0600`). OS keyring integration is the v2 upgrade path.
 - **No `--purge`, ever.** `ki` removes data from the index; source files are *always* untouched. See [`AGENTS.md`](AGENTS.md) §Non-negotiable design principles.
 - **PyPI is the only supported install.** No Homebrew formula, no `curl | sh`, no standalone binaries.
+
+For everything else on the active roadmap (embeddings, PageRank, MCP server, native non-markdown ingest, …), see the open issues at <https://github.com/zach-blumenfeld/knowledge-index/issues>.
 
 ## Development
 

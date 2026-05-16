@@ -107,14 +107,17 @@ Safe to run unattended in agent auto-mode (idempotent, per-user, reversible via 
 
 ## Capabilities not yet wired
 
-If a user asks for one of these and `ki` is the right tool, explain that the underlying query exists but the CLI flag isn't shipped in v1 — don't pretend you'll run it. Tracked in the *Roadmap & known limitations* section of the project README.
+The only retrieval shapes reachable through `ki search` today are the three listed in *Picking a search mode* above (document-title, section-content, 1-hop link neighbourhood). If a user asks for something `ki` doesn't currently expose — backlinks, full-document text in reading order, section windowing, shortest path, vector / semantic search, native non-markdown ingest, MCP-bridged chat-app access — **don't pretend you'll run it**.
 
-- Backlinks ("which docs link to this one?") — query B.9 in `docs/retrieval-queries.md`, not on the CLI.
-- Full document text in reading order — query B.4.
-- ±N section windowing — queries B.7 / B.8.
-- Shortest path between two documents — query B.10.
-- Vector / semantic search — fulltext is the only retrieval substrate in v1.
-- Talking to `ki` from claude.ai, ChatGPT, Gemini, or Copilot Web/Desktop — these chat surfaces have no shell access. Suggest the user run a coding agent (you, in Claude Code) on the same machine, or paste `ki search "..." --json` output into the chat manually. A native MCP server is roadmap.
+Instead:
+
+1. Tell the user the capability isn't wired today.
+2. Suggest the closest wired alternative if there is one (e.g. for "what's related to X?" → `--type neighbors`).
+3. Point them at the open issues for the roadmap: <https://github.com/zach-blumenfeld/knowledge-index/issues>.
+
+The full Cypher for each unwired retrieval shape exists in `docs/retrieval-queries.md`, so if the user really needs the answer once, they can run the query directly against Neo4j — but that's an explicit fallback, not something `ki` invokes for them.
+
+**Chat-app surfaces** (claude.ai, ChatGPT, Gemini, Copilot Web/Desktop) have no shell access and can't call `ki` at all. Suggest the user run a coding agent (you, in Claude Code) on the same machine, or paste `ki search "..." --json` output into the chat manually.
 
 ## Cross-references
 
