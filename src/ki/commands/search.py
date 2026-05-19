@@ -1,16 +1,17 @@
 """`ki search <query>` — fulltext + graph retrieval.
 
 v1 flags:
-  --type {section|document|neighbors}    which retrieval shape to use
-                                         (B.2, B.1, B.3 respectively)
-  --k N                                  result limit / depth
-  --json                                 emit machine-readable JSON
-  --doc-uri URI                          (--type neighbors) start document
+  --type {section|document|neighbors|vault}  which retrieval shape to use
+                                             (B.2, B.1, B.3, B.11 respectively)
+  --k N                                      result limit / depth
+  --json                                     emit machine-readable JSON
+  --doc-uri URI                              (--type neighbors) start document
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any
 
 import click
@@ -19,9 +20,26 @@ from rich.table import Table
 
 from ..config import find_config_path, load_config
 from ..neo4j_client import driver_for
-from ..search.queries import run_b1, run_b2, run_b3
+from ..search.queries import run_b1, run_b2, run_b3, run_vault_search
 
 console = Console()
+
+
+def _warn_missing_vault_description(rows: list[dict[str, Any]]) -> None:
+    """One-line stderr warning per vault row whose description is null/empty.
+
+    Hint that the user (or routing agent) should set `description:` in
+    `.ki/vault.yaml` so future vault searches are more discriminative.
+    """
+    for r in rows:
+        desc = r.get("description")
+        if desc is None or (isinstance(desc, str) and not desc.strip()):
+            name = r.get("display_name") or r.get("name") or r.get("vault_uri")
+            print(
+                f"warning: vault {name!r} has no description set — "
+                "add one to .ki/vault.yaml for sharper agent routing.",
+                file=sys.stderr,
+            )
 
 
 def cmd_search(
@@ -51,13 +69,17 @@ def cmd_search(
                         "--type neighbors requires --doc-uri <uri>"
                     )
                 rows = run_b3(session, doc_uri, n=k)
+            elif search_type == "vault":
+                rows = run_vault_search(session, query, k=k)
             else:
                 raise click.ClickException(f"unknown --type {search_type}")
 
     if as_json:
         click.echo(json.dumps(rows, default=str, indent=2))
-        return 0
-    _render_table(rows, search_type)
+    else:
+        _render_table(rows, search_type)
+    if search_type == "vault":
+        _warn_missing_vault_description(rows)
     return 0
 
 
@@ -88,4 +110,19 @@ def _render_table(rows: list[dict[str, Any]], search_type: str) -> None:
         table.add_column("uri", style="dim")
         for r in rows:
             table.add_row(str(r.get("distance")), str(r.get("title")), str(r.get("document_uri")))
+    elif search_type == "vault":
+        table.add_column("score", style="green", justify="right")
+        table.add_column("name")
+        table.add_column("path", style="dim")
+        table.add_column("description")
+        for r in rows:
+            desc = r.get("description") or ""
+            if len(desc) > 120:
+                desc = desc[:117].rstrip() + "..."
+            table.add_row(
+                f"{r.get('score', 0):.2f}",
+                str(r.get("display_name") or r.get("name")),
+                str(r.get("path") or ""),
+                desc,
+            )
     console.print(table)

@@ -6,7 +6,7 @@ B.4–B.10 ship as constants so they're easy to wire up later.
 
 from __future__ import annotations
 
-INDEX_NAME = "doc_section_search"
+INDEX_NAME = "content_search"
 
 
 # B.1 — Document title fulltext.
@@ -39,6 +39,24 @@ RETURN doc.uri AS document_uri,
        section.headingLevel AS heading_level,
        section.content AS content,
        score
+""".strip()
+
+
+# B.11 — Vault fulltext (`name` + `displayName` + `description`). Same shared
+# `content_search` index, filtered to :Vault. Returns enough to route subsequent
+# searches (`--vault <uri>`) and to render a helpful list.
+B11_VAULT_SEARCH = """
+CALL db.index.fulltext.queryNodes($index_name, $query)
+YIELD node, score
+WHERE node:Vault
+RETURN node.uri AS vault_uri,
+       node.name AS name,
+       node.displayName AS display_name,
+       node.path AS path,
+       node.description AS description,
+       score
+ORDER BY score DESC
+LIMIT toInteger($k)
 """.strip()
 
 
@@ -81,4 +99,12 @@ def run_b2(session, query: str, k: int = 10) -> list[dict]:
 def run_b3(session, doc_uri: str, n: int = 2) -> list[dict]:
     # `n` is bounded server-side via the quantified path pattern bound.
     res = session.run(B3_NEIGHBOURHOOD, parameters={"uri": doc_uri, "n": int(n)})
+    return [dict(r) for r in res]
+
+
+def run_vault_search(session, query: str, k: int = 10) -> list[dict]:
+    res = session.run(
+        B11_VAULT_SEARCH,
+        parameters={"index_name": INDEX_NAME, "query": query, "k": k},
+    )
     return [dict(r) for r in res]

@@ -3,9 +3,10 @@
 User-visible commands:
   ki configure              one-time Neo4j connection setup
   ki index <path>           sync a folder of markdown into the graph
-  ki search <query>         retrieve via fulltext + graph (B.1 / B.2 / B.3)
+  ki search <query>         retrieve via fulltext + graph (B.1 / B.2 / B.3 / B.11)
   ki rm <path>              remove a doc / subtree / vault from the index
-  ki init <path>            (advanced) write `.ki/vault-id` without indexing
+  ki vault list             list every indexed vault with its description
+  ki init <path>            (advanced) write `.ki/vault.yaml` without indexing
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from .commands.skill import cmd_install as cmd_skill_install
 from .commands.skill import cmd_list as cmd_skill_list
 from .commands.skill import cmd_print as cmd_skill_print
 from .commands.skill import cmd_remove as cmd_skill_remove
+from .commands.vault import cmd_vault_list
 from .ingest.batcher import DEFAULT_BATCH_SIZE
 from .ingest.pipeline import DEFAULT_CONCURRENCY, DEFAULT_MAX_FILE_SIZE
 
@@ -98,8 +100,10 @@ def index_cmd(
 @click.argument("query")
 @click.option("--profile", default=None)
 @click.option(
-    "--type", "search_type", type=click.Choice(["section", "document", "neighbors"]),
-    default="section", help="section=B.2, document=B.1, neighbors=B.3",
+    "--type", "search_type",
+    type=click.Choice(["section", "document", "neighbors", "vault"]),
+    default="section",
+    help="section=B.2, document=B.1, neighbors=B.3, vault=B.11",
 )
 @click.option("--k", "k", type=int, default=10, help="result limit / depth")
 @click.option("--json", "as_json", is_flag=True, default=False)
@@ -135,7 +139,7 @@ def search_cmd(
 @click.option("--yes", "yes_flag", is_flag=True, default=False, help="Skip prompts.")
 @click.option(
     "--keep-marker", is_flag=True, default=False,
-    help="(--vault) keep .ki/vault-id so the next `ki index` rebuilds the same Vault.uri.",
+    help="(--vault) keep .ki/vault.yaml so the next `ki index` rebuilds the same Vault.uri.",
 )
 def rm_cmd(
     target: str,
@@ -157,10 +161,22 @@ def rm_cmd(
     )
 
 
-@main.command("init", help="(Advanced) write .ki/vault-id without indexing.")
+@main.command("init", help="(Advanced) write .ki/vault.yaml without indexing.")
 @click.argument("path", type=click.Path(file_okay=False, dir_okay=True, path_type=Path))
 def init_cmd(path: Path) -> None:
     sys.exit(cmd_init(path))
+
+
+@main.group("vault", help="Inspect indexed vaults.")
+def vault_group() -> None:
+    pass
+
+
+@vault_group.command("list", help="List every indexed vault with its description.")
+@click.option("--profile", default=None)
+@click.option("--json", "as_json", is_flag=True, default=False)
+def vault_list_cmd(profile: str | None, as_json: bool) -> None:
+    sys.exit(cmd_vault_list(profile=profile, as_json=as_json))
 
 
 @main.group("skill", help="Install / remove the agent-skill bundle for supported AI agents.")

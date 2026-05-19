@@ -28,9 +28,9 @@ CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
   FOR (s:Section) REQUIRE s.uri IS UNIQUE
 """.strip()
 
-FULLTEXT_INDEX = """
-CREATE FULLTEXT INDEX doc_section_search IF NOT EXISTS
-  FOR (n:Document|Section) ON EACH [n.displayName, n.content, n.aliases]
+CONTENT_SEARCH_INDEX = """
+CREATE FULLTEXT INDEX content_search IF NOT EXISTS
+  FOR (n:Document|Section|Vault) ON EACH [n.displayName, n.content, n.aliases, n.description]
 """.strip()
 
 SCHEMA_STATEMENTS = (
@@ -38,7 +38,7 @@ SCHEMA_STATEMENTS = (
     CONSTRAINT_VAULT,
     CONSTRAINT_DOCUMENT,
     CONSTRAINT_SECTION,
-    FULLTEXT_INDEX,
+    CONTENT_SEARCH_INDEX,
 )
 
 
@@ -218,4 +218,18 @@ MATCH (v:Vault {uri: $vaultUri})
 RETURN v.displayName AS displayName,
        v.path AS path,
        v.name AS name
+""".strip()
+
+
+# `ki vault list` — list every indexed vault with its user-authored description.
+# Ordered most-recently-ingested first so the active vault floats to the top.
+VAULT_LIST = """
+MATCH (v:Vault)
+RETURN v.uri AS uri,
+       v.name AS name,
+       v.displayName AS displayName,
+       v.path AS path,
+       v.description AS description,
+       v.lastSeenAt AS lastSeenAt
+ORDER BY v.lastSeenAt DESC, v.displayName
 """.strip()

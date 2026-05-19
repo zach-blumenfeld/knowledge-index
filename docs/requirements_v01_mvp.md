@@ -27,7 +27,7 @@ Two working commands: `ki index` (sync a folder into the graph) and `ki search` 
 
 ## Core design principle: ki is an index, not a document store
 
-`ki` **never mutates source documents.** The user's markdown files are owned by the user (and by their editor, their git, their Dropbox sync, their Obsidian vault) — `ki` only reads them and maintains a *derived index* in Neo4j. Anything `ki` writes lives in `~/.config/ki/` (config) or in Neo4j (the index), or — in the single exception — in `.ki/vault-id`, which is opaque metadata, not content.
+`ki` **never mutates source documents.** The user's markdown files are owned by the user (and by their editor, their git, their Dropbox sync, their Obsidian vault) — `ki` only reads them and maintains a *derived index* in Neo4j. Anything `ki` writes lives in `~/.config/ki/` (config) or in Neo4j (the index), or — in the single exception — in `.ki/vault.yaml`, a small file carrying vault identity (`uri:`, written once on first ingest) plus optional user-authored vault-level metadata such as `description:`. `ki` writes `uri:` and is **read-only** w.r.t. every other field the user puts in that file.
 
 Practical consequences:
 - No `ki rm --purge`, no `ki rewrite`, no "fix this frontmatter," no "auto-organize my notes." If a feature requires writing into a `.md` file, it's out of scope.
@@ -88,7 +88,7 @@ ki configure --profile work # add/edit a named profile
 
 mkdir my-vault              # plain folder, no special tooling
 echo "some ideas" >> my-vault/ideas.md
-ki index ./my-vault         # syncs to Neo4j (idempotent; auto-creates the vault-id marker on first run)
+ki index ./my-vault         # syncs to Neo4j (idempotent; auto-creates .ki/vault.yaml on first run)
 ki search "..." [flags]     # exposes retrieval queries via flags
 ki rm ./my-vault/notes/idea.md      # remove a document from the index (source file untouched)
 ki rm ./my-vault --vault            # remove an entire vault from the index (source files untouched)
@@ -103,13 +103,13 @@ KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents /
 
 `ki index` is intentionally do-the-right-thing on first run rather than gated behind a separate init step. Specifically:
 
-- **Missing `.ki/vault-id`** → auto-create the marker (one UUID v4 written to one file; reversible with `rm -rf .ki/`). Prints a one-line notice: *"Initialized vault at ./my-vault (id: 7f3c…)."*
+- **Missing `.ki/vault.yaml`** → auto-create the marker (a tiny YAML file containing a fresh `uri:` UUID; reversible with `rm -rf .ki/`). Prints a one-line notice: *"Initialized vault at ./my-vault (id: 7f3c…)."* The file is also where the user can add an optional `description:` to give agents a routing hint about what this vault is for; `ki` is read-only w.r.t. that field.
 - **Missing `~/.config/ki/config.yaml`** → drop into the `ki configure` flow interactively. On agent auto-mode, default to local `neo4j-local` and tell the user (see *Agent auto-mode behavior* below).
 - **Re-index of unchanged files** → skip via `Document.fileHash` (SHA-256 stored per document; that's literally what `fileHash` is for in the schema). Only changed / new files hit Neo4j.
 
 ### `ki init` (optional, advanced)
 
-A thin alias that writes `.ki/vault-id` *without* indexing. Useful only in narrow cases — e.g., pre-creating the marker so it's committed to git before any content exists. Not part of the quick-start; most users never run it.
+A thin alias that writes `.ki/vault.yaml` *without* indexing. Useful only in narrow cases — e.g., pre-creating the marker so it's committed to git before any content exists. Not part of the quick-start; most users never run it.
 
 ### Removal (`ki rm`)
 
@@ -124,7 +124,7 @@ ki rm 7f3c-vault-uuid --vault        # remove by Vault.uri when the path isn't h
 
 ki rm <path> --dry-run               # show what would be removed; touch nothing
 ki rm <path> --yes                   # skip prompts (scripts / agent auto-mode)
-ki rm <vault> --vault --keep-marker  # remove vault data but keep .ki/vault-id;
+ki rm <vault> --vault --keep-marker  # remove vault data but keep .ki/vault.yaml;
                                      #   next `ki index` rebuilds onto the same Vault.uri
                                      #   (clean reset idiom)
 ```
@@ -133,7 +133,7 @@ ki rm <vault> --vault --keep-marker  # remove vault data but keep .ki/vault-id;
 
 - **Source files are never touched.** `ki rm` removes nodes from Neo4j; that's all. If the user wants files gone, they use `rm`. (See *Core design principle*.)
 - **Blast radius scales confirmation.** Single doc = no prompt. Subtree = prompt with count. Whole vault = require `--vault` *and* typed confirmation.
-- **Marker stays unless told otherwise.** Removing a vault removes its `.ki/vault-id` by default (full removal). `--keep-marker` preserves it so the next `ki index` rebuilds onto the same `Vault.uri` — the natural "reset this vault" idiom.
+- **Marker stays unless told otherwise.** Removing a vault removes its `.ki/vault.yaml` by default (full removal). `--keep-marker` preserves it so the next `ki index` rebuilds onto the same `Vault.uri` — the natural "reset this vault" idiom. Note: this also preserves any user-authored description in the file.
 - **`LOADED` provenance edges are deleted with their endpoints** via `DETACH DELETE`. Provenance is moot once the entity is gone; if anyone needs ingest history, it's reconstructable from logs.
 
 **Agent auto-mode handling:** single-doc and subtree `rm` are auto-fine (reversible by re-running `ki index`). Whole-vault `rm` requires explicit user consent every time, regardless of harness permission, because it destroys the graph for that vault. See *Agent auto-mode behavior* for the full partition.
@@ -171,7 +171,7 @@ Both option 1 and option 2 shell out to existing tools, parse the resulting cred
 **Auto without asking** (reversible, local, no cost):
 - Start `neo4j-local` (downloads Neo4j + JRE on first run; reversible via `neo4j-local stop && neo4j-local clear-cache`).
 - Write `~/.config/ki/config.yaml` with the resulting credentials.
-- Write `.ki/vault-id` markers.
+- Write `.ki/vault.yaml` markers (auto-create with `uri:` only — leave any user-authored fields alone).
 - Index the vault.
 - Re-run idempotent operations.
 
@@ -194,7 +194,7 @@ Both option 1 and option 2 shell out to existing tools, parse the resulting cred
 ## Key design decisions
 
 ### Vault identity via marker file
-Vault `uri` is a UUID v4 written to `.ki/vault-id` on first ingest (mirrors `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user and machine. This makes `USES_VAULT` load-bearing: multiple users can use the same vault.
+Vault `uri` is a UUID v4 written to `.ki/vault.yaml` on first ingest (mirrors `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user and machine. This makes `USES_VAULT` load-bearing: multiple users can use the same vault. The same file optionally carries a user-authored `description:` that flows into `Vault.description` on each ingest (latest write wins) and powers `ki search --type vault`.
 
 ### Node schema: User / Vault / Document / Section
 All non-User nodes identified by `uri` (single-property MERGE key):
@@ -211,7 +211,7 @@ User is *not* in the URI — load provenance lives on the `LOADED` edge.
 Documents, sections, and edges all use the standard `UNWIND` pattern — driver-side batches of 1–5k rows per transaction. `LOADED` provenance props (`agentName`, `agentVersion`, `os`, `hostname`, …) are lifted out of `UNWIND` into a single `$loadProps` map so they aren't duplicated `N`× per row. One `$loadId` UUID is shared between the User→Vault and User→Document `LOADED` edges produced by a single ingest, so a single `loadId` retrieves the full ingest event.
 
 ### Fulltext as v1 retrieval substrate (no embeddings)
-`doc_section_search` fulltext index over `Document|Section` on `displayName + content + aliases`. Vector indexes deferred. Indexing `aliases` lets wikilink alternates ("JFK", "John F Kennedy") hit the same doc.
+`content_search` fulltext index over `Document|Section|Vault` on `displayName + content + aliases + description`. Vector indexes deferred. Indexing `aliases` lets wikilink alternates ("JFK", "John F Kennedy") hit the same doc; indexing `description` on `:Vault` enables `ki search --type vault` for agent routing across vaults. Neo4j silently skips missing properties per label, so the same index serves all three node types.
 
 ## Scalability
 

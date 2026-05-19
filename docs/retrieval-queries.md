@@ -14,7 +14,7 @@ Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
 | `:NEXT_SECTION` / `:NEXT_PARAGRAPH`        | `:NEXT_SECTION` — threads ALL sections of a document in DFS reading order          |
 | `:MENTIONS` (article-to-article projected) | `:LINKS_TO` (`Document`\|`Section` → `Document`\|`Section`)                        |
 | `:REDIRECTS_TO`                            | `Document.aliases` (wikilinks resolved at ingest time)                             |
-| Vector indexes on title / chunk            | Fulltext index `doc_section_search` on `displayName` + `content` + `aliases`       |
+| Vector indexes on title / chunk            | Fulltext index `content_search` on `displayName` + `content` + `aliases` + `description` (covers `:Document`, `:Section`, **and** `:Vault`) |
 
 > **`NEXT_SECTION` semantics.** The new model threads every section of a
 > document into a single linear chain in DFS reading order — top to bottom as
@@ -26,12 +26,12 @@ Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
 ### Parameters
 - `$uri` — the `Document.uri` (UUID-prefixed slugified path, see §4.3).
 - `$section_uri`, `$section_uris` — same convention for sections.
-- `$index_name` — `'doc_section_search'` (the fulltext index from §4.4).
+- `$index_name` — `'content_search'` (the fulltext index from §4.4).
 - `$query` — fulltext query string (Lucene syntax).
 - `$k`, `$n` — limit / window size.
 
 ### Per-query design notes
-- **B.1 / B.2 (vector → fulltext)** — v1 has no vector index per §4.4, so both use `doc_section_search` (the unified `Document|Section` fulltext index, over `displayName` + `content` + `aliases`). Filter to `:Document` or `:Section` post-yield. Notes on swapping to vector when added.
+- **B.1 / B.2 / B.11 (vector → fulltext)** — v1 has no vector index per §4.4, so all three use `content_search` (the unified `Document|Section|Vault` fulltext index, over `displayName` + `content` + `aliases` + `description`). Filter by label (`:Document` / `:Section` / `:Vault`) post-yield. Notes on swapping to vector when added.
 - **B.3 neighbourhood** — `:MENTIONS` → `:LINKS_TO`; alias-based redirect resolution happens at ingest, so no `REDIRECTS_TO*` canonicalisation needed. Traversal flows through `(doc)-[:HAS_SECTION*0..]->(elem)` to handle section-as-link-endpoint, then projects each hop back to its owning document.
 - **B.4 document text** — walks `NEXT_SECTION*0..` from the first section (the direct `HAS_SECTION` child with no incoming `NEXT_SECTION`), orders by path length, adds `reading_order` to the output. Defensive `(start)-[:HAS_SECTION*]->(section)` keeps the walk inside this document. Matches the shape of old A.4 closely.
 - **B.5 frontmatter** — `infobox` → `frontmatter` (the natural structured-metadata analog); same row shape (`kind`, `uri`, `text`). Sections returned in strict DFS reading order via the `NEXT_SECTION` walk.
@@ -43,7 +43,7 @@ Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
 
 B.1 Document title fulltext search
 ```cypher
-// Vector replacement: `doc_section_search` indexes displayName + content +
+// Vector replacement: `content_search` indexes displayName + content +
 // aliases. To bias toward titles, boost in the Lucene query
 // (e.g. `displayName:"foo"^3 foo`) or post-filter by displayName.
 // When a vector index is added (deferred — see §4.4), swap to `db.index.vector.queryNodes`.
@@ -294,4 +294,25 @@ RETURN i AS hop,
        fromElem.uri AS evidence_element_uri,
        fromElem.content AS evidence_content
 ORDER BY hop
+```
+
+
+B.11 Vault fulltext search
+```cypher
+// New in v0.4.0. Same shared `content_search` index as B.1/B.2; filter to
+// `:Vault` so we only surface vault-level results. The `description` field
+// is user-authored (read from `.ki/vault.yaml` on each ingest), so this is
+// the routing query an agent runs to pick the right vault for a topic
+// *before* drilling into doc/section search scoped to that vault.
+CALL db.index.fulltext.queryNodes($index_name, $query)
+YIELD node, score
+WHERE node:Vault
+RETURN node.uri AS vault_uri,
+       node.name AS name,
+       node.displayName AS display_name,
+       node.path AS path,
+       node.description AS description,
+       score
+ORDER BY score DESC
+LIMIT toInteger($k)
 ```

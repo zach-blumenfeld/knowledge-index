@@ -51,6 +51,7 @@ The commands you'll actually use:
 ki configure                     # one-time per machine: writes ~/.config/ki/config.yaml
 ki index ./path/to/vault         # sync a folder into the graph (idempotent; auto-creates the vault marker)
 ki search "query" [flags]        # retrieve via fulltext + graph traversal
+ki vault list                    # show every indexed vault with its description (routing hint)
 ki rm ./path/to/file.md          # remove a document from the index (source file untouched)
 ki rm ./path/to/vault --vault    # remove a whole vault from the index (source files untouched)
 ```
@@ -66,8 +67,20 @@ Also available: `ki init <path>` (advanced: write the vault marker without index
 | *"What did I write about X?"* (default; finest grain)    | `--type section` (default)                      | B.2 — section content fulltext |
 | *"Find the doc called Y"* / *"the note where I…"*        | `--type document --k 5`                         | B.1 — document title fulltext  |
 | *"What's related to this doc?"*                          | `--type neighbors --doc-uri <uri> --k 2`        | B.3 — 1-hop `LINKS_TO` neighbourhood |
+| *"Which of my vaults is about X?"* (cross-vault routing) | `--type vault --k 5`                            | B.11 — vault fulltext over `description` |
 
 Add `--json` for machine-readable output. `--k` is the result limit (or hop depth for `neighbors`). `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
+
+**Multi-vault routing.** When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --type vault`) to pick the right one, then run doc/section search scoped to it. If a vault has no `description:` set, `ki` emits a stderr warning per result. Treat that as a prompt to *ask the user* what the vault is for and offer to add a line to `<vault>/.ki/vault.yaml`:
+
+```yaml
+uri: <existing UUID — do not touch>
+description: |
+  One or two sentences on what's in this vault and when an agent should
+  pick it. Be specific about the *topic*, not the medium.
+```
+
+(Once #17's `ki tree` lands, agents will also be able to infer a description from the doc tree — until then, asking the user is the path.)
 
 ### Query expansion for semantic equivalence
 

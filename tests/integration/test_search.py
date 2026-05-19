@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import time
+import uuid
 
 import pytest
+import yaml
 
 from ki.ingest.pipeline import IngestOptions, ingest_vault
 from ki.neo4j_client import driver_for
-from ki.search.queries import run_b1, run_b2
+from ki.search.queries import run_b1, run_b2, run_vault_search
 
 pytestmark = pytest.mark.integration
 
@@ -33,8 +35,25 @@ def _await_index_population(profile, vault_uri: str, timeout: float = 10.0) -> N
         with driver.session() as session:
             while time.time() < deadline:
                 rows = list(session.run(
-                    "CALL db.index.fulltext.queryNodes('doc_section_search', 'retrieval')"
+                    "CALL db.index.fulltext.queryNodes('content_search', 'retrieval')"
                     " YIELD node WHERE node.uri STARTS WITH $u RETURN count(node) AS n",
+                    u=vault_uri,
+                ))
+                if rows and rows[0]["n"] > 0:
+                    return
+                time.sleep(0.2)
+
+
+def _await_vault_index(profile, *, vault_uri: str, term: str, timeout: float = 10.0) -> None:
+    deadline = time.time() + timeout
+    with driver_for(profile) as driver:
+        with driver.session() as session:
+            while time.time() < deadline:
+                rows = list(session.run(
+                    "CALL db.index.fulltext.queryNodes('content_search', $q) "
+                    "YIELD node WHERE node:Vault AND node.uri = $u "
+                    "RETURN count(node) AS n",
+                    q=term,
                     u=vault_uri,
                 ))
                 if rows and rows[0]["n"] > 0:
@@ -71,3 +90,60 @@ def test_search_b2_returns_owning_document(indexed_vault, neo4j_profile):
     for r in results:
         assert r.get("section_uri")
         assert r.get("document_uri")
+
+
+def test_vault_search_finds_by_description(tmp_path, neo4j_profile, cleanup_vault):
+    """A vault with a description matches `--type vault` queries over that text."""
+    vault = tmp_path / "graph-research"
+    vault.mkdir()
+    (vault / "n.md").write_text("# N\n\nbody.\n")
+    (vault / ".ki").mkdir()
+    seeded_uri = str(uuid.uuid4())
+    (vault / ".ki" / "vault.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "uri": seeded_uri,
+                "description": (
+                    "Research notes on graph databases, Neo4j internals, "
+                    "and Cypher patterns."
+                ),
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(res.vault_uri)
+    assert res.vault_uri == seeded_uri
+    _await_vault_index(neo4j_profile, vault_uri=res.vault_uri, term="Cypher")
+
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            hits = run_vault_search(session, "Cypher", k=5)
+
+    assert any(h["vault_uri"] == res.vault_uri for h in hits), (
+        f"expected vault {res.vault_uri} to match 'Cypher' via its description; "
+        f"got {hits}"
+    )
+    matched = next(h for h in hits if h["vault_uri"] == res.vault_uri)
+    assert "Cypher" in (matched.get("description") or "")
+
+
+def test_vault_search_warns_on_missing_description(tmp_path, neo4j_profile, cleanup_vault, capsys):
+    """`--type vault` emits a stderr warning per vault with null/empty description."""
+    from ki.commands.search import _warn_missing_vault_description
+
+    vault = tmp_path / "blank-vault"
+    vault.mkdir()
+    (vault / "n.md").write_text("# N\n\nbody.\n")
+    res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(res.vault_uri)
+    _await_index_population(neo4j_profile, vault_uri=res.vault_uri)
+
+    # Vault has no description — feed the renderer the row directly and assert
+    # the stderr warning fires.
+    rows = [{"vault_uri": res.vault_uri, "name": vault.name, "description": None}]
+    _warn_missing_vault_description(rows)
+    captured = capsys.readouterr()
+    assert "no description set" in captured.err

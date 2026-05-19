@@ -10,7 +10,7 @@ Flags:
   --vault          require this for whole-vault removal
   --dry-run        report only; no Neo4j writes
   --yes            skip prompts (scripts / agent auto-mode)
-  --keep-marker    on --vault, preserve `.ki/vault-id` (reset idiom)
+  --keep-marker    on --vault, preserve `.ki/vault.yaml` (reset idiom)
 """
 
 from __future__ import annotations
@@ -59,16 +59,16 @@ def cmd_rm(
     if not p.exists():
         raise click.ClickException(f"path not found: {p}")
 
-    # Walk up to find the vault root (.ki/vault-id marker).
+    # Walk up to find the vault root (.ki/vault.yaml marker).
     vault_root = _find_vault_root(p)
     if vault_root is None:
         raise click.ClickException(
-            f"no .ki/vault-id found above {p}. If you want to remove an entire "
+            f"no .ki/vault.yaml found above {p}. If you want to remove an entire "
             f"vault by URI, use `ki rm <vault-uri> --vault`."
         )
     vault_uri = read_vault_id(vault_root)
     if not vault_uri:
-        raise click.ClickException(f"vault marker at {vault_root}/.ki/vault-id is empty")
+        raise click.ClickException(f"vault marker at {vault_root}/.ki/vault.yaml is empty")
 
     if p.is_file():
         return _rm_document(p, vault_root, vault_uri, prof, dry_run=dry_run)
@@ -78,7 +78,7 @@ def cmd_rm(
 def _find_vault_root(p: Path) -> Path | None:
     cur = p if p.is_dir() else p.parent
     for _ in range(20):
-        if (cur / ".ki" / "vault-id").exists():
+        if (cur / ".ki" / "vault.yaml").exists():
             return cur
         if cur.parent == cur:
             return None
@@ -152,7 +152,7 @@ def _rm_vault(
     if not vault_uri:
         raise click.ClickException(
             f"could not resolve vault from {target!r} — pass a UUID or a "
-            f"directory containing .ki/vault-id"
+            f"directory containing .ki/vault.yaml"
         )
 
     with driver_for(profile) as driver:
@@ -187,10 +187,10 @@ def _rm_vault(
     # Marker cleanup (path-form only).
     if p and not keep_marker:
         remove_vault_marker(p)
-        console.print(f"[green]✓[/green] removed vault marker at {p}/.ki/vault-id")
+        console.print(f"[green]✓[/green] removed vault marker at {p}/.ki/vault.yaml")
     elif p and keep_marker:
         console.print(
-            f"[dim]Marker preserved at {p}/.ki/vault-id "
+            f"[dim]Marker preserved at {p}/.ki/vault.yaml "
             f"— next `ki index` will rebuild this vault under the same uri.[/dim]"
         )
 

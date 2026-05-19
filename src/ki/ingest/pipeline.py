@@ -62,6 +62,7 @@ from ..vault import (
     document_uri,
     iter_markdown_files,
     read_or_create_vault_id,
+    read_vault_description,
     section_uri,
     slugify_segment,
 )
@@ -264,6 +265,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
         raise ValueError(f"vault path not a directory: {vault_root}")
 
     vault_uri, vault_created = read_or_create_vault_id(vault_root)
+    vault_description = read_vault_description(vault_root)
     user_id = opts.user_id or detect_user_id()
     user_mutable = build_user_mutable()
     load_provenance = build_load_provenance(agent_name=opts.agent_name)
@@ -306,17 +308,20 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             ensure_schema(session)
 
             # 3. Per-vault write.
+            vault_mutable: dict[str, Any] = {
+                "name": vault_root.name,
+                "displayName": vault_root.name,
+                "path": vault_root.as_posix(),
+                "isObsidianVault": (vault_root / ".obsidian").exists(),
+            }
+            if vault_description is not None:
+                vault_mutable["description"] = vault_description
             session.run(
                 Q.PER_VAULT_WRITE,
                 userId=user_id,
                 userMutable=user_mutable,
                 vaultUri=vault_uri,
-                vaultMutable={
-                    "name": vault_root.name,
-                    "displayName": vault_root.name,
-                    "path": vault_root.as_posix(),
-                    "isObsidianVault": (vault_root / ".obsidian").exists(),
-                },
+                vaultMutable=vault_mutable,
                 vaultLoadId=load_id,
                 loadProvenance=load_provenance,
                 now=now,

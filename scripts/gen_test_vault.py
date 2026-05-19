@@ -12,7 +12,7 @@ Usage:
 Identical --seed produces byte-identical file contents across runs. The only
 wall-clock value lives in `README.md` ("Generated at ..."); everything else is
 pinned to a seed-derived value, including frontmatter `created:` timestamps
-and the `.ki/vault-id` UUID.
+and the `.ki/vault.yaml` UUID.
 
 Deps (PyPI): python-frontmatter, PyYAML. Already listed in pyproject.toml.
 For ad-hoc runs outside the project venv:
@@ -817,7 +817,10 @@ def generate_vault(size: str, output: Path, seed: int, zip_out: bool) -> dict:
     vault_id_dir = output / ".ki"
     vault_id_dir.mkdir(exist_ok=True)
     vault_uuid = det_uuid4(rng)
-    (vault_id_dir / "vault-id").write_text(str(vault_uuid) + "\n", encoding="utf-8")
+    (vault_id_dir / "vault.yaml").write_text(
+        yaml.safe_dump({"uri": str(vault_uuid)}, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
 
     files_written: list[tuple[str, int]] = []  # (rel_path, byte_size)
 
