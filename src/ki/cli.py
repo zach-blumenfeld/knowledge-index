@@ -74,7 +74,17 @@ def configure_cmd(profile_name: str | None, yes_flag: bool, set_default: bool) -
 )
 @click.option(
     "--yes", "yes_flag", is_flag=True, default=False,
-    help="If no config exists, auto-pick Local Neo4j without prompting.",
+    help="If no config exists, auto-pick Local Neo4j without prompting. "
+         "Also suppresses the first-run description prompt.",
+)
+@click.option(
+    "--description", "description", default=None,
+    help="Set the vault's `description:` (in .ki/vault.yaml) before indexing. "
+         "Refuses to overwrite an existing description unless --force-description.",
+)
+@click.option(
+    "--force-description", "force_description", is_flag=True, default=False,
+    help="Allow --description to overwrite an existing description.",
 )
 def index_cmd(
     path: Path,
@@ -83,6 +93,8 @@ def index_cmd(
     max_file_size: int,
     concurrency: int,
     yes_flag: bool,
+    description: str | None,
+    force_description: bool,
 ) -> None:
     sys.exit(
         cmd_index(
@@ -92,6 +104,8 @@ def index_cmd(
             max_file_size=max_file_size,
             concurrency=concurrency,
             yes=yes_flag,
+            description=description,
+            force_description=force_description,
         )
     )
 

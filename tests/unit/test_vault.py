@@ -8,11 +8,13 @@ import yaml
 
 from ki.vault import (
     DESCRIPTION_MAX_BYTES,
+    VaultDescriptionExists,
     read_or_create_vault_id,
     read_vault_description,
     read_vault_id,
     remove_vault_marker,
     vault_marker_path,
+    write_vault_description,
 )
 
 
@@ -137,6 +139,84 @@ def test_read_vault_description_truncates_at_8kb_with_warning(tmp_path, caplog):
     assert desc is not None
     assert len(desc.encode("utf-8")) <= DESCRIPTION_MAX_BYTES
     assert any("truncating" in r.message for r in caplog.records)
+
+
+def test_write_vault_description_writes_when_missing(tmp_path):
+    vault_id, _ = read_or_create_vault_id(tmp_path)
+    write_vault_description(tmp_path, "graph database research notes")
+    data = yaml.safe_load(vault_marker_path(tmp_path).read_text(encoding="utf-8"))
+    assert data["uri"] == vault_id
+    assert data["description"] == "graph database research notes"
+
+
+def test_write_vault_description_preserves_uri_and_unknown_fields(tmp_path):
+    marker = vault_marker_path(tmp_path)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        "uri: 550e8400-e29b-41d4-a716-446655440000\n"
+        "future_field: still here\n",
+        encoding="utf-8",
+    )
+    write_vault_description(tmp_path, "hello")
+    data = yaml.safe_load(marker.read_text(encoding="utf-8"))
+    assert data["uri"] == "550e8400-e29b-41d4-a716-446655440000"
+    assert data["future_field"] == "still here"
+    assert data["description"] == "hello"
+
+
+def test_write_vault_description_raises_when_present_without_force(tmp_path):
+    marker = vault_marker_path(tmp_path)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        "uri: 550e8400-e29b-41d4-a716-446655440000\ndescription: original\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(VaultDescriptionExists) as exc_info:
+        write_vault_description(tmp_path, "replacement")
+    assert exc_info.value.existing == "original"
+    # File untouched.
+    assert "original" in marker.read_text(encoding="utf-8")
+
+
+def test_write_vault_description_overwrites_with_force(tmp_path):
+    marker = vault_marker_path(tmp_path)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        "uri: 550e8400-e29b-41d4-a716-446655440000\ndescription: original\n",
+        encoding="utf-8",
+    )
+    write_vault_description(tmp_path, "replacement", force=True)
+    data = yaml.safe_load(marker.read_text(encoding="utf-8"))
+    assert data["description"] == "replacement"
+
+
+def test_write_vault_description_empty_existing_treated_as_unset(tmp_path):
+    """Whitespace-only description should not block a non-force write."""
+    marker = vault_marker_path(tmp_path)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        "uri: 550e8400-e29b-41d4-a716-446655440000\ndescription: '   '\n",
+        encoding="utf-8",
+    )
+    write_vault_description(tmp_path, "real description")  # no force needed
+    data = yaml.safe_load(marker.read_text(encoding="utf-8"))
+    assert data["description"] == "real description"
+
+
+def test_write_vault_description_truncates_at_8kb(tmp_path, caplog):
+    read_or_create_vault_id(tmp_path)
+    huge = "y" * (DESCRIPTION_MAX_BYTES + 100)
+    with caplog.at_level(logging.WARNING, logger="ki.vault"):
+        write_vault_description(tmp_path, huge)
+    desc = read_vault_description(tmp_path)
+    assert desc is not None
+    assert len(desc.encode("utf-8")) <= DESCRIPTION_MAX_BYTES
+    assert any("truncating" in r.message for r in caplog.records)
+
+
+def test_write_vault_description_raises_when_marker_missing(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        write_vault_description(tmp_path, "no marker yet")
 
 
 def test_read_vault_description_ignores_non_string_value(tmp_path, caplog):

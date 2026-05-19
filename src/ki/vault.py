@@ -124,6 +124,61 @@ def read_vault_description(vault_root: Path) -> str | None:
     return desc
 
 
+class VaultDescriptionExists(ValueError):
+    """Raised by `write_vault_description` when a non-empty `description:` is
+    already set and the caller didn't pass `force=True`. Carries the existing
+    value so callers can echo it in error messages."""
+
+    def __init__(self, existing: str) -> None:
+        super().__init__(
+            "vault already has a `description:` set; pass force=True to overwrite"
+        )
+        self.existing = existing
+
+
+def write_vault_description(
+    vault_root: Path, description: str, *, force: bool = False
+) -> None:
+    """Write `description:` into `.ki/vault.yaml`, preserving `uri:` + any other keys.
+
+    The marker must already exist (call `read_or_create_vault_id` first).
+    Raises `VaultDescriptionExists` when a non-empty description is already
+    present and `force` is False. Values longer than 8 KB are truncated and a
+    one-line warning is emitted.
+    """
+    marker = vault_marker_path(vault_root)
+    if not marker.exists():
+        raise FileNotFoundError(
+            f"{marker} does not exist — initialise the vault first "
+            "(read_or_create_vault_id)"
+        )
+    data = _load_marker(marker)
+    existing = data.get("description")
+    if (
+        isinstance(existing, str)
+        and existing.strip()
+        and not force
+    ):
+        raise VaultDescriptionExists(existing.strip())
+
+    desc = (description or "").strip()
+    encoded = desc.encode("utf-8")
+    if len(encoded) > DESCRIPTION_MAX_BYTES:
+        log.warning(
+            "%s: `description:` is %d bytes (>%d); truncating",
+            marker,
+            len(encoded),
+            DESCRIPTION_MAX_BYTES,
+        )
+        desc = encoded[:DESCRIPTION_MAX_BYTES].decode("utf-8", errors="ignore")
+
+    data["description"] = desc
+    marker.write_text(
+        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
 def remove_vault_marker(vault_root: Path) -> None:
     """Remove `.ki/vault.yaml` (and the `.ki/` dir if empty). Idempotent."""
     marker = vault_marker_path(vault_root)
