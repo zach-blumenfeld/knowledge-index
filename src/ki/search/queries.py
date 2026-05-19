@@ -43,8 +43,9 @@ RETURN doc.uri AS document_uri,
 
 
 # B.11 — Vault fulltext (`name` + `displayName` + `description`). Same shared
-# `content_search` index, filtered to :Vault. Returns enough to route subsequent
-# searches (`--vault <uri>`) and to render a helpful list.
+# `content_search` index, filtered to :Vault. Returns the vault URI so callers
+# can render a helpful list and (once #17's `--under` lands) scope subsequent
+# searches to the chosen vault. No CLI-side scoping flag exists today.
 B11_VAULT_SEARCH = """
 CALL db.index.fulltext.queryNodes($index_name, $query)
 YIELD node, score

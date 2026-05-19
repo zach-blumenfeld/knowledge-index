@@ -41,7 +41,7 @@ The agent does the conversion; `ki` does not. This is by design — `ki` is an i
 - The user wants to **modify their source files** (rename, rewrite, reorganize). `ki` never mutates sources. Use a separate file-editing flow.
 - The content is not markdown **and** the user doesn't want it converted (see *PREPARE when* for the conversion path).
 
-Note: `ki` is intentionally **cross-vault by default**. Multiple vaults indexed to the same Neo4j are searchable together via `ki search`; per-vault scoping is opt-in via flags. Don't skip `ki` because the request spans multiple folders / projects / vaults — that's the case it's *built for*.
+Note: `ki` is **cross-vault by default**, and today that's the *only* mode — `ki search` runs across every vault indexed to the same Neo4j with no CLI-side scoping flag (a `--under <vault|folder|doc|section>` flag is proposed in [#17](https://github.com/zach-blumenfeld/knowledge-index/issues/17)). Don't skip `ki` because the request spans multiple folders / projects / vaults — that's the case it's *built for*. To narrow to a specific vault today, search cross-vault and filter the results client-side by `document_uri` prefix.
 
 ## How to invoke
 
@@ -71,7 +71,7 @@ Also available: `ki init <path>` (advanced: write the vault marker without index
 
 Add `--json` for machine-readable output. `--k` is the result limit (or hop depth for `neighbors`). `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
 
-**Multi-vault routing.** When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --type vault`) to pick the right one, then run doc/section search scoped to it. If a vault has no `description:` set, `ki` emits a stderr warning per result. Treat that as a prompt to *ask the user* what the vault is for and offer to add a line to `<vault>/.ki/vault.yaml`:
+**Multi-vault routing.** When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --type vault`) to pick the right one. There is no CLI flag yet to scope a follow-up `ki search` to that vault ([#17](https://github.com/zach-blumenfeld/knowledge-index/issues/17) tracks `--under`); for now, run the cross-vault search and filter results client-side by `document_uri` prefix matching the chosen vault's URI. If a vault has no `description:` set, `ki` emits a stderr warning per result. Treat that as a prompt to *ask the user* what the vault is for and offer to add a line to `<vault>/.ki/vault.yaml`:
 
 ```yaml
 uri: <existing UUID — do not touch>
