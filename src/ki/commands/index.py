@@ -80,4 +80,13 @@ def cmd_index(
             f"[yellow]Neo4j OOM mid-run — batch size shrunk to {result.batch_shrunk_to}."
             f" Consider passing --batch-size {result.batch_shrunk_to} next time.[/yellow]"
         )
+    if not result.vault_description_set:
+        marker = path / ".ki" / "vault.yaml"
+        console.print(
+            f"[yellow]⚠[/yellow]  This vault has no [bold]description[/bold] set. "
+            f"Add one to [cyan]{marker}[/cyan] so agents can route searches across vaults:\n"
+            f"    [dim]description: |\n"
+            f"      One or two sentences on what's in this vault and when an "
+            f"agent should pick it.[/dim]"
+        )
     return 0

@@ -85,6 +85,7 @@ DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 class IngestResult:
     vault_uri: str
     vault_created: bool
+    vault_description_set: bool = False  # True iff .ki/vault.yaml had a non-empty description
     docs_total: int = 0
     docs_added: int = 0
     docs_updated: int = 0
@@ -286,7 +287,11 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
     # pass of vault size — acceptable at v1 envelopes (1 GB).
     files_bytes = _read_files_concurrent(keep, opts.concurrency)
 
-    result = IngestResult(vault_uri=vault_uri, vault_created=vault_created)
+    result = IngestResult(
+        vault_uri=vault_uri,
+        vault_created=vault_created,
+        vault_description_set=vault_description is not None,
+    )
     result.docs_total = len(keep)
     result.docs_skipped_oversize = len(oversize)
     result.oversize_files = oversize

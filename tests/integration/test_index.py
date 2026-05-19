@@ -172,6 +172,8 @@ def test_first_index_of_fresh_dir_creates_marker(tmp_path, neo4j_profile, cleanu
     # The marker should be `.ki/vault.yaml`, not the legacy bare-UUID file.
     assert (fresh / ".ki" / "vault.yaml").exists()
     assert not (fresh / ".ki" / "vault-id").exists()
+    # A fresh vault has no description yet — flag so `ki index` can prompt.
+    assert result.vault_description_set is False
 
 
 def test_ingest_sets_description_from_yaml(tmp_path, neo4j_profile, cleanup_vault):
@@ -201,6 +203,7 @@ def test_ingest_sets_description_from_yaml(tmp_path, neo4j_profile, cleanup_vaul
     result = _run_ingest(fresh, neo4j_profile, batch_size=64)
     cleanup_vault.append(result.vault_uri)
     assert result.vault_uri == seeded_uri
+    assert result.vault_description_set is True
 
     with driver_for(neo4j_profile) as driver:
         with driver.session() as session:
