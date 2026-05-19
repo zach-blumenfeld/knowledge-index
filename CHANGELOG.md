@@ -27,6 +27,10 @@ exact pattern. Editorial prose is fine; just don't change the heading.
 
 - **Fulltext index renamed `doc_section_search` → `content_search`** and expanded to cover `:Vault` over `[displayName, content, aliases, description]`. Neo4j fulltext silently skips missing properties per label, so the same index serves `:Document`, `:Section`, and `:Vault` cleanly.
 
+### Fixed
+
+- **`Document.displayName` now consistently equals the filename**, never the first H1 ([#28](https://github.com/zach-blumenfeld/knowledge-index/issues/28)). Pre-#28 the ingest pipeline silently promoted the first H1 heading to `displayName` when present, drifting from the documented behavior in `docs/data-model.md`. Re-index any existing vault to refresh; B.1 / `--type document` queries still match the H1 text via `content_search`'s `content` + `aliases` coverage, so retrieval recall is unchanged.
+
 ### Breaking
 
 - **`.ki/vault-id` (bare-UUID marker) is no longer read.** The pre-0.4.0 single-line UUID format has been dropped with no auto-migration; vaults indexed with prior versions need to be **wiped + re-indexed** after upgrading (`ki rm <vault> --vault` then `ki index <vault>`). Existing Neo4j databases also still carry the old `doc_section_search` fulltext index as a dead object — drop it manually if desired (`DROP INDEX doc_section_search`). No active users when this shipped; we traded migration code for simplicity.

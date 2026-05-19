@@ -62,12 +62,17 @@ def _await_vault_index(profile, *, vault_uri: str, term: str, timeout: float = 1
 
 
 def test_search_b1_finds_document_by_title(indexed_vault, neo4j_profile):
-    """The generated fixture pins a 'Big Idea' document (H1 + alias BI)."""
+    """The generated fixture pins a 'Big Idea' document (filename + H1 + alias BI).
+
+    Post-#28 the document's `displayName` is its filename (`big-idea.md`), not
+    the H1 text — so we assert via `document_uri` (which carries the slug) and
+    accept either "big idea" or "big-idea" in the surfaced title.
+    """
     with driver_for(neo4j_profile) as driver:
         with driver.session() as session:
             results = run_b1(session, "Big Idea", k=5)
-    titles = [r["title"] for r in results]
-    assert any("big idea" in (t or "").lower() for t in titles), titles
+    uris = [r["document_uri"] for r in results]
+    assert any("big-idea" in (u or "").lower() for u in uris), uris
 
 
 def test_search_b2_finds_section_content(indexed_vault, neo4j_profile):

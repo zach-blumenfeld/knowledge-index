@@ -362,10 +362,6 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
 
                 parsed = parse_markdown(text, filename=path.name)
                 parsed.file_hash = fh
-                # Display name override: prefer the first non-empty H1 if present.
-                if parsed.flat_sections and parsed.flat_sections[0].heading_level == 1:
-                    parsed.display_name = parsed.flat_sections[0].heading_text
-
                 # URIs + Rule-1 content.
                 assign_uris_and_content(
                     parsed,
