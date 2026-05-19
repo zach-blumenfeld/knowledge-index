@@ -25,7 +25,7 @@ def _run_ingest(vault_dir, neo4j_profile, **opts):
 
 def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_vault):
     expected_files = _vault_md_count(vault_dir)
-    # The generator commits a `.ki/vault-id` into the fixture so the vault is
+    # The generator commits a `.ki/vault.yaml` into the fixture so the vault is
     # already initialised before this test runs; we don't assert vault_created.
     result = _run_ingest(vault_dir, neo4j_profile, batch_size=64)
     cleanup_vault.append(result.vault_uri)
@@ -99,7 +99,7 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
                 assert expected in names, f"missing constraint {expected}"
 
             indexes = list(session.run("SHOW INDEXES YIELD name RETURN name"))
-            assert "doc_section_search" in {row["name"] for row in indexes}
+            assert "content_search" in {row["name"] for row in indexes}
 
 
 def test_reindex_unchanged_is_noop(vault_dir, neo4j_profile, cleanup_vault):
@@ -151,7 +151,7 @@ def _count_sections_for_doc(neo4j_profile, vault_uri, doc_name):
 
 
 def test_first_index_of_fresh_dir_creates_marker(tmp_path, neo4j_profile, cleanup_vault):
-    """Auto-sense: missing `.ki/vault-id` → marker created on first index.
+    """Auto-sense: missing `.ki/vault.yaml` → marker created on first index.
 
     The committed fixture pre-bakes its marker, so the standard `vault_dir`
     fixture can't exercise this branch. Build a fresh dir here.
@@ -169,6 +169,50 @@ def test_first_index_of_fresh_dir_creates_marker(tmp_path, neo4j_profile, cleanu
     assert result.vault_created is True
     assert read_vault_id(fresh) == result.vault_uri
     assert result.docs_added == 2
+    # The marker should be `.ki/vault.yaml`, not the legacy bare-UUID file.
+    assert (fresh / ".ki" / "vault.yaml").exists()
+    assert not (fresh / ".ki" / "vault-id").exists()
+    # A fresh vault has no description yet — flag so `ki index` can prompt.
+    assert result.vault_description_set is False
+
+
+def test_ingest_sets_description_from_yaml(tmp_path, neo4j_profile, cleanup_vault):
+    """User-authored `description:` in `.ki/vault.yaml` ends up on `:Vault`."""
+    import yaml as _yaml
+
+    fresh = tmp_path / "desc-vault"
+    fresh.mkdir()
+    (fresh / "n.md").write_text("# N\n\nbody.\n")
+    (fresh / ".ki").mkdir()
+    marker = fresh / ".ki" / "vault.yaml"
+    # Write the marker by hand so the description is present on first ingest.
+    import uuid
+
+    seeded_uri = str(uuid.uuid4())
+    marker.write_text(
+        _yaml.safe_dump(
+            {
+                "uri": seeded_uri,
+                "description": "Personal notes on graph databases and Neo4j.",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    cleanup_vault.append(result.vault_uri)
+    assert result.vault_uri == seeded_uri
+    assert result.vault_description_set is True
+
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            row = session.run(
+                "MATCH (v:Vault {uri: $u}) RETURN v.description AS d",
+                u=result.vault_uri,
+            ).single()
+    assert row is not None
+    assert "graph databases" in (row["d"] or "")
 
 
 def test_oversize_files_skipped_with_summary(vault_dir, neo4j_profile, cleanup_vault):

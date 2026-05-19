@@ -13,6 +13,25 @@ line, up to the next `## [` heading. Keep version sections under that
 exact pattern. Editorial prose is fine; just don't change the heading.
 -->
 
+## [0.4.0] — Unreleased
+
+### Added
+
+- **`.ki/vault.yaml`: vault marker now carries optional user-authored metadata.** The marker file is YAML with a `uri:` field (ki-owned, write-once) and an optional `description:` field — a short routing hint about what this vault is for. `ki` reads the description on each `ki index` and propagates it to `Vault.description` in Neo4j (latest-write-wins). `ki` is read-only w.r.t. every field except `uri:`. AGENTS.md principle #1 and the requirements *Core design principle* are updated to reflect that the marker now carries content, not just opaque identity.
+- **`ki search --type vault "..."` (B.11).** New retrieval mode: fulltext over `Vault.{name, displayName, description}`, intended for agents picking *which vault* to search before drilling into doc/section search scoped to that vault. Same shared fulltext index as B.1/B.2 (filtered by label).
+- **`ki vault list` command.** Lists every indexed vault under the active profile with `name`, `path`, and `description`. `--json` for machine-readable output. Emits a one-line stderr warning per vault with no description set — SKILL.md tells the agent to prompt the user for one in that case.
+- **`ki index` prompts when no vault description is set.** After the ingest summary, if `.ki/vault.yaml` has no `description:`, ki prints a one-line yellow hint with the marker path and a YAML stub — most natural moment to act on it.
+- **`Vault.description` schema property.** Optional string, soft-capped at ~8 KB (truncated with a warning if longer), no MERGE-key impact. See `docs/data-model.md` §Vault.
+
+### Changed
+
+- **Fulltext index renamed `doc_section_search` → `content_search`** and expanded to cover `:Vault` over `[displayName, content, aliases, description]`. Neo4j fulltext silently skips missing properties per label, so the same index serves `:Document`, `:Section`, and `:Vault` cleanly.
+
+### Breaking
+
+- **`.ki/vault-id` (bare-UUID marker) is no longer read.** The pre-0.4.0 single-line UUID format has been dropped with no auto-migration; vaults indexed with prior versions need to be **wiped + re-indexed** after upgrading (`ki rm <vault> --vault` then `ki index <vault>`). Existing Neo4j databases also still carry the old `doc_section_search` fulltext index as a dead object — drop it manually if desired (`DROP INDEX doc_section_search`). No active users when this shipped; we traded migration code for simplicity.
+- Removal-on-empty semantics for `Vault.description` (clear the prop in Neo4j when the user removes `description:` from YAML) is **not** in this release — deferred to [#3](https://github.com/zach-blumenfeld/knowledge-index/issues/3), which is being broadened to cover all stale state on re-ingest.
+
 ## [0.3.1] — 2026-05-14
 
 ### Fixed

@@ -207,12 +207,15 @@ def test_cycle_in_links_to_graph(fixture_root):
 
 
 def test_vault_id_marker(fixture_root):
-    vault_id = (fixture_root / ".ki/vault-id").read_text().strip()
+    marker = fixture_root / ".ki/vault.yaml"
+    assert marker.exists(), "fixture is missing the new `.ki/vault.yaml` marker"
+    data = yaml.safe_load(marker.read_text()) or {}
+    vault_id = data.get("uri") or ""
     uuid_re = (
         r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
         r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     )
-    assert re.match(uuid_re, vault_id), f"vault-id is not a UUID v4: {vault_id}"
+    assert re.match(uuid_re, vault_id), f"vault.yaml `uri` is not a UUID v4: {vault_id!r}"
 
 
 def test_aliases_drive_some_wikilinks(fixture_root):

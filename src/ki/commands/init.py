@@ -1,4 +1,4 @@
-"""`ki init <path>` — thin alias for writing `.ki/vault-id` without indexing.
+"""`ki init <path>` — thin alias for writing `.ki/vault.yaml` without indexing.
 
 Most users never run this. The usual flow is `ki index <path>`, which auto-
 creates the marker. `init` exists for the narrow case of pre-creating a

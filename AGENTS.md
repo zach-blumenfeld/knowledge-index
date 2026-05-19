@@ -10,9 +10,9 @@ Instructions for AI agents (Claude, Codex, Cursor, etc.) working **on** the `kno
 
 These constrain every change you make. If a proposed feature violates one of these, reject the proposal rather than working around it.
 
-1. **`ki` is an index, not a document store.** Never mutate user-owned source files (`.md`). All `ki` output lives in `~/.config/ki/` (config), Neo4j (the index), or `.ki/vault-id` (one UUID file per vault). No `--purge` flag, no "auto-organize my notes," no rewriting frontmatter. See `docs/requirements_v01_mvp.md` *Core design principle* for the long form.
+1. **`ki` is an index, not a document store.** Never mutate user-owned source files (`.md`). All `ki` output lives in `~/.config/ki/` (config), Neo4j (the index), or `.ki/vault.yaml` (vault identity + optional user-authored description per vault). `ki` writes the `uri:` field on first creation and is **read-only** w.r.t. any other key the user puts in that file. No `--purge` flag, no "auto-organize my notes," no rewriting frontmatter. See `docs/requirements_v01_mvp.md` *Core design principle* for the long form.
 2. **The backend is opaque to the user.** From the user's and the agent-as-user's perspective, `ki` is a search tool. They don't need to know about Cypher, Neo4j, or graph traversal. Don't surface backend concepts (Cypher errors, node labels, etc.) in default output.
-3. **One source of truth per concern.** Config lives at `~/.config/ki/config.yaml`; vault identity lives in `.ki/vault-id`; graph data lives in Neo4j. Don't introduce parallel state.
+3. **One source of truth per concern.** Config lives at `~/.config/ki/config.yaml`; vault identity + per-vault user metadata live in `.ki/vault.yaml`; graph data lives in Neo4j. Don't introduce parallel state.
 4. **Safe by default, dangerous by flag.** Destructive operations (whole-vault removal) require explicit flags AND typed confirmation. Cloud-resource creation (Aura) requires explicit consent even on agent auto-mode. See `docs/requirements_v01_mvp.md` *Agent auto-mode behavior*.
 
 ## Project map
@@ -21,7 +21,7 @@ These constrain every change you make. If a proposed feature violates one of the
 |-----------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
 | `src/ki/cli.py`                   | Click entry point. Wires up `ki configure | index | search | rm | init`. Each command lives in its own module under `src/ki/commands/`.    |
 | `src/ki/config.py`                | XDG-aware config loader; named profiles; 0600 mode on write; `KI_PROFILE` env-var override.                                                 |
-| `src/ki/vault.py`                 | `.ki/vault-id` marker IO, slug rules, Document/Section URI construction.                                                                    |
+| `src/ki/vault.py`                 | `.ki/vault.yaml` marker IO (UUID + user-authored description), slug rules, Document/Section URI construction.                              |
 | `src/ki/parser/markdown.py`       | markdown-it-py-based parser. Builds section tree per *Content Construction Rules* (Rule 1–3) and exposes a DFS-ordered flat list for `NEXT_SECTION`. |
 | `src/ki/parser/frontmatter.py`    | python-frontmatter wrapper. Splits YAML frontmatter into `aliases`, `frontmatterCreatedAt`, and a JSON blob of unknown keys.                |
 | `src/ki/ingest/pipeline.py`       | Per-vault orchestrator: schema, per-vault upsert, fileHash skip, concurrent reads (aiofiles), single Neo4j write session, one doc at a time, LINKS_TO post-pass. |

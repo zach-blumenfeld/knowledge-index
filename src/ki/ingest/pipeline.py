@@ -62,6 +62,7 @@ from ..vault import (
     document_uri,
     iter_markdown_files,
     read_or_create_vault_id,
+    read_vault_description,
     section_uri,
     slugify_segment,
 )
@@ -84,6 +85,7 @@ DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 class IngestResult:
     vault_uri: str
     vault_created: bool
+    vault_description_set: bool = False  # True iff .ki/vault.yaml had a non-empty description
     docs_total: int = 0
     docs_added: int = 0
     docs_updated: int = 0
@@ -264,6 +266,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
         raise ValueError(f"vault path not a directory: {vault_root}")
 
     vault_uri, vault_created = read_or_create_vault_id(vault_root)
+    vault_description = read_vault_description(vault_root)
     user_id = opts.user_id or detect_user_id()
     user_mutable = build_user_mutable()
     load_provenance = build_load_provenance(agent_name=opts.agent_name)
@@ -284,7 +287,11 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
     # pass of vault size — acceptable at v1 envelopes (1 GB).
     files_bytes = _read_files_concurrent(keep, opts.concurrency)
 
-    result = IngestResult(vault_uri=vault_uri, vault_created=vault_created)
+    result = IngestResult(
+        vault_uri=vault_uri,
+        vault_created=vault_created,
+        vault_description_set=vault_description is not None,
+    )
     result.docs_total = len(keep)
     result.docs_skipped_oversize = len(oversize)
     result.oversize_files = oversize
@@ -306,17 +313,20 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             ensure_schema(session)
 
             # 3. Per-vault write.
+            vault_mutable: dict[str, Any] = {
+                "name": vault_root.name,
+                "displayName": vault_root.name,
+                "path": vault_root.as_posix(),
+                "isObsidianVault": (vault_root / ".obsidian").exists(),
+            }
+            if vault_description is not None:
+                vault_mutable["description"] = vault_description
             session.run(
                 Q.PER_VAULT_WRITE,
                 userId=user_id,
                 userMutable=user_mutable,
                 vaultUri=vault_uri,
-                vaultMutable={
-                    "name": vault_root.name,
-                    "displayName": vault_root.name,
-                    "path": vault_root.as_posix(),
-                    "isObsidianVault": (vault_root / ".obsidian").exists(),
-                },
+                vaultMutable=vault_mutable,
                 vaultLoadId=load_id,
                 loadProvenance=load_provenance,
                 now=now,

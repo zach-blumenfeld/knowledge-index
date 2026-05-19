@@ -12,7 +12,7 @@ def test_help_lists_all_commands():
     runner = CliRunner()
     res = runner.invoke(main, ["--help"])
     assert res.exit_code == 0
-    for cmd in ("configure", "index", "search", "rm", "init"):
+    for cmd in ("configure", "index", "search", "rm", "init", "vault"):
         assert cmd in res.output
 
 
@@ -40,9 +40,23 @@ def test_search_help_lists_type_choices():
     runner = CliRunner()
     res = runner.invoke(main, ["search", "--help"])
     assert res.exit_code == 0
-    assert "section" in res.output
-    assert "document" in res.output
-    assert "neighbors" in res.output
+    for choice in ("section", "document", "neighbors", "vault"):
+        assert choice in res.output
+
+
+def test_vault_group_help_lists_subcommands():
+    runner = CliRunner()
+    res = runner.invoke(main, ["vault", "--help"])
+    assert res.exit_code == 0
+    assert "list" in res.output
+
+
+def test_vault_list_help_works():
+    runner = CliRunner()
+    res = runner.invoke(main, ["vault", "list", "--help"])
+    assert res.exit_code == 0
+    for flag in ("--profile", "--json"):
+        assert flag in res.output
 
 
 def test_rm_help_lists_safety_flags():

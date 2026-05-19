@@ -5,7 +5,7 @@ The headline case: a vault where every reference to "Anakin" is written as
 nothing — the literal string only appears in source-document body text and
 the target (`Darth Vader.md`) had no idea it was also called "Anakin". After
 this release, the display text propagates into `Darth Vader.aliases` at
-ingest, and the existing `doc_section_search` fulltext index picks it up.
+ingest, and the existing `content_search` fulltext index picks it up.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def _await_alias_index(profile, *, vault_uri: str, term: str, timeout: float = 1
             while time.time() < deadline:
                 rows = list(
                     session.run(
-                        "CALL db.index.fulltext.queryNodes('doc_section_search', $q) "
+                        "CALL db.index.fulltext.queryNodes('content_search', $q) "
                         "YIELD node WHERE node.uri STARTS WITH $u RETURN count(node) AS n",
                         q=term,
                         u=vault_uri,

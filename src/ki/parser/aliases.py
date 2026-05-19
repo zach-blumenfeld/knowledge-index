@@ -3,7 +3,7 @@
 When the markdown parser sees `[[Target|Display]]` (a *piped* wikilink), the
 display text is the alternate name the user gave the target in running prose.
 At ingest time we collect these display texts per target URI and union them
-into the target's `aliases` field so the existing `doc_section_search`
+into the target's `aliases` field so the existing `content_search`
 fulltext index starts matching them — `ki search "Anakin"` then finds the
 `Darth Vader.md` document.
 

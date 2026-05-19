@@ -244,7 +244,7 @@ that *don't* require any new credential or external service:
   parser sees `[[Darth Vader|Anakin]]`, append the display text
   (`"Anakin"`) to the *target's* `aliases` list — extending the same v1
   mechanism that already handles frontmatter aliases. The existing
-  `doc_section_search` fulltext index already covers `aliases`, so
+  `content_search` fulltext index already covers `aliases`, so
   queries like "Anakin" match the target document with **zero retrieval-
   query changes**. Free upgrade for Obsidian / wikilink-heavy vaults;
   zero help for plain-markdown vaults. Small schema addition needed:
@@ -399,7 +399,7 @@ Concretely, the v2 cut adds:
 1. **Wikilink display-text → target aliases.** Parser appends
    `[[Target|Display]]` display text (normalized: lowercase-dedup,
    stopword-filtered, length-thresholded) to the *target's* `aliases`
-   list. Existing `doc_section_search` fulltext already indexes
+   list. Existing `content_search` fulltext already indexes
    `aliases`, so **no retrieval-query changes** — the new alias terms
    just start matching. Schema change: add an `aliases` field to
    `Section` for parity with `Document` (wikilinks can target sections,

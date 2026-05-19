@@ -45,8 +45,8 @@ Then in Claude Code:
   ki (Knowledge Index) — the main retrieval project
   - retrieval-queries.md — 10 retrieval queries (B.1–B.10) ported from the old Wikipedia-graph queries to the new
   User–Vault–Document–Section schema
-  - requirements.md + ingest-cypher.md — schema, constraints, and the doc_section_search fulltext index over Document|Section on
-  displayName + content + aliases
+  - requirements.md + ingest-cypher.md — schema, constraints, and the content_search fulltext index over Document|Section|Vault on
+  displayName + content + aliases + description
   - Key design call: fulltext is the v1 retrieval substrate; vector/embeddings deferred. Wikilink aliases ("JFK" / "John F Kennedy")
   indexed so alternates hit the same doc.
   - Validated approach: what-worked.md notes that section-level retrieval beat whole-document retrieval when dogfooded against the
@@ -114,13 +114,18 @@ ki index ~/Documents/my-vault                  # sync the folder into the graph 
 
 ki search "retrieval"                          # default: section content (B.2)
 ki search "graph" --type document --k 5        # document title  (B.1)
+ki search "graphs" --type vault --k 5          # cross-vault routing by description (B.11)
 ki search "" --type neighbors --doc-uri <uri>  # 1-hop link neighbourhood (B.3)
+
+ki vault list                                  # show every indexed vault with its description
 
 ki rm ~/Documents/my-vault/notes/old.md        # remove a doc from the index (file untouched)
 ki rm ~/Documents/my-vault --vault             # remove a whole vault (typed confirmation)
 ```
 
-All commands: `ki configure | index | search | rm | init | skill`. Run any with `--help` for flags. `KI_PROFILE=work ki index ./vault` overrides the profile per-invocation. Run `uvx knowledge-index --help` first if you'd rather not install globally.
+All commands: `ki configure | index | search | vault | rm | init | skill`. Run any with `--help` for flags. `KI_PROFILE=work ki index ./vault` overrides the profile per-invocation. Run `uvx knowledge-index --help` first if you'd rather not install globally.
+
+Per-vault routing is driven by `<vault>/.ki/vault.yaml`. `ki` writes the `uri:` UUID on first ingest; add an optional `description:` to give agents a short routing hint about what this vault is for. The description flows into `Vault.description` on each ingest and powers `ki search --type vault`.
 
 ### From a chat app (Claude, ChatGPT, Gemini, Copilot — web / desktop)
 
@@ -146,7 +151,7 @@ The Local option will light up automatically once `neo4j-local` lands.
 
 ### No vector search yet — fulltext only
 
-`ki search` runs against the `doc_section_search` fulltext index over `Document|Section.{displayName, content, aliases}`. There are no vector indexes or embeddings in the graph yet; hybrid (fulltext + vector) is on the v2 list. The `genai` plugin is already loaded in `neo4j-local` for the upgrade path, so when this lands existing vaults won't need to be re-ingested.
+`ki search` runs against the `content_search` fulltext index over `Document|Section|Vault.{displayName, content, aliases, description}`. There are no vector indexes or embeddings in the graph yet; hybrid (fulltext + vector) is on the v2 list. The `genai` plugin is already loaded in `neo4j-local` for the upgrade path, so when this lands existing vaults won't need to be re-ingested.
 
 Of the ten queries defined in [`docs/retrieval-queries.md`](docs/retrieval-queries.md), three are wired into the CLI today; the rest exist as Cypher but aren't reachable through `ki search` yet:
 

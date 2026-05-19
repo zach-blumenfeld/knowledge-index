@@ -2,7 +2,7 @@
 
 All `Vault`, `Document`, and `Section` nodes MERGE on `uri`:
 
-- `Vault.uri`    = UUID v4 from the `.ki/vault-id` marker file in the vault root.
+- `Vault.uri`    = UUID v4 from the `.ki/vault.yaml` marker file in the vault root.
 - `Document.uri` = `<vaultId>/<file path within vault>` (slugified).
 - `Section.uri`  = `<vaultId>/<file path within vault>#<slugified heading path>`.
 
@@ -10,7 +10,9 @@ All `Vault`, `Document`, and `Section` nodes MERGE on `uri`:
 
 `LOADED` relationships can be parallel (one per ingest) and so require a relationship-level MERGE key: a system-generated UUID stored as `loadId`. All other relationships (`USES_VAULT`, `HAS_DOCUMENT`, `HAS_SECTION`, `LINKS_TO`) are non-parallel and MERGE on the endpoint pair alone.
 
-**Vault marker file.** On first ingest of a folder, the writer reads `.ki/vault-id`. If present, that UUID is the vault identity. If absent, a fresh UUID is generated and written into the marker. Treating the marker as authoritative means a folder synced across machines (Dropbox, iCloud, git) resolves to the same `:Vault` node across users and machines, and `USES_VAULT` becomes load-bearing (multiple users can `USES_VAULT` the same vault). Identity is independent of user and machine; only `Vault.path` is machine-scoped.
+**Vault marker file.** On first ingest of a folder, the writer reads `.ki/vault.yaml`. If present, its `uri:` field is the vault identity. If absent, a fresh UUID is generated and a minimal `vault.yaml` containing just `uri:` is written to the marker. Treating the marker as authoritative means a folder synced across machines (Dropbox, iCloud, git) resolves to the same `:Vault` node across users and machines, and `USES_VAULT` becomes load-bearing (multiple users can `USES_VAULT` the same vault). Identity is independent of user and machine; only `Vault.path` is machine-scoped.
+
+The same file also optionally carries a user-authored `description:` field — a short routing hint about what this vault is for. On each ingest the writer reads it and includes it in `$vaultMutable` (see step 2 of the per-vault-ingest write below), so it flows into `Vault.description` with latest-write-wins semantics. `ki` writes `uri:` on first creation and is **read-only** w.r.t. every other field. The pre-0.4.0 bare-UUID `.ki/vault-id` format is no longer supported — wipe + re-index to upgrade.
 
 #### Per-vault-ingest write
 
@@ -26,7 +28,7 @@ SET u += $userMutable,        // displayName, email
 // 2. Upsert the Vault.
 MERGE (v:Vault {uri: $vaultUri})
 ON CREATE SET v.firstSeenAt = $now
-SET v += $vaultMutable,       // name, displayName, path, isObsidianVault
+SET v += $vaultMutable,       // name, displayName, path, isObsidianVault, description (optional)
     v.lastSeenAt = $now
 
 // 3. Membership edge: User USES_VAULT Vault (non-parallel).
@@ -158,7 +160,7 @@ SET l.embed = row.embed,
 // When the parser sees `[[Target|Display]]` or `[[Target#Section|Display]]`,
 // the display text is the alternate name *the user* gave the target in
 // running prose. Today, fulltext search against `aliases` already covers
-// both `Document` and `Section` (see the `doc_section_search` index in
+// both `Document` and `Section` (see the `content_search` index in
 // §4.4), but the alias list itself is only populated from frontmatter —
 // so a vault that pipes `[[Darth Vader|Anakin]]` everywhere never matches
 // the literal query "Anakin". This step closes the gap: aggregate display
@@ -212,17 +214,20 @@ CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
 // on Aura Free).
 
 // Fulltext is the *primary* retrieval substrate in v1 (no embeddings).
-// Index `displayName` (human-readable heading / filename), `content`, and
+// Index `displayName` (human-readable heading / filename), `content`,
 // `aliases` (list-valued — frontmatter alternate names plus piped-wikilink
 // display texts, so queries like "JFK" / "John F Kennedy" or "Anakin" hit
-// the right target). Both `Document` and `Section` carry `aliases` as of
-// v0.3.0 — Neo4j fulltext silently skips a missing property, so a single
-// combined index covers both labels.
+// the right target), and `description` (user-authored vault routing hint,
+// only present on `:Vault`). As of v0.4.0 the same index covers all three
+// searchable node labels — Neo4j fulltext silently skips a missing property
+// per label, so `:Document` / `:Section` rows simply have no `description`
+// and `:Vault` rows have no `content` / `aliases`. `ki search` filters by
+// label in the query (B.1 → `:Document`, B.2 → `:Section`, B.11 → `:Vault`).
 // The mapper writes `content` with `uri:` child-pointer lines appended, which
 // add some junk tokens to the index; if recall suffers, switch to a sanitised
 // `contentForIndex` copy that strips those pointer lines.
-CREATE FULLTEXT INDEX doc_section_search IF NOT EXISTS
-  FOR (n:Document|Section) ON EACH [n.displayName, n.content, n.aliases];
+CREATE FULLTEXT INDEX content_search IF NOT EXISTS
+  FOR (n:Document|Section|Vault) ON EACH [n.displayName, n.content, n.aliases, n.description];
 
 // (Vector indexes intentionally omitted — embeddings are deferred. See Q4.)
 ```
