@@ -88,6 +88,7 @@ from .provenance import (
     detect_user_id,
     now_utc,
 )
+from .remove import remove_vault
 
 log = logging.getLogger(__name__)
 
@@ -324,6 +325,10 @@ class IngestOptions:
     # When `description` is set and the marker already has a non-empty
     # description, refuse unless `force_description` is True.
     force_description: bool = False
+    # Rows per batched DETACH DELETE transaction during the pre-ingest
+    # vault-nuke step (only relevant when re-indexing an existing vault).
+    # See `docs/index_rm_behavior.md` *Batched DETACH DELETE*.
+    chunk_size: int = 1000
 
 
 def _split_oversize(
@@ -442,6 +447,18 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                             "vault slug %r collided mid-write; retrying once",
                             candidate,
                         )
+
+            # 3a.5 — vault-level sync. Per `docs/index_rm_behavior.md`, an
+            # existing vault is fully removed before re-ingest so stale docs /
+            # sections / folders / wikilinks don't linger. Fresh vaults
+            # (no marker existed before) skip this step — there's nothing to
+            # remove. Operates on `vault_uri` which is now settled.
+            #
+            # `remove_vault` is a no-op for vault URIs the graph doesn't know
+            # about, so it's safe to call even when the marker existed but
+            # the Neo4j was reset out-of-band.
+            if existing_marker:
+                remove_vault(session, vault_uri, chunk_size=opts.chunk_size)
 
             # 3b. Finalize the marker now that the URI is settled.
             # Description precedence: user-supplied (--description) > existing

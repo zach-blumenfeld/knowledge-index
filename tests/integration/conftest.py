@@ -114,13 +114,13 @@ def cleanup_vault(neo4j_profile: Profile) -> Iterator[list[str]]:
     yield to_clean
     if not to_clean:
         return
-    from ki.ingest import queries as Q  # local import; pulls Cypher
+    from ki.ingest.remove import remove_vault  # local import; pulls Cypher
 
     with driver_for(neo4j_profile) as driver:
         with driver.session() as session:
             for vault_uri in to_clean:
                 try:
-                    session.run(Q.DELETE_VAULT, vaultUri=vault_uri).consume()
+                    remove_vault(session, vault_uri)
                 except Exception:  # noqa: BLE001
                     pass
 

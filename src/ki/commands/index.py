@@ -35,6 +35,7 @@ def cmd_index(
     yes: bool,
     description: str | None = None,
     force_description: bool = False,
+    chunk_size: int = 1000,
 ) -> int:
     path = Path(path).expanduser().resolve()
     if not path.exists():
@@ -93,6 +94,7 @@ def cmd_index(
         max_file_size=max_file_size,
         description=effective_description,
         force_description=force_description,
+        chunk_size=chunk_size,
     )
     try:
         result = ingest_vault(path, opts)

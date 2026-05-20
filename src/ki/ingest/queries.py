@@ -214,40 +214,13 @@ SET n.aliases = existing + toAdd
 """.strip()
 
 
-# --- Removal queries (used by `ki rm`). Not in ingest-cypher.md but follow the
-# same single-uri MERGE-key model. `DETACH DELETE` removes incident
-# relationships (HAS, LOADED, LINKS_TO, NEXT_SECTION) along with their
-# endpoints, per docs/requirements_v01_mvp.md *Removal*.
+# --- Vault-level removal queries. See `docs/index_rm_behavior.md` for the
+# full design (vault-level sync model, three-step removal routine, batched
+# DETACH DELETE rationale).
 #
-# Re-stitching NEXT_SECTION across removals is unnecessary for whole-doc
-# deletion: NEXT_SECTION threads sections *within a single document* (see
-# docs/data-model.md), so removing one doc's sections leaves other docs'
-# chains untouched.
-DELETE_DOCUMENT_AND_SECTIONS = """
-MATCH (d:Document {uri: $docUri})
-OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
-WITH d, collect(DISTINCT s) AS secs
-FOREACH (s IN secs | DETACH DELETE s)
-DETACH DELETE d
-""".strip()
+# Step counts and the "remove" vocabulary throughout match the behavior doc.
 
-# Delete an entire subtree of a vault by URI prefix (e.g. removing a folder).
-# Uses STARTS WITH so we match all documents whose uri is `<vaultId>/<subpath>/...`.
-DELETE_SUBTREE = """
-MATCH (d:Document)
-WHERE d.uri STARTS WITH $uriPrefix
-OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
-WITH collect(DISTINCT d) AS docs, collect(DISTINCT s) AS secs
-FOREACH (s IN secs | DETACH DELETE s)
-FOREACH (d IN docs | DETACH DELETE d)
-""".strip()
-
-COUNT_SUBTREE = """
-MATCH (d:Document)
-WHERE d.uri STARTS WITH $uriPrefix
-RETURN count(d) AS doc_count
-""".strip()
-
+# Pre-removal count, surfaced in confirmation prompts.
 COUNT_VAULT = """
 MATCH (v:Vault {uri: $vaultUri})
 OPTIONAL MATCH (v)-[:HAS*]->(d:Document)
@@ -257,16 +230,81 @@ RETURN v.displayName AS display_name,
        count(DISTINCT s) AS section_count
 """.strip()
 
-# Whole-vault removal: walk `(v)-[:HAS*]->(any)` to collect every descendant
-# (Folder / Document / Section), DETACH DELETE each (which also drops their
-# incident NEXT_SECTION, LINKS_TO, LOADED, and HAS edges), then drop the Vault.
-DELETE_VAULT = """
-MATCH (v:Vault {uri: $vaultUri})
-OPTIONAL MATCH (v)-[:HAS*]->(descendant)
-WITH v, collect(DISTINCT descendant) AS descendants
-FOREACH (n IN descendants | DETACH DELETE n)
-DETACH DELETE v
+
+# Step 1 — snapshot the URIs of LINKS_TO targets that sit OUTSIDE the vault
+# being removed. These are the only external nodes whose degree could
+# plausibly drop to zero as a result of the upcoming removal, so they're
+# the only ones step 3 needs to recheck.
+#
+# The URI-prefix-match (`STARTS WITH $vaultUri + '/'`) leverages the slug
+# being a strict prefix of every Folder/Document/Section URI under the vault.
+COLLECT_EXTERNAL_LINKS_TARGETS = """
+MATCH (src)-[:LINKS_TO]->(tgt)
+WHERE (src.uri = $vaultUri OR src.uri STARTS WITH $vaultUri + '/')
+  AND NOT (tgt.uri = $vaultUri OR tgt.uri STARTS WITH $vaultUri + '/')
+RETURN DISTINCT tgt.uri AS uri
 """.strip()
+
+
+# Step 2 — batched DETACH DELETE of the vault subtree. The `$chunkSize`
+# placeholder is substituted client-side because `CALL ... IN TRANSACTIONS
+# OF n ROWS` rejects Cypher parameters in the `n` position (same trick as
+# B.3 / B.12 quantified-path quantifiers). See `run_remove_vault_subtree`.
+#
+# Note: this MUST be run from an *implicit* transaction (driver-level
+# `session.run`), not inside `session.execute_write` — `CALL IN TRANSACTIONS`
+# explicitly forbids nesting in a managed transaction.
+REMOVE_VAULT_SUBTREE_BATCHED = """
+MATCH (n) WHERE n.uri = $vaultUri OR n.uri STARTS WITH $vaultUri + '/'
+CALL (n) {
+  DETACH DELETE n
+} IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# Step 3 — orphan GC scoped to the snapshot from step 1. Same chunk-size
+# substitution rule. The `WHERE NOT (n)--()` clause is the degree-zero
+# check (no incident edges remain after step 2 finished).
+REMOVE_ORPHAN_TARGETS_BATCHED = """
+UNWIND $candidateUris AS u
+MATCH (n {uri: u})
+WHERE NOT (n)--()
+CALL (n) {
+  DETACH DELETE n
+} IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# `ki nuke` — enumerate every vault's URI and machine-scoped path so the
+# caller can clean `.ki/vault.yaml` markers from disk after the graph wipe.
+LIST_ALL_VAULTS = """
+MATCH (v:Vault)
+RETURN v.uri AS uri, v.path AS path
+ORDER BY v.uri
+""".strip()
+
+
+# `ki nuke` — batched DETACH DELETE of every node in the graph. Same
+# chunk-size substitution rule. Run before dropping schema.
+REMOVE_ALL_NODES_BATCHED = """
+MATCH (n)
+CALL (n) {
+  DETACH DELETE n
+} IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# `ki nuke` — drop ki-owned constraints and indexes. Each is `IF EXISTS`-
+# guarded so the call is idempotent (an already-nuked graph runs cleanly).
+# Names match `SCHEMA_STATEMENTS` above; keep these two lists in lock-step.
+DROP_SCHEMA_STATEMENTS = (
+    "DROP CONSTRAINT user_id_unique IF EXISTS",
+    "DROP CONSTRAINT vault_uri_unique IF EXISTS",
+    "DROP CONSTRAINT folder_uri_unique IF EXISTS",
+    "DROP CONSTRAINT document_uri_unique IF EXISTS",
+    "DROP CONSTRAINT section_uri_unique IF EXISTS",
+    "DROP INDEX content_search IF EXISTS",
+)
 
 
 # Lookup helpers.
