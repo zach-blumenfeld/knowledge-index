@@ -90,12 +90,16 @@ mkdir my-vault              # plain folder, no special tooling
 echo "some ideas" >> my-vault/ideas.md
 ki index ./my-vault         # syncs to Neo4j (idempotent; auto-creates .ki/vault.yaml on first run)
 ki search "..." [flags]     # exposes retrieval queries via flags
+ki tree [--at "<uri>"]      # render the containment hierarchy (Vault → Folder → Doc → Section) — see docs/tree-format.md
+ki get "<uri>" [flags]      # fetch metadata + content at a Doc / Section URI; --type {path,content,full}
 ki rm ./my-vault/notes/idea.md      # remove a document from the index (source file untouched)
 ki rm ./my-vault --vault            # remove an entire vault from the index (source files untouched)
 
 ki index ./my-vault --profile work    # explicit profile override
 KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents / cron)
 ```
+
+**Navigation + fetch loop.** `ki search` and `ki tree` return URIs; `ki get <uri>` fetches what those URIs point to. `--type content` (default) returns the node's stored content + `uri:` references to direct children (per Rule 1 in `docs/data-model.md`); `--type full` returns the full reading-order body via B.4 / B.14; `--type path` returns the metadata shell only, so the agent can `Read` the file via the `path` property. `ki get` only accepts `:Document` and `:Section` URIs — `:Folder` and `:Vault` URIs error with a hint pointing at `ki tree` / `ki vault list`.
 
 **Three commands users actually need: `ki configure`, `ki index`, `ki rm`.** `ki configure` is run once per machine (or per new Neo4j connection); `ki index` and `ki rm` are the working verbs.
 
