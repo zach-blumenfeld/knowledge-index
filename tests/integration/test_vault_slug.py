@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from ki.ingest.pipeline import IngestOptions, ingest_vault
-from ki.ingest.queries import DELETE_VAULT
+from ki.ingest.remove import remove_vault
 from ki.neo4j_client import driver_for
 from ki.vault import read_vault_uri
 
@@ -85,9 +85,9 @@ def test_delete_then_reingest_reuses_freed_slot(tmp_path, neo4j_profile, cleanup
         assert res.vault_uri == expected
         cleanup_vault.append(res.vault_uri)
 
-    # Delete my-notes-1 (simulating `ki rm --vault`).
+    # Remove my-notes-1 (simulating `ki rm --vault`).
     with driver_for(neo4j_profile) as driver, driver.session() as session:
-        session.run(DELETE_VAULT, vaultUri="my-notes-1").consume()
+        remove_vault(session, "my-notes-1")
 
     # Ingest a third basename-`my-notes` vault. The freed slot is reused.
     parent_c = tmp_path / "c"
