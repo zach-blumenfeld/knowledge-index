@@ -1,6 +1,6 @@
 ## Retrieval queries for the new data model
 
-Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
+Same query *shapes* as [docs/resarch](research-data-model/research-retrieval-queries.md), ported to the new
 `(User)–(Vault)–(Folder)–(Document)–(Section)` schema.
 
 ### Mapping cheatsheet
@@ -10,7 +10,7 @@ Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
 | `:Section`                                 | `:Section (uri, displayName, headingLevel, content)`                               |
 | `:Paragraph (text)`                        | — folded into `Section.content`                                                    |
 | `:Chunk (text, embedding)`                 | — deferred (v1 has no embeddings)                                                  |
-| `:HAS_SECTION` / `:HAS_PARAGRAPH` (linear) | `:HAS_SECTION` (tree from `Document`\|`Section` → `Section`)                       |
+| `:HAS_SECTION` / `:HAS_PARAGRAPH` (linear) | `:HAS` (universal containment edge — `Vault\|Folder\|Document\|Section` → `Folder\|Document\|Section`; see `docs/data-model.md` §4.2) |
 | `:NEXT_SECTION` / `:NEXT_PARAGRAPH`        | `:NEXT_SECTION` — threads ALL sections of a document in DFS reading order          |
 | `:MENTIONS` (article-to-article projected) | `:LINKS_TO` (`Document`\|`Section` → `Document`\|`Section`)                        |
 | `:REDIRECTS_TO`                            | `Document.aliases` (wikilinks resolved at ingest time)                             |
@@ -26,7 +26,8 @@ Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
 ### Parameters
 - `$uri` — the `Document.uri` (UUID-prefixed slugified path, see §4.3).
 - `$section_uri`, `$section_uris` — same convention for sections.
-- `$folder_uri` — a `Folder.uri` (UUID-prefixed slugified directory path) when used as a scoping root (B.12, `--under` scoping in B.1/B.2/B.11 — see *Scoping* below).
+- `$folder_uri` — a `Folder.uri` (UUID-prefixed slugified directory path) used as a prefix in `--under` scoping for B.1/B.2/B.11 — see *Scoping* below.
+- `$root_uri` — for B.12 / `ki tree`; URI of any node to start the tree walk from (`:Vault`, `:Folder`, `:Document`, or `:Section`).
 - `$index_name` — `'content_search'` (the fulltext index from §4.4).
 - `$query` — fulltext query string (Lucene syntax).
 - `$k`, `$n` — limit / window size.
@@ -47,15 +48,15 @@ The same idea works for any of B.1 / B.2 / B.11 (with `:Vault`-scope `folder_uri
 
 ### Per-query design notes
 - **B.1 / B.2 / B.11 (vector → fulltext)** — v1 has no vector index per §4.4, so all three use `content_search` (the unified `Document|Section|Vault` fulltext index, over `displayName` + `content` + `aliases` + `description`). Filter by label (`:Document` / `:Section` / `:Vault`) post-yield. Notes on swapping to vector when added.
-- **B.3 neighbourhood** — `:MENTIONS` → `:LINKS_TO`; alias-based redirect resolution happens at ingest, so no `REDIRECTS_TO*` canonicalisation needed. Traversal flows through `(doc)-[:HAS_SECTION*0..]->(elem)` to handle section-as-link-endpoint, then projects each hop back to its owning document.
-- **B.4 document text** — walks `NEXT_SECTION*0..` from the first section (the direct `HAS_SECTION` child with no incoming `NEXT_SECTION`), orders by path length, adds `reading_order` to the output. Defensive `(start)-[:HAS_SECTION*]->(section)` keeps the walk inside this document. Matches the shape of old A.4 closely.
+- **B.3 neighbourhood** — `:MENTIONS` → `:LINKS_TO`; alias-based redirect resolution happens at ingest, so no `REDIRECTS_TO*` canonicalisation needed. Traversal flows through `(doc)-[:HAS*0..]->(elem)` to handle section-as-link-endpoint, then projects each hop back to its owning document.
+- **B.4 document text** — walks `NEXT_SECTION*0..` from the first section (the direct `HAS` child with no incoming `NEXT_SECTION`), orders by path length, adds `reading_order` to the output. Defensive `(start)-[:HAS*]->(section)` keeps the walk inside this document. Matches the shape of old A.4 closely.
 - **B.5 frontmatter** — `infobox` → `frontmatter` (the natural structured-metadata analog); same row shape (`kind`, `uri`, `text`). Sections returned in strict DFS reading order via the `NEXT_SECTION` walk.
 - **B.6 get sections** — straight URI lookup; sections own their content directly (no paragraph hop).
 - **B.7 windowing (full content)** — near-verbatim port of old A.7's paragraph windowing. Symmetric `back_path` / `fwd_path` collect-and-merge over `NEXT_SECTION` with `offset`, full content. Old A.7 + A.8 collapse here since the new model has no `Paragraph`.
-- **B.8 windowing (summary)** — same `±N` walk as B.7 over `NEXT_SECTION` but returns `heading`, `first_child_section_uri`, `child_count` instead of full content. The `first_child` lookup exploits the DFS property: a section's first child is the section it points to via `NEXT_SECTION` that is also a `HAS_SECTION` child of it. Mirrors A.8's summary semantics.
+- **B.8 windowing (summary)** — same `±N` walk as B.7 over `NEXT_SECTION` but returns `heading`, `first_child_section_uri`, `child_count` instead of full content. The `first_child` lookup exploits the DFS property: a section's first child is the section it points to via `NEXT_SECTION` that is also a `HAS` child of it. Mirrors A.8's summary semantics.
 - **B.9 / B.10** — straightforward `LINKS_TO` ports with endpoint-projection (any section endpoint → its owning `Document`) so the result shape stays at document granularity like the originals.
 - **B.11 Vault fulltext** — see *Per-query* notes above; same shared `content_search` index, filtered to `:Vault`. Powers `ki search --type vault` for cross-vault routing.
-- **B.12 Folder tree** — pure graph walk over `:HAS_FOLDER` and `:HAS_DOCUMENT`, depth-capped via `$depth`. No fulltext, no scoring. Powers `ki tree`. Starts from any `:Vault` or `:Folder` URI (`$root_uri`), so the same query renders the whole vault or any subtree.
+- **B.12 Containment tree** — pure graph walk over `:HAS` (the universal containment edge), depth-capped via a **quantified path pattern** quantifier (`{1,$depth}`) so the depth bound prunes during traversal rather than as a post-filter — same trick as B.3. Powers `ki tree`. Starts from any `:Vault`, `:Folder`, `:Document`, or `:Section` URI (`$root_uri`), so the same query renders the whole vault, a folder subtree, the heading tree of one document, or the sub-headings under a heading. The caller decides which `kind`s to keep (e.g. `ki tree` against a `:Vault` root hides `:Section` rows for a directory-style view).
 
 
 B.1 Document title fulltext search
@@ -85,7 +86,7 @@ WHERE section:Section
 WITH section, score
 ORDER BY score DESC
 LIMIT toInteger($k)
-MATCH (doc:Document)-[:HAS_SECTION*]->(section)
+MATCH (doc:Document)-[:HAS*]->(section)
 RETURN doc.uri AS document_uri,
        doc.displayName AS document_title,
        section.uri AS section_uri,
@@ -100,7 +101,7 @@ B.3 Document neighbourhood
 // Closest analog to A.3. `:LINKS_TO` replaces `:MENTIONS`; aliases replace
 // redirects (wikilink resolution already happens at ingest, so we don't
 // canonicalise here). Traversal goes through any element of the start doc
-// (the doc itself or any of its sections) via `:HAS_SECTION*0..`, then jumps
+// (the doc itself or any of its sections) via `:HAS*0..`, then jumps
 // across documents via `:LINKS_TO`, and projects each endpoint back to its
 // owning Document.
 //
@@ -110,10 +111,10 @@ B.3 Document neighbourhood
 // in the quantifier. See:
 //   https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/
 MATCH (start:Document {uri: $uri})
-MATCH (start)-[:HAS_SECTION*0..]->(startElem)
+MATCH (start)-[:HAS*0..]->(startElem)
 MATCH linkPath = (startElem) (()-[:LINKS_TO]->()){1,$n} (endElem)
 WITH endElem, length(linkPath) AS distance
-OPTIONAL MATCH (endDoc:Document)-[:HAS_SECTION*]->(endElem)
+OPTIONAL MATCH (endDoc:Document)-[:HAS*]->(endElem)
 WHERE endElem:Section
 WITH coalesce(endDoc, endElem) AS neighbour, distance
 WHERE neighbour:Document AND neighbour.uri <> $uri
@@ -128,13 +129,13 @@ B.4 Document text
 ```cypher
 // Walks the document's NEXT_SECTION chain from first section to last. The
 // first section is the direct child of the document with no incoming
-// NEXT_SECTION edge. The `(start)-[:HAS_SECTION*]->(section)` filter is
+// NEXT_SECTION edge. The `(start)-[:HAS*]->(section)` filter is
 // defensive — keeps the walk inside this document if the chain ever
 // accidentally crosses documents.
-MATCH (start:Document {uri: $uri})-[:HAS_SECTION]->(first:Section)
+MATCH (start:Document {uri: $uri})-[:HAS]->(first:Section)
 WHERE NOT (:Section)-[:NEXT_SECTION]->(first)
 MATCH path = (first)-[:NEXT_SECTION*0..]->(section:Section)
-WHERE (start)-[:HAS_SECTION*]->(section)
+WHERE (start)-[:HAS*]->(section)
 RETURN section.uri AS section_uri,
        section.displayName AS heading,
        section.headingLevel AS heading_level,
@@ -150,10 +151,10 @@ B.5 Document frontmatter and section titles
 // reading order via NEXT_SECTION. Row shape matches A.5: one row per
 // "thing" (kind = 'frontmatter' | 'section title').
 MATCH (start:Document {uri: $uri})
-OPTIONAL MATCH (start)-[:HAS_SECTION]->(first:Section)
+OPTIONAL MATCH (start)-[:HAS]->(first:Section)
 WHERE NOT (:Section)-[:NEXT_SECTION]->(first)
 OPTIONAL MATCH path = (first)-[:NEXT_SECTION*0..]->(section:Section)
-WHERE (start)-[:HAS_SECTION*]->(section)
+WHERE (start)-[:HAS*]->(section)
 WITH start, section, length(path) AS reading_order
 ORDER BY reading_order
 WITH start, collect({
@@ -222,7 +223,7 @@ B.8 Windowing sections (summary)
 //
 // `first_child` exploits the DFS property of NEXT_SECTION: a section's
 // first child is the section it points to via NEXT_SECTION *that is also*
-// a HAS_SECTION child of it.
+// a HAS child of it.
 MATCH (hit:Section {uri: $section_uri})
 OPTIONAL MATCH back_path = (hit)<-[:NEXT_SECTION*1..]-(prev:Section)
 WHERE length(back_path) <= $n
@@ -235,8 +236,8 @@ UNWIND all_entries AS e
 WITH e.section AS section, e.offset AS offset
 WHERE section IS NOT NULL
 OPTIONAL MATCH (section)-[:NEXT_SECTION]->(first_child:Section)
-WHERE (section)-[:HAS_SECTION]->(first_child)
-OPTIONAL MATCH (section)-[:HAS_SECTION]->(child:Section)
+WHERE (section)-[:HAS]->(first_child)
+OPTIONAL MATCH (section)-[:HAS]->(child:Section)
 WITH section, offset, first_child, count(child) AS child_count
 RETURN section.uri AS section_uri,
        offset,
@@ -254,12 +255,12 @@ B.9 Get backlinks
 // Each source is projected back to its owning document so callers get
 // "which document mentions me, and in which section."
 MATCH (target:Document {uri: $uri})
-OPTIONAL MATCH (target)-[:HAS_SECTION*]->(targetSection:Section)
+OPTIONAL MATCH (target)-[:HAS*]->(targetSection:Section)
 WITH collect(DISTINCT target) + collect(DISTINCT targetSection) AS targets
 UNWIND targets AS tgt
 MATCH (src)-[link:LINKS_TO]->(tgt)
 WHERE src:Document OR src:Section
-OPTIONAL MATCH (srcDoc:Document)-[:HAS_SECTION*]->(src)
+OPTIONAL MATCH (srcDoc:Document)-[:HAS*]->(src)
 WHERE src:Section
 WITH coalesce(srcDoc, src) AS source_document,
      src AS source_element,
@@ -285,8 +286,8 @@ B.10 Shortest path
 // LINKS_TO sources are mixed.
 MATCH (a:Document {uri: $uri_a})
 MATCH (b:Document {uri: $uri_b})
-MATCH (a)-[:HAS_SECTION*0..]->(aElem)
-MATCH (b)-[:HAS_SECTION*0..]->(bElem)
+MATCH (a)-[:HAS*0..]->(aElem)
+MATCH (b)-[:HAS*0..]->(bElem)
 WITH a, b, aElem, bElem
 MATCH path = shortestPath((aElem)-[:LINKS_TO*..6]->(bElem))
 WITH path
@@ -295,9 +296,9 @@ LIMIT 1
 WITH path, nodes(path) AS elems
 UNWIND range(0, size(elems) - 2) AS i
 WITH elems[i] AS fromElem, elems[i+1] AS toElem, i
-OPTIONAL MATCH (fromDoc:Document)-[:HAS_SECTION*]->(fromElem)
+OPTIONAL MATCH (fromDoc:Document)-[:HAS*]->(fromElem)
 WHERE fromElem:Section
-OPTIONAL MATCH (toDoc:Document)-[:HAS_SECTION*]->(toElem)
+OPTIONAL MATCH (toDoc:Document)-[:HAS*]->(toElem)
 WHERE toElem:Section
 WITH i,
      coalesce(fromDoc, fromElem) AS from_document,
@@ -335,45 +336,37 @@ LIMIT toInteger($k)
 ```
 
 
-B.12 Folder tree (depth-capped)
+B.12 Containment tree (depth-capped)
 ```cypher
-// New in v0.4.0. Walks the folder hierarchy from any `$root_uri` (a Vault or
-// Folder URI) outward via HAS_FOLDER, and surfaces the documents owned by
-// each folder along the way via HAS_DOCUMENT.
+// New in v0.4.0. Walks the containment tree from any `$root_uri` outward via
+// the single `HAS` relationship type. Roots can be a `:Vault`, `:Folder`,
+// `:Document`, or `:Section` — same query for "the whole vault as a tree",
+// "this folder's subtree", "the heading tree of one doc", or "everything
+// nested under this heading".
 //
 // Pure graph walk — no fulltext, no scoring. Returns one row per descendant
-// node (Folder or Document) with its parent URI and depth from the root, so
-// the caller can rebuild the tree client-side and render it however it likes
-// (the `ki tree` command formats it as a directory-style tree in the
-// terminal, or YAML with `--out-file`).
+// with its parent URI and depth from the root; the caller (`ki tree`)
+// rebuilds the tree client-side and decides how to render (directory-style
+// in the terminal, YAML with `--out-file`, etc.) and which kinds to include
+// (e.g. `ki tree` filters Sections out by default for a folder root).
 //
-// $root_uri — a Vault.uri OR a Folder.uri (both are valid roots).
-// $depth    — cap on traversal depth from the root.
+// $root_uri — a Vault / Folder / Document / Section URI.
+// $depth    — cap on traversal depth from the root (must be >= 1).
 //
-// The two UNION branches handle the two output shapes: Folder rows and
-// Document rows. Both carry the same column set so the caller can stream
-// a single sorted result.
+// We use a **quantified path pattern** for the `:HAS` hop chain rather than
+// legacy `*1..n` variable-length syntax — legacy `*m..n` requires literal
+// upper bounds, and `*1..` with a post-filter (`WHERE length(path) <= $depth`)
+// is a serious perf trap because it walks the entire reachable subgraph and
+// only then prunes. Quantified path patterns accept the depth parameter *in
+// the quantifier* and prune during traversal. Same trick as B.3.
+//   https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/
 MATCH (root {uri: $root_uri})
-WHERE root:Vault OR root:Folder
-CALL (root) {
-  WITH root
-  MATCH path = (root)-[:HAS_FOLDER*1..]->(f:Folder)
-  WHERE length(path) <= toInteger($depth)
-  RETURN f.uri AS uri,
-         'Folder' AS kind,
-         f.displayName AS display_name,
-         [n IN nodes(path)[-2..-1] | n.uri][0] AS parent_uri,
-         length(path) AS depth
-  UNION
-  WITH root
-  MATCH path = (root)-[:HAS_FOLDER*0..]->(parent)-[:HAS_DOCUMENT]->(d:Document)
-  WHERE length(path) <= toInteger($depth)
-  RETURN d.uri AS uri,
-         'Document' AS kind,
-         d.displayName AS display_name,
-         parent.uri AS parent_uri,
-         length(path) + 1 AS depth
-}
-RETURN uri, kind, display_name, parent_uri, depth
-ORDER BY depth, parent_uri, kind DESC, display_name
+WHERE root:Vault OR root:Folder OR root:Document OR root:Section
+MATCH path = (root) (()-[:HAS]->()){1,$depth} (child)
+RETURN child.uri AS uri,
+       labels(child)[0] AS kind,
+       child.displayName AS display_name,
+       [n IN nodes(path)[-2..-1] | n.uri][0] AS parent_uri,
+       length(path) AS depth
+ORDER BY depth, parent_uri, display_name
 ```
