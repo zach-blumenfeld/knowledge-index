@@ -165,6 +165,100 @@ def test_section_target_wikilink_carries_display_text():
     assert wl[0].display_text == "Anakin"
 
 
+# ---- #37: external URLs + internal non-md file links ---------------------
+
+
+def test_external_url_link_captured_as_external():
+    text = "# Top\n\nsee [Launch blog](https://neo4j.com/blog/agentic-ai/).\n"
+    doc = parse_markdown(text, filename="d.md")
+    [link] = [link for link in doc.sections[0].links if link.kind == "external_url"]
+    assert link.target == "https://neo4j.com/blog/agentic-ai/"
+    assert link.display_text == "Launch blog"
+    assert link.wikilink is False
+    assert link.embed is False
+
+
+def test_mailto_and_obsidian_schemes_are_external():
+    """Any URI scheme — not just https — flags external_url per #37 q4."""
+    text = (
+        "# Top\n\n"
+        "email [me](mailto:me@example.com), open [in obsidian]"
+        "(obsidian://open?vault=blogs&file=foo).\n"
+    )
+    doc = parse_markdown(text, filename="d.md")
+    kinds = {link.kind for link in doc.sections[0].links}
+    assert "external_url" in kinds
+    externals = {link.target for link in doc.sections[0].links if link.kind == "external_url"}
+    assert "mailto:me@example.com" in externals
+    assert "obsidian://open?vault=blogs&file=foo" in externals
+
+
+def test_internal_non_md_link_captured_as_stub_kind():
+    text = "# Top\n\nsee [Slides](./presentations/q3-deck.pptx) for the data.\n"
+    doc = parse_markdown(text, filename="d.md")
+    [link] = [
+        link for link in doc.sections[0].links if link.kind == "non_md_file"
+    ]
+    assert link.target == "./presentations/q3-deck.pptx"
+    assert link.display_text == "Slides"
+
+
+def test_md_link_kind_is_md_link():
+    """`[text](./foo.md)` is still classified as md_link (resolver path)."""
+    text = "# Top\n\nsee [Foo](./foo.md).\n"
+    doc = parse_markdown(text, filename="d.md")
+    [link] = [link for link in doc.sections[0].links if not link.wikilink]
+    assert link.kind == "md_link"
+    assert link.target == "./foo.md"
+
+
+def test_url_decode_only_applies_to_file_paths():
+    """File paths get URL-decoded so they resolve on disk; URLs stay verbatim.
+
+    Per #37 q1 (no URL normalization in v1), we don't decode URLs because
+    that would silently fold `?foo=a%20b` and `?foo=a b` into the same node.
+    """
+    text = (
+        "# Top\n\n"
+        "[Deck](./my%20deck.pptx) and "
+        "[URL](https://foo.com/a%20b).\n"
+    )
+    doc = parse_markdown(text, filename="d.md")
+    links = doc.sections[0].links
+    file_link = next(link for link in links if link.kind == "non_md_file")
+    url_link = next(link for link in links if link.kind == "external_url")
+    assert file_link.target == "./my deck.pptx"  # decoded
+    assert url_link.target == "https://foo.com/a%20b"  # verbatim
+
+
+def test_pure_fragment_link_skipped():
+    """`[click](#anchor)` is a same-doc anchor — skipped (lives in section content)."""
+    text = "# Top\n\nsee [the next section](#background) below.\n"
+    doc = parse_markdown(text, filename="d.md")
+    # Only the wikilink set (empty here) — no #-only links surface.
+    md_links = [link for link in doc.sections[0].links if not link.wikilink]
+    assert md_links == []
+
+
+def test_image_embeds_not_treated_as_markdown_links():
+    """`![alt](image.png)` is an image, not a link — must not be captured."""
+    text = "# Top\n\n![Diagram](./arch.png)\n\nand [Slides](./deck.pptx).\n"
+    doc = parse_markdown(text, filename="d.md")
+    md_kind_links = [link for link in doc.sections[0].links if not link.wikilink]
+    # Only `./deck.pptx`, not `./arch.png`.
+    targets = {link.target for link in md_kind_links}
+    assert "./deck.pptx" in targets
+    assert "./arch.png" not in targets
+
+
+def test_link_with_fragment_keeps_fragment_in_target_for_md():
+    """`[click](./foo.md#bar)` keeps the fragment so the resolver can split it."""
+    text = "# Top\n\nsee [Bar](./foo.md#bar) here.\n"
+    doc = parse_markdown(text, filename="d.md")
+    [link] = [link for link in doc.sections[0].links if link.kind == "md_link"]
+    assert link.target == "./foo.md#bar"
+
+
 def test_content_construction_shallow_with_pointers():
     """Rule 1: Section.content = body + uri: lines for direct children."""
     text = (

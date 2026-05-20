@@ -50,7 +50,7 @@ Run after the per-vault-ingest write. All document/section/relationship writes f
 
 Each `row` is a plain dict. `row.props` is the mutable property bag fed into `SET n += row.props`; create-only fields are split out into `row.createOnly` so they're only applied on `ON CREATE`.
 
-**Write order matters:** documents, folders, and sections first (so their `uri`s exist as MATCH targets), then folder/doc tree `HAS` edges (step 1c), then section tree `HAS` edges (step 3), then `NEXT_SECTION` (linear reading-order chain — cleared and rebuilt each ingest), then User→Document `LOADED` provenance edges, then `LINKS_TO` (so cross-document wikilink targets resolve), and finally the wikilink-display-text → target `aliases` aggregation (step 7), which depends on the vault-wide set of `LINKS_TO` display texts already being gathered client-side.
+**Write order matters:** documents, folders, and sections first (so their `uri`s exist as MATCH targets), then folder/doc tree `HAS` edges (step 1c), then section tree `HAS` edges (step 3), then `NEXT_SECTION` (linear reading-order chain — cleared and rebuilt each ingest), then User→Document `LOADED` provenance edges, then **stub + external Documents** (step 5.5 / 5.6 — new in #37, batch their folder materialization + MERGE before LINKS_TO so the link-targets exist as MATCH targets), then `LINKS_TO`, and finally the link-display-text → target `aliases` aggregation (step 7), which depends on the vault-wide set of `LINKS_TO` display texts already being gathered client-side.
 
 ```cypher
 // 1. Documents — batched node upsert (no parent edge yet — see step 1c).

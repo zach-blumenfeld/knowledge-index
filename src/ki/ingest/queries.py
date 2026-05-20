@@ -185,6 +185,44 @@ SET ld += $loadProps,
 """.strip()
 
 
+# 4.3 step 5.5 — stub :Document upsert for internal non-md files (e.g.
+# `[Slides](./deck.pptx)`). Same node-property shape as the main Document
+# (name, displayName, path, fileHash) but with sourceType = LOCAL_FILE and
+# no content / frontmatter / aliases-from-frontmatter (aliases are filled
+# from link-text via WRITE_DISPLAY_TEXT_ALIASES). The parent HAS edge is
+# written separately via WRITE_TREE_EDGES — same as md docs.
+WRITE_STUB_DOCUMENTS = """
+UNWIND $stubDocRows AS row
+MERGE (d:Document {uri: row.uri})
+ON CREATE SET d.firstLoadedAt = $now,
+              d.sourceType = 'LOCAL_FILE'
+SET d.name = row.name,
+    d.displayName = row.displayName,
+    d.path = row.path,
+    d.fileHash = row.fileHash,
+    d.lastLoadedAt = $now
+""".strip()
+
+
+# 4.3 step 5.6 — external :Document upsert for URLs and vault-escaping file
+# paths captured by markdown links. No `path` (it's external), no fileHash,
+# no HAS edge to any vault. sourceType = URL_LINK. The URI is the URL string
+# (or `file://...` for out-of-vault file paths) as-is — no normalization in
+# 0.4.0 per #37 design.
+#
+# Cross-vault collapse comes for free: the same URL referenced from two
+# vaults MERGEs into one node with LINKS_TO from both.
+WRITE_EXTERNAL_DOCUMENTS = """
+UNWIND $externalDocRows AS row
+MERGE (d:Document {uri: row.uri})
+ON CREATE SET d.firstLoadedAt = $now,
+              d.sourceType = 'URL_LINK'
+SET d.name = row.name,
+    d.displayName = row.displayName,
+    d.lastLoadedAt = $now
+""".strip()
+
+
 # 4.3 step 6 — LINKS_TO.
 WRITE_LINKS_TO = """
 UNWIND $linksToRows AS row

@@ -84,6 +84,8 @@ Flag mechanics:
 
 Plain-text output uses the same `T` letter convention as `ki tree`: `V`=Vault, `D`=Document, `S`=Section. The `uri` column carries the load-bearing identifier you can paste into `ki get <uri>` or `ki tree --at <uri>`.
 
+**Document results now include external URLs and internal non-md files** (#37). A markdown link like `[Launch blog](https://neo4j.com/blog/...)` creates an external `:Document` keyed by the URL itself; `[Slides](./deck.pptx)` creates an internal stub `:Document` (`sourceType=LOCAL_FILE`, no content, just metadata + fileHash). `ki search --types document` and `ki tree` surface all three Document kinds (internal md, internal non-md stub, external URL). `ki get <external-url>` works and returns the external Document's metadata; the URI is the URL itself — no slug prefix.
+
 **Cross-type score caveat.** Fulltext scores are not strictly comparable across queries (different term-frequency normalization per set size), so the merged ranking is a heuristic. If a query feels off, re-run with `--types <one>` to see the native ranking for that type alone.
 
 The `--type neighbors` flag (1-hop `LINKS_TO` traversal via B.3) was removed in 0.4.0. To see what a specific doc/section links to, use `ki tree --at "<uri>" --depth 1` — outbound `LINKS_TO` edges render as horizontal branches by default. For backlinks ("what links *to* this?"), there is no CLI surface yet — see [#35](https://github.com/zach-blumenfeld/knowledge-index/issues/35).
