@@ -10,7 +10,14 @@ import yaml
 
 from ki.ingest.pipeline import IngestOptions, ingest_vault
 from ki.neo4j_client import driver_for
-from ki.search.queries import run_b1, run_b2, run_b3, run_vault_search
+from ki.search.queries import (
+    run_b1,
+    run_b2,
+    run_b3,
+    run_b12,
+    run_b12_links,
+    run_vault_search,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -195,3 +202,119 @@ def test_vault_search_warns_on_missing_description(tmp_path, neo4j_profile, clea
     _warn_missing_vault_description(rows)
     captured = capsys.readouterr()
     assert "no description set" in captured.err
+
+
+def test_search_b12_accepts_parameterized_depth(tmp_path, neo4j_profile, cleanup_vault):
+    """B.12 must accept an arbitrary `depth` at runtime.
+
+    Regression guard: like B.3, B.12 uses a quantified-path quantifier
+    (`{1,$depth}`) and Neo4j 5.x rejects parameters inside it, so `run_b12`
+    substitutes the literal int client-side. If anyone removes that
+    substitution, the query fails with `SyntaxError: Invalid input '$': ...`.
+    """
+    vault = tmp_path / "tree-vault"
+    vault.mkdir()
+    (vault / "ideas").mkdir()
+    (vault / "ideas" / "big.md").write_text("# Big\n\n## Sub-A\n\nbody.\n## Sub-B\n\nbody.\n")
+
+    res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(res.vault_uri)
+
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        # depth=1: should reach only the Folder under the Vault.
+        shallow = run_b12(session, res.vault_uri, depth=1)
+        # depth=4: should reach into sub-sections.
+        deep = run_b12(session, res.vault_uri, depth=4)
+
+    shallow_labels = {r["label"] for r in shallow}
+    deep_labels = {r["label"] for r in deep}
+    assert "Folder" in shallow_labels
+    assert "Section" not in shallow_labels  # too far at depth=1
+    assert "Section" in deep_labels  # reached at depth=4
+
+
+def test_search_b12_sort_pos_set_for_sections_in_reading_order(
+    tmp_path, neo4j_profile, cleanup_vault,
+):
+    """B.12 must emit `sort_pos` on every Section row matching NEXT_SECTION order.
+
+    The DFS reading order for `# Big → ## Background → ## Origins → ## Impl`
+    yields chain positions 0, 1, 2, 3. The query must surface those even
+    though they are not the alphabetical order of section names.
+    """
+    vault = tmp_path / "sort-pos-vault"
+    vault.mkdir()
+    (vault / "big.md").write_text(
+        "# Big\n\nintro.\n\n## Background\n\nb.\n\n## Origins\n\no.\n\n## Implementation\n\ni.\n"
+    )
+
+    res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(res.vault_uri)
+
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        rows = run_b12(session, res.vault_uri, depth=5)
+
+    sections = [r for r in rows if r["label"] == "Section"]
+    # Key by displayName (`r.name` is the heading-path slug like
+    # `big/background`; displayName is the heading text "Background").
+    by_display = {r["displayName"]: r["sort_pos"] for r in sections}
+    # Reading order is Big → Background → Origins → Implementation.
+    # Alphabetical would be Background → Big → Implementation → Origins.
+    # sort_pos must encode the former, not the latter.
+    assert by_display["Big"] == 0
+    assert by_display["Background"] == 1
+    assert by_display["Origins"] == 2
+    assert by_display["Implementation"] == 3
+
+
+def test_search_b12_null_root_uri_returns_all_vaults(
+    tmp_path, neo4j_profile, cleanup_vault,
+):
+    """When --at is omitted, B.12 matches every :Vault as a root."""
+    vault_a = tmp_path / "vault-a"
+    vault_a.mkdir()
+    (vault_a / "x.md").write_text("# X\n\nbody.\n")
+    vault_b = tmp_path / "vault-b"
+    vault_b.mkdir()
+    (vault_b / "y.md").write_text("# Y\n\nbody.\n")
+
+    a = ingest_vault(vault_a, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(a.vault_uri)
+    b = ingest_vault(vault_b, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(b.vault_uri)
+
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        rows = run_b12(session, None, depth=2)
+
+    root_uris = {r["uri"] for r in rows if r["depth"] == 0 and r["label"] == "Vault"}
+    assert a.vault_uri in root_uris
+    assert b.vault_uri in root_uris
+
+
+def test_search_b12_links_returns_outbound_links_to_edges(
+    tmp_path, neo4j_profile, cleanup_vault,
+):
+    """B.12-links must return outbound :LINKS_TO edges from supplied source URIs."""
+    vault = tmp_path / "links-vault"
+    vault.mkdir()
+    (vault / "a.md").write_text("Refers to [[b]].\n\n# A\n\nbody.\n")
+    (vault / "b.md").write_text("# B\n\nbody.\n")
+
+    res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(res.vault_uri)
+
+    a_uri = f"{res.vault_uri}/a.md"
+
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        links = run_b12_links(session, [a_uri])
+
+    assert any(
+        link["parent_uri"] == a_uri and link["uri"] == f"{res.vault_uri}/b.md"
+        for link in links
+    ), links
+
+
+def test_search_b12_links_empty_source_list_returns_empty(neo4j_profile):
+    """run_b12_links short-circuits on an empty source list without hitting Neo4j."""
+    # We don't actually open a session — the function should return [] immediately.
+    assert run_b12_links(None, []) == []

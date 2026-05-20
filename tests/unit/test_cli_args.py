@@ -57,8 +57,10 @@ def test_search_help_lists_type_choices():
     runner = CliRunner()
     res = runner.invoke(main, ["search", "--help"])
     assert res.exit_code == 0
-    for choice in ("section", "document", "neighbors", "vault"):
+    for choice in ("section", "document", "vault"):
         assert choice in res.output
+    # `neighbors` was dropped in 0.4.0 — see #33 / #35.
+    assert "neighbors" not in res.output
 
 
 def test_vault_group_help_lists_subcommands():

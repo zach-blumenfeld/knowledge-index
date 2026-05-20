@@ -4,6 +4,7 @@ User-visible commands:
   ki configure              one-time Neo4j connection setup
   ki index <path>           sync a folder of markdown into the graph
   ki search <query>         retrieve via fulltext + graph (B.1 / B.2 / B.3 / B.11)
+  ki tree                   render the containment tree (B.12)
   ki rm <path>              remove a doc / subtree / vault from the index
   ki vault list             list every indexed vault with its description
   ki init <path>            (advanced) write `.ki/vault.yaml` without indexing
@@ -27,6 +28,7 @@ from .commands.skill import cmd_install as cmd_skill_install
 from .commands.skill import cmd_list as cmd_skill_list
 from .commands.skill import cmd_print as cmd_skill_print
 from .commands.skill import cmd_remove as cmd_skill_remove
+from .commands.tree import cmd_tree
 from .commands.vault import cmd_vault_list
 from .ingest.batcher import DEFAULT_BATCH_SIZE
 from .ingest.pipeline import DEFAULT_CONCURRENCY, DEFAULT_MAX_FILE_SIZE
@@ -115,20 +117,18 @@ def index_cmd(
 @click.option("--profile", default=None)
 @click.option(
     "--type", "search_type",
-    type=click.Choice(["section", "document", "neighbors", "vault"]),
+    type=click.Choice(["section", "document", "vault"]),
     default="section",
-    help="section=B.2, document=B.1, neighbors=B.3, vault=B.11",
+    help="section=B.2, document=B.1, vault=B.11",
 )
-@click.option("--k", "k", type=int, default=10, help="result limit / depth")
+@click.option("--k", "k", type=int, default=10, help="result limit")
 @click.option("--json", "as_json", is_flag=True, default=False)
-@click.option("--doc-uri", default=None, help="(--type neighbors) start document URI")
 def search_cmd(
     query: str,
     profile: str | None,
     search_type: str,
     k: int,
     as_json: bool,
-    doc_uri: str | None,
 ) -> None:
     sys.exit(
         cmd_search(
@@ -137,9 +137,32 @@ def search_cmd(
             search_type=search_type,
             k=k,
             as_json=as_json,
-            doc_uri=doc_uri,
         )
     )
+
+
+@main.command(
+    "tree",
+    help="Render the containment tree of indexed vaults. "
+         "See docs/tree-format.md for the rendered format.",
+)
+@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+@click.option(
+    "--at", "at", default=None,
+    help="Start the tree at this node, in 'Label:uri' or bare-uri form "
+         "(e.g. 'Vault:vault://abc-123' or 'vault://abc-123/ideas/foo.md'). "
+         "If omitted, every indexed vault is rendered as a root.",
+)
+@click.option(
+    "--depth", "depth", type=int, default=4,
+    help="Max HAS steps from each root (default: 4).",
+)
+@click.option(
+    "--full", "full", is_flag=True, default=False,
+    help="Show the vault description sub-line under each Vault row.",
+)
+def tree_cmd(profile: str | None, at: str | None, depth: int, full: bool) -> None:
+    sys.exit(cmd_tree(profile=profile, at=at, depth=depth, full=full))
 
 
 @main.command("rm", help="Remove a document / subtree / vault from the index.")

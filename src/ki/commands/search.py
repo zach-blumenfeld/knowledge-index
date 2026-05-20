@@ -1,11 +1,13 @@
-"""`ki search <query>` — fulltext + graph retrieval.
+"""`ki search <query>` — fulltext retrieval.
 
 v1 flags:
-  --type {section|document|neighbors|vault}  which retrieval shape to use
-                                             (B.2, B.1, B.3, B.11 respectively)
-  --k N                                      result limit / depth
-  --json                                     emit machine-readable JSON
-  --doc-uri URI                              (--type neighbors) start document
+  --type {section|document|vault}  which retrieval shape to use
+                                   (B.2, B.1, B.11 respectively)
+  --k N                            result limit
+  --json                           emit machine-readable JSON
+
+Backlinks / neighbour-style traversal (formerly `--type neighbors`) is
+removed in 0.4.0; see #35 for the planned replacement.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from rich.table import Table
 
 from ..config import find_config_path, load_config
 from ..neo4j_client import driver_for
-from ..search.queries import run_b1, run_b2, run_b3, run_vault_search
+from ..search.queries import run_b1, run_b2, run_vault_search
 
 console = Console()
 
@@ -49,7 +51,6 @@ def cmd_search(
     search_type: str,
     k: int,
     as_json: bool,
-    doc_uri: str | None,
 ) -> int:
     cfg_path = find_config_path()
     if cfg_path is None:
@@ -57,22 +58,15 @@ def cmd_search(
     cfg = load_config(cfg_path)
     prof = cfg.get_profile(profile)
 
-    with driver_for(prof) as driver:
-        with driver.session() as session:
-            if search_type == "document":
-                rows = run_b1(session, query, k=k)
-            elif search_type == "section":
-                rows = run_b2(session, query, k=k)
-            elif search_type == "neighbors":
-                if not doc_uri:
-                    raise click.ClickException(
-                        "--type neighbors requires --doc-uri <uri>"
-                    )
-                rows = run_b3(session, doc_uri, n=k)
-            elif search_type == "vault":
-                rows = run_vault_search(session, query, k=k)
-            else:
-                raise click.ClickException(f"unknown --type {search_type}")
+    with driver_for(prof) as driver, driver.session() as session:
+        if search_type == "document":
+            rows = run_b1(session, query, k=k)
+        elif search_type == "section":
+            rows = run_b2(session, query, k=k)
+        elif search_type == "vault":
+            rows = run_vault_search(session, query, k=k)
+        else:
+            raise click.ClickException(f"unknown --type {search_type}")
 
     if as_json:
         click.echo(json.dumps(rows, default=str, indent=2))
@@ -97,22 +91,17 @@ def _render_table(rows: list[dict[str, Any]], search_type: str) -> None:
     elif search_type == "section":
         table.add_column("score", style="green", justify="right")
         table.add_column("heading")
-        table.add_column("document")
+        table.add_column("uri", style="dim")
         for r in rows:
             table.add_row(
                 f"{r.get('score', 0):.2f}",
                 f"{'#' * (r.get('heading_level') or 1)} {r.get('heading')}",
-                str(r.get("document_title")),
+                str(r.get("section_uri")),
             )
-    elif search_type == "neighbors":
-        table.add_column("distance", style="green", justify="right")
-        table.add_column("title")
-        table.add_column("uri", style="dim")
-        for r in rows:
-            table.add_row(str(r.get("distance")), str(r.get("title")), str(r.get("document_uri")))
     elif search_type == "vault":
         table.add_column("score", style="green", justify="right")
         table.add_column("name")
+        table.add_column("uri", style="dim")
         table.add_column("path", style="dim")
         table.add_column("description")
         for r in rows:
@@ -122,6 +111,7 @@ def _render_table(rows: list[dict[str, Any]], search_type: str) -> None:
             table.add_row(
                 f"{r.get('score', 0):.2f}",
                 str(r.get("display_name") or r.get("name")),
+                str(r.get("vault_uri")),
                 str(r.get("path") or ""),
                 desc,
             )

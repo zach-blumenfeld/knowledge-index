@@ -37,7 +37,7 @@ Every node and every rendered edge gets one row:
 - **`<name>`** — the node's display name. See *Name field* below for the per-label rule.
 - **`<dots>`** — a dotted leader (`.`) filling the gap from the end of the name to the type column. The dot column lines up across rows; see *Column widths* below.
 - **`<T>`** — single-letter type code (`V` / `F` / `D` / `S` / `L`).
-- **`<URI>`** — the node's `uri` property, with the section shorthand described below.
+- **`<URI>`** — the node's `uri` property. **Always the full URI**, never abbreviated — see *URI column* below.
 
 ### Type codes
 
@@ -46,7 +46,7 @@ Every node and every rendered edge gets one row:
 | `V`  | Vault    | Always the rendered root unless `--at` is specified.                  |
 | `F`  | Folder   | Trailing `/` on the name (`ideas/`) to visually mark it as a folder.  |
 | `D`  | Document | Optional `  "displayName"` suffix when display name differs from `name`. |
-| `S`  | Section  | URI column collapses to `#fragment` (see *Section URI shorthand*).    |
+| `S`  | Section  | URI column shows the full section URI (no shorthand).                 |
 | `L`  | Links-to | Renders an outbound `:LINKS_TO` edge from the row's parent.           |
 
 ## Name field
@@ -63,11 +63,9 @@ The name column carries enough information to identify the node without consulti
 
 ## URI column
 
-The URI column carries the load-bearing identifier for the row. Agents are expected to copy URIs from this column verbatim.
+The URI column carries the load-bearing identifier for the row. Every row shows the **full URI** — Vault, Folder, Document, Section, and LINKS_TO target alike. Agents and humans alike are expected to copy URIs from this column verbatim and feed them straight back into `ki tree --at <uri>` or (once it lands) `ki get <uri>`.
 
-- **Vault / Folder / Document** — full `uri`.
-- **Section** — collapsed to `#<slug>`. The full URI is reconstructible by combining the nearest ancestor `D` row's URI with the fragment. We collapse because section URIs are long, repetitive, and the parent doc URI is one or two rows above.
-- **Links-to** — full `uri` of the target node (`:LINKS_TO` target). Never collapsed; LINKS_TO targets often live outside the rendered subtree and need to be unambiguous on their own.
+We tried a `#fragment` shorthand for sections earlier; it saved horizontal space but forced the reader to walk up the indented tree and concatenate ancestor slugs to reconstruct the real URI. Re-running `ki tree` rooted at a specific section is a common follow-up, and that flow shouldn't require any reconstruction.
 
 The URI column is **never truncated**. If a URI exceeds the terminal width, it overflows past 80 columns (or wraps, depending on the terminal). This is a deliberate trade-off: clipping URIs would defeat the entire point of the right column.
 
@@ -89,9 +87,9 @@ The `B.12` Cypher in `docs/retrieval-queries.md` is responsible for surfacing `N
 Outbound `:LINKS_TO` edges from a section render as **child rows of the source section**, prefixed with `→` and one extra indent step.
 
 ```
-        Origins .................................. S   #origins
+        Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
           → refs/birth.md#early-draft ............ L   vault://abc-123/refs/birth.md#early-draft
-        Implementation ........................... S   #implementation
+        Implementation ........................... S   vault://abc-123/ideas/big-idea.md#big-idea/implementation
 ```
 
 - The left-side hint is a short human-readable form of the target — typically the target's path relative to the source's vault, plus `#<section-slug>` if the target is a section. The full target URI lives in the URI column.
@@ -100,22 +98,22 @@ Outbound `:LINKS_TO` edges from a section render as **child rows of the source s
 
 Rendering LINKS_TO inline rather than cross-branching is a deliberate v1 simplification — Rich's `Tree` does not support cross-branch references, and inline rendering preserves the column-aligned ToC feel.
 
-## Section URI shorthand
+## Section URI format
+
+Section URIs in the URI column show the **full URI**, including the doc URI and the full heading-path fragment:
 
 ```
     big-idea.md  "Big Idea" ...................... D   vault://abc-123/ideas/big-idea.md
-      Big Idea ................................... S   #big-idea
-        Background ............................... S   #background
-        Origins .................................. S   #origins
+      Big Idea ................................... S   vault://abc-123/ideas/big-idea.md#big-idea
+        Background ............................... S   vault://abc-123/ideas/big-idea.md#big-idea/background
+        Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
 ```
 
-Section URIs collapse to `#<slug>` because:
+The fragment for a nested heading is the **full heading path** (`<h1-slug>/<h2-slug>/...`), not just the leaf — this matches the on-disk `Section.uri` exactly. This means deeply nested sections under a long heading produce long URIs. We accept the verbosity because:
 
-1. The full URI is reconstructible from the nearest ancestor `D` row.
-2. Section URIs in a typical vault repeat the same long prefix dozens of times, drowning out the structural signal.
-3. Agents copying a section URI can read the nearest `D` row above and concatenate.
-
-Sections in the URI column always start with `#`. If a section appears as the **target** of a `:LINKS_TO` (an `L` row), the URI column shows the **full** URI, not the shorthand, because the source and target may live in different documents or vaults.
+1. The URI is copy-pasteable straight into `ki tree --at <uri>` and (once it lands) `ki get <uri>`.
+2. The alternative — leaf-only shorthand or `#fragment` shorthand — requires the reader to walk up the indented tree and concatenate ancestor slugs to reconstruct anything. That's the most common follow-up flow, so it shouldn't cost the user a manual step.
+3. When the heading slugs are long it's typically a sign the user wrote long headings; truncating their slugs in the display would only hide the cost, not avoid it.
 
 ## Truncation
 
@@ -148,14 +146,14 @@ The name column width is computed once per render as `min(48, max(indent + name_
 | `label`       | `"Vault"` \| `"Folder"` \| `"Document"` \| `"Section"` | The node's true label. **Not** the rendered type letter — that's derived (see below).                          |
 | `name`        | string                                | The node's `name` property (filename / heading-slug / dir-basename / vault-basename). Drives alphabetical sort for F/D/L siblings. |
 | `displayName` | string                                | The node's `displayName` property. Drives the *name field* on the rendered row.                                                    |
-| `uri`         | string                                | The node's full `uri`. **Always full** in the wire record — the renderer collapses to `#fragment` only at print time.              |
+| `uri`         | string                                | The node's full `uri`. The renderer prints it verbatim in every row's URI column — no abbreviation.                                 |
 | `parent_uri`  | string \| `null`                      | URI of the parent node along the inbound edge. `null` for the root. Used by the renderer to group siblings.                        |
 | `sort_pos`    | int \| `null`                         | `NEXT_SECTION` position within the section's parent document. Non-null only for `Section` rows that came through `HAS`. Drives section sibling order. |
 
 ### How the renderer derives display
 
 - **Type letter:** `"L"` when `inrel == "LINKS_TO"`, else `label[0]` (`V` / `F` / `D` / `S`).
-- **URI shorthand:** `#<fragment>` only when `inrel == "HAS" AND label == "Section"`. LINKS_TO targets always print the full URI even when the target is a Section, because the target may live in another doc.
+- **URI column:** always the wire `uri`, verbatim, regardless of `label` or `inrel`.
 - **`→` prefix on the name:** only when `inrel == "LINKS_TO"`.
 - **Indent:** `"  " * depth`.
 
@@ -265,27 +263,27 @@ For the rendered output:
 my-knowledge-base ............................... V   vault://abc-123
   ideas/ ......................................... F   vault://abc-123/ideas
     big-idea.md  "Big Idea" ...................... D   vault://abc-123/ideas/big-idea.md
-      Big Idea ................................... S   #big-idea
-        Origins .................................. S   #origins
+      Big Idea ................................... S   vault://abc-123/ideas/big-idea.md#big-idea
+        Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
           → refs/birth.md#early-draft ............ L   vault://abc-123/refs/birth.md#early-draft
 ```
 
 the wire rows are (in render order):
 
 ```
-{depth: 0, inrel: null,       label: "Vault",    name: "my-knowledge-base", displayName: "my-knowledge-base", uri: "vault://abc-123",                                       parent_uri: null,                              sort_pos: null}
-{depth: 1, inrel: "HAS",      label: "Folder",   name: "ideas",             displayName: "ideas",             uri: "vault://abc-123/ideas",                                  parent_uri: "vault://abc-123",                 sort_pos: null}
-{depth: 2, inrel: "HAS",      label: "Document", name: "big-idea.md",       displayName: "Big Idea",          uri: "vault://abc-123/ideas/big-idea.md",                      parent_uri: "vault://abc-123/ideas",           sort_pos: null}
-{depth: 3, inrel: "HAS",      label: "Section",  name: "big-idea",          displayName: "Big Idea",          uri: "vault://abc-123/ideas/big-idea.md#big-idea",             parent_uri: "vault://abc-123/ideas/big-idea.md", sort_pos: 0}
-{depth: 4, inrel: "HAS",      label: "Section",  name: "origins",           displayName: "Origins",           uri: "vault://abc-123/ideas/big-idea.md#origins",              parent_uri: "vault://abc-123/ideas/big-idea.md#big-idea", sort_pos: 2}
-{depth: 5, inrel: "LINKS_TO", label: "Section",  name: "early-draft",       displayName: "Early Draft",       uri: "vault://abc-123/refs/birth.md#early-draft",              parent_uri: "vault://abc-123/ideas/big-idea.md#origins", sort_pos: null}
+{depth: 0, inrel: null,       label: "Vault",    name: "my-knowledge-base", displayName: "my-knowledge-base", uri: "vault://abc-123",                                              parent_uri: null,                                       sort_pos: null}
+{depth: 1, inrel: "HAS",      label: "Folder",   name: "ideas",             displayName: "ideas",             uri: "vault://abc-123/ideas",                                         parent_uri: "vault://abc-123",                          sort_pos: null}
+{depth: 2, inrel: "HAS",      label: "Document", name: "big-idea.md",       displayName: "Big Idea",          uri: "vault://abc-123/ideas/big-idea.md",                             parent_uri: "vault://abc-123/ideas",                    sort_pos: null}
+{depth: 3, inrel: "HAS",      label: "Section",  name: "big-idea",          displayName: "Big Idea",          uri: "vault://abc-123/ideas/big-idea.md#big-idea",                    parent_uri: "vault://abc-123/ideas/big-idea.md",        sort_pos: 0}
+{depth: 4, inrel: "HAS",      label: "Section",  name: "big-idea/origins",  displayName: "Origins",           uri: "vault://abc-123/ideas/big-idea.md#big-idea/origins",            parent_uri: "vault://abc-123/ideas/big-idea.md#big-idea", sort_pos: 2}
+{depth: 5, inrel: "LINKS_TO", label: "Section",  name: "early-draft",       displayName: "Early Draft",       uri: "vault://abc-123/refs/birth.md#early-draft",                     parent_uri: "vault://abc-123/ideas/big-idea.md#big-idea/origins", sort_pos: null}
 ```
 
 Notes on the example:
 - The root row has `inrel: null`, `parent_uri: null`, `sort_pos: null`.
+- Section URI fragments encode the **full heading path** (`<h1-slug>/<h2-slug>/...`), not just the leaf. So `Origins` (an H2 under `# Big Idea`) has fragment `#big-idea/origins`, mirroring the parent-child heading nesting. This matches the ingested `Section.uri` exactly.
 - The Big Idea section has `sort_pos: 0` because it's the first section in `big-idea.md`'s NEXT_SECTION chain. Origins is at `sort_pos: 2` because the doc's chain is `Big Idea (0) → Background (1) → Origins (2) → Implementation (3) → Appendix (4)` — even though Background isn't shown above (`--depth` cut, or just elided in the example).
 - The LINKS_TO row's `label` is `"Section"` (its target is a section in `refs/birth.md`), but the renderer prints `L` in the type column because `inrel == "LINKS_TO"`.
-- The LINKS_TO row's URI is full, not `#early-draft`, because the shorthand rule requires `inrel == "HAS"`.
 
 ## `--full` flag
 
