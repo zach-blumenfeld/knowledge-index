@@ -95,8 +95,8 @@ Use `ki tree` when:
 
 ```bash
 ki tree                                # render every indexed vault, depth 4
-ki tree --at "vault://<uuid>"          # render one specific vault
-ki tree --at "Vault:vault://<uuid>"    # same, with the Label: prefix (issue convention)
+ki tree --at "my-notes"                # render one specific vault (URI is the slug)
+ki tree --at "Vault:my-notes"          # same, with the Label: prefix (issue convention)
 ki tree --at "<doc-uri>" --depth 2     # render a doc and its section subtree
 ki tree --full                         # also show vault description sub-lines
 ```
@@ -134,15 +134,17 @@ ki get "<uri>" --json                   # machine-readable; always includes `pat
 
 `ki` URIs encode the containment hierarchy as a path. `ki tree`'s URI column shows the **full URI** for every row — no shorthand — so you can copy a URI directly out of the tree and feed it straight back into `ki tree --at <uri>` or `ki get <uri>`.
 
+**Vault URIs are human-readable slugs.** Derived from the vault directory's basename on first ingest (e.g. `~/my-notes` → `my-notes`). On collision with an existing vault in the same Neo4j, ki appends `-1`, `-2`, etc — max+1 over currently-present slugs. So a fresh basename-`my-notes` vault becomes `my-notes-3` if `my-notes`, `my-notes-1`, `my-notes-2` are already taken. Deleting a vault (`ki rm --vault`) frees its slug for reassignment, so a long-lived agent skill referencing `my-notes-2/foo.md` could silently re-point at a different vault if `my-notes-2` is removed and a new same-basename vault ingests. Treat the URI as opaque once assigned — read it from `ki vault list` or the row in `ki tree` rather than guessing.
+
 You can also derive **ancestor** URIs by trimming, without any "go up" query:
 
 | URI shape                                                                                                  | Trim to get parent                                                          |
 |------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| `<uuid>/projects/foo.md#h1-slug/h2-slug` (nested section)                                                  | Trim `/h2-slug` → `<uuid>/projects/foo.md#h1-slug` (the parent Section).    |
-| `<uuid>/projects/foo.md#some-heading` (top-level section)                                                  | Trim `#some-heading` → `<uuid>/projects/foo.md` (the owning Doc).           |
-| `<uuid>/projects/foo.md`                                                                                   | Trim `/foo.md` → `<uuid>/projects` (the parent Folder).                     |
-| `<uuid>/projects`                                                                                          | Trim `/projects` → `<uuid>` (the Vault root, just the UUID).                |
-| `<uuid>`                                                                                                   | No further trim — Vault is the top. (`User` is not surfaced in URIs.)       |
+| `my-notes/projects/foo.md#h1-slug/h2-slug` (nested section)                                                | Trim `/h2-slug` → `my-notes/projects/foo.md#h1-slug` (the parent Section).  |
+| `my-notes/projects/foo.md#some-heading` (top-level section)                                                | Trim `#some-heading` → `my-notes/projects/foo.md` (the owning Doc).         |
+| `my-notes/projects/foo.md`                                                                                 | Trim `/foo.md` → `my-notes/projects` (the parent Folder).                   |
+| `my-notes/projects`                                                                                        | Trim `/projects` → `my-notes` (the Vault root, just the slug).              |
+| `my-notes`                                                                                                 | No further trim — Vault is the top. (`User` is not surfaced in URIs.)       |
 
 Section URI fragments encode the **full heading path** (`<h1-slug>/<h2-slug>/...`), so trimming the last `/<segment>` of the fragment gives the parent section's URI — and trimming the whole `#...` gives the owning Doc.
 
@@ -161,7 +163,7 @@ ki index <vault> --description "One or two sentences on what's in this vault and
 `--description` refuses to overwrite an existing one — add `--force-description` to replace. If you'd rather edit the YAML by hand, the file is `<vault>/.ki/vault.yaml`:
 
 ```yaml
-uri: <existing UUID — do not touch>
+uri: <existing slug — do not touch>
 description: |
   ...
 ```

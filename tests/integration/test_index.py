@@ -6,7 +6,7 @@ import pytest
 
 from ki.ingest.pipeline import IngestOptions, ingest_vault
 from ki.neo4j_client import driver_for
-from ki.vault import read_vault_id
+from ki.vault import read_vault_uri
 
 pytestmark = pytest.mark.integration
 
@@ -33,7 +33,7 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
     assert result.docs_added == expected_files
     assert result.docs_updated == 0
     assert result.sections_written > expected_files  # multiple sections per doc
-    assert read_vault_id(vault_dir) == result.vault_uri
+    assert read_vault_uri(vault_dir) == result.vault_uri
 
     # Check the graph contents. The fixture has docs at multiple depths, so
     # walks of the form `(v)-[:HAS*]->(d:Document)` are required — only
@@ -164,13 +164,13 @@ def test_first_index_of_fresh_dir_creates_marker(tmp_path, neo4j_profile, cleanu
     (fresh / "one.md").write_text("# One\n\nbody one.\n")
     (fresh / "two.md").write_text("# Two\n\nbody two.\n")
 
-    assert read_vault_id(fresh) is None  # precondition: no marker
+    assert read_vault_uri(fresh) is None  # precondition: no marker
 
     result = _run_ingest(fresh, neo4j_profile, batch_size=64)
     cleanup_vault.append(result.vault_uri)
 
     assert result.vault_created is True
-    assert read_vault_id(fresh) == result.vault_uri
+    assert read_vault_uri(fresh) == result.vault_uri
     assert result.docs_added == 2
     # The marker should be `.ki/vault.yaml`, not the legacy bare-UUID file.
     assert (fresh / ".ki" / "vault.yaml").exists()

@@ -240,10 +240,15 @@ def rm_cmd(
     )
 
 
-@main.command("init", help="(Advanced) write .ki/vault.yaml without indexing.")
+@main.command(
+    "init",
+    help="(Advanced) write .ki/vault.yaml without indexing. "
+         "Needs a configured Neo4j profile for the slug-collision check.",
+)
 @click.argument("path", type=click.Path(file_okay=False, dir_okay=True, path_type=Path))
-def init_cmd(path: Path) -> None:
-    sys.exit(cmd_init(path))
+@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+def init_cmd(path: Path, profile: str | None) -> None:
+    sys.exit(cmd_init(path, profile=profile))
 
 
 @main.group("vault", help="Inspect indexed vaults.")

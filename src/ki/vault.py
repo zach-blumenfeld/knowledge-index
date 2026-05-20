@@ -3,18 +3,23 @@
 A vault is a folder on disk. Its identity and optional user-authored metadata
 live in `<vault>/.ki/vault.yaml`:
 
-    uri: <UUID v4>          # ki-owned, write-once
+    uri: <slug>             # ki-owned, write-once per vault
     description: |          # user-authored, ki is read-only
       What this vault is for. Used as a routing hint for agents picking
       which vault to search.
 
+`uri` is a human-readable slug derived from the vault's directory basename
+on first ingest (e.g. `~/my-notes` → `my-notes`). If another vault on the
+same Neo4j already claims that slug, a `-N` suffix is appended where N is
+one more than the highest existing suffix in the family. Slugs are
+never reused once assigned — see `find_next_vault_slug` for the algorithm.
+
 The marker is the only state `ki` writes inside the vault; everything else
-lives in `~/.config/ki/` or in Neo4j. The bare-UUID `.ki/vault-id` format
-used pre-0.4.0 is no longer supported (wipe + re-index to upgrade).
+lives in `~/.config/ki/` or in Neo4j.
 
 URI conventions (from docs/data-model.md *Path conventions*):
-  - Document.uri = "<vaultId>/<file path within vault>"     (slugified, '/' kept)
-  - Section.uri  = "<vaultId>/<file path within vault>#<slugified heading path>"
+  - Document.uri = "<vaultUri>/<file path within vault>"     (slugified, '/' kept)
+  - Section.uri  = "<vaultUri>/<file path within vault>#<slugified heading path>"
 
 Slugification is segment-wise: each path / heading-path segment is slugified
 independently, and the separator ('/' for paths, '/' for heading paths) is
@@ -26,8 +31,8 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
-import uuid
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -63,30 +68,140 @@ def _load_marker(marker: Path) -> dict:
     return loaded
 
 
-def read_or_create_vault_id(vault_root: Path) -> tuple[str, bool]:
-    """Read the vault UUID from `.ki/vault.yaml`, creating one if missing.
-
-    Returns (vault_id, created) where `created` is True on first write.
-    """
-    marker = vault_marker_path(vault_root)
-    if marker.exists():
-        data = _load_marker(marker)
-        return str(data["uri"]).strip(), False
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    vault_id = str(uuid.uuid4())
-    marker.write_text(
-        yaml.safe_dump({"uri": vault_id}, sort_keys=False, default_flow_style=False),
-        encoding="utf-8",
-    )
-    return vault_id, True
-
-
-def read_vault_id(vault_root: Path) -> str | None:
-    """Return the existing vault UUID or None if the marker is missing."""
+def read_vault_marker(vault_root: Path) -> dict | None:
+    """Return the parsed `.ki/vault.yaml` contents, or None if absent."""
     marker = vault_marker_path(vault_root)
     if not marker.exists():
         return None
-    return str(_load_marker(marker)["uri"]).strip()
+    return _load_marker(marker)
+
+
+def read_vault_uri(vault_root: Path) -> str | None:
+    """Convenience: read just the `uri:` field from the marker (or None if absent)."""
+    data = read_vault_marker(vault_root)
+    if data is None:
+        return None
+    return str(data["uri"]).strip()
+
+
+def write_vault_marker(
+    vault_root: Path, *, uri: str, description: str | None = None
+) -> None:
+    """Write `.ki/vault.yaml` with the assigned URI and optional description.
+
+    Atomic-enough for ki's purposes (single-file YAML write). Always
+    rewrites the file in full — callers compose the desired state and pass
+    it in. Description, if provided, is truncated to DESCRIPTION_MAX_BYTES
+    with a warning per the existing soft cap.
+    """
+    marker = vault_marker_path(vault_root)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {"uri": uri}
+    if description is not None:
+        desc = description.strip()
+        encoded = desc.encode("utf-8")
+        if len(encoded) > DESCRIPTION_MAX_BYTES:
+            log.warning(
+                "%s: `description:` is %d bytes (>%d); truncating",
+                marker, len(encoded), DESCRIPTION_MAX_BYTES,
+            )
+            desc = encoded[:DESCRIPTION_MAX_BYTES].decode("utf-8", errors="ignore")
+        if desc:
+            data["description"] = desc
+    marker.write_text(
+        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
+class InvalidVaultBasenameError(ValueError):
+    """The vault directory's basename doesn't slugify to anything useful.
+
+    Carries the original basename and slug rules in the message so callers
+    can show the user what to rename.
+    """
+
+
+def compute_base_slug(vault_root: Path) -> str:
+    """Slugified directory basename — the default Vault.uri seed.
+
+    Raises InvalidVaultBasenameError when the basename has no alphanumeric
+    content to anchor a slug. A vault named `~/___` or `~/----` slugifies
+    to garbage; the user should pick a descriptive name.
+    """
+    raw = vault_root.name
+    if not raw.strip() or raw in (".", ".."):
+        raise InvalidVaultBasenameError(
+            f"vault directory basename {raw!r} is empty / not a real folder "
+            "name. Please rename the directory to something descriptive — "
+            "e.g. 'my-notes', 'work-journal', 'project-x'."
+        )
+    # Check the pre-slugify ASCII form for any alnum content. If there's
+    # nothing alphanumeric to anchor a slug, slugify_segment would either
+    # produce pure punctuation (still useless) or fall through to the
+    # generic "section" sentinel (very useless).
+    ascii_form = (
+        unicodedata.normalize("NFKD", raw)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    if not any(c.isalnum() for c in ascii_form):
+        raise InvalidVaultBasenameError(
+            f"vault directory basename {raw!r} doesn't contain any "
+            "alphanumeric characters to anchor a readable slug. Please "
+            "rename the directory to something descriptive — e.g. "
+            "'my-notes', 'work-journal', 'project-x' — so the vault has a "
+            "readable identifier in URIs and in `ki tree` / `ki search` "
+            "output."
+        )
+    return slugify_segment(raw)
+
+
+_VAULT_SLUG_FAMILY_QUERY = (
+    "MATCH (v:Vault) "
+    "WHERE v.uri = $base OR v.uri STARTS WITH $base + '-' "
+    "RETURN v.uri AS uri"
+)
+
+
+def find_next_vault_slug(session, base: str) -> str:
+    """Find the next available slug in the {base, base-1, base-2, ...} family.
+
+    Single Neo4j query for the family. Strategy: if `$base` itself is free,
+    use it; otherwise return `${base}-{max+1}` where `max` is the highest
+    integer suffix on a *currently-present* slug in the family.
+
+    **Reuse semantics.** The algorithm operates on the graph's current
+    state, so if a vault is removed (`ki rm --vault`), its slug becomes
+    eligible for reassignment. Concretely: if `base`, `base-1`, `base-3`
+    exist (because `-2` was removed), the next assignment is `base-4`;
+    but if `base-3` is also removed before the next ingest, the family is
+    `{base, base-1}` and the next assignment is `base-2`. Cross-vault
+    references that pointed at a removed slug can be silently re-pointed
+    at a different vault — a known trade-off documented here. If you need
+    permanent never-reuse semantics, file an issue; a `:VaultTombstone`
+    scheme is the natural fix.
+
+    Concurrency: the caller `CREATE`s the chosen slug under a uniqueness
+    constraint on `Vault.uri`. If a parallel writer races us to the same
+    suffix, the constraint trips and the caller retries with a refreshed
+    family query.
+    """
+    rows = list(session.run(_VAULT_SLUG_FAMILY_QUERY, base=base))
+    existing = [r["uri"] for r in rows]
+    pattern = re.compile(rf"^{re.escape(base)}(?:-(\d+))?$")
+    max_n = -1
+    for u in existing:
+        m = pattern.match(u)
+        if not m:
+            continue
+        suffix = m.group(1)
+        n = 0 if suffix is None else int(suffix)
+        if n > max_n:
+            max_n = n
+    if max_n < 0:
+        return base
+    return f"{base}-{max_n + 1}"
 
 
 def read_vault_description(vault_root: Path) -> str | None:
@@ -141,7 +256,8 @@ def write_vault_description(
 ) -> None:
     """Write `description:` into `.ki/vault.yaml`, preserving `uri:` + any other keys.
 
-    The marker must already exist (call `read_or_create_vault_id` first).
+    The marker must already exist (assign a slug via `ingest_vault` first,
+    which writes the marker, or use `write_vault_marker` directly).
     Raises `VaultDescriptionExists` when a non-empty description is already
     present and `force` is False. Values longer than 8 KB are truncated and a
     one-line warning is emitted.
@@ -150,7 +266,7 @@ def write_vault_description(
     if not marker.exists():
         raise FileNotFoundError(
             f"{marker} does not exist — initialise the vault first "
-            "(read_or_create_vault_id)"
+            "(write_vault_marker / ingest_vault)"
         )
     data = _load_marker(marker)
     existing = data.get("description")

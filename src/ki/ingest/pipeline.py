@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
+from neo4j.exceptions import ClientError
 
 from ..config import Profile
 from ..neo4j_client import driver_for, ensure_schema
@@ -68,13 +69,16 @@ from ..parser.markdown import (
     parse_markdown,
 )
 from ..vault import (
+    VaultDescriptionExists,
+    compute_base_slug,
     document_uri,
+    find_next_vault_slug,
     folder_uri,
     iter_markdown_files,
-    read_or_create_vault_id,
-    read_vault_description,
+    read_vault_marker,
     section_uri,
     slugify_segment,
+    write_vault_marker,
 )
 from . import queries as Q
 from .batcher import DEFAULT_BATCH_SIZE, run_batched
@@ -314,6 +318,12 @@ class IngestOptions:
     concurrency: int = DEFAULT_CONCURRENCY
     max_file_size: int = DEFAULT_MAX_FILE_SIZE
     agent_name: str | None = None
+    # User-supplied description to write into `.ki/vault.yaml`. None = no
+    # change (carry forward whatever's already in the marker, if anything).
+    description: str | None = None
+    # When `description` is set and the marker already has a non-empty
+    # description, refuse unless `force_description` is True.
+    force_description: bool = False
 
 
 def _split_oversize(
@@ -340,8 +350,20 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
     if not vault_root.exists() or not vault_root.is_dir():
         raise ValueError(f"vault path not a directory: {vault_root}")
 
-    vault_uri, vault_created = read_or_create_vault_id(vault_root)
-    vault_description = read_vault_description(vault_root)
+    # Marker handling — slug assignment moves inside the open Neo4j session
+    # because collision detection needs to query the graph. Description
+    # validation (--description vs existing) is still done up-front when
+    # possible, but force-description semantics rely on the existing marker.
+    existing_marker = read_vault_marker(vault_root)
+    existing_description = (existing_marker or {}).get("description")
+    if (
+        opts.description is not None
+        and isinstance(existing_description, str)
+        and existing_description.strip()
+        and not opts.force_description
+    ):
+        raise VaultDescriptionExists(existing_description.strip())
+
     user_id = opts.user_id or detect_user_id()
     user_mutable = build_user_mutable()
     load_provenance = build_load_provenance(agent_name=opts.agent_name)
@@ -362,11 +384,9 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
     # pass of vault size — acceptable at v1 envelopes (1 GB).
     files_bytes = _read_files_concurrent(keep, opts.concurrency)
 
-    result = IngestResult(
-        vault_uri=vault_uri,
-        vault_created=vault_created,
-        vault_description_set=vault_description is not None,
-    )
+    # `result.vault_uri` / `vault_created` are filled in after slug assignment
+    # inside the session below — see step 3.
+    result = IngestResult(vault_uri="", vault_created=False)
     result.docs_total = len(keep)
     result.docs_skipped_oversize = len(oversize)
     result.oversize_files = oversize
@@ -387,15 +407,71 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
         with driver.session() as session:
             ensure_schema(session)
 
-            # 3. Per-vault write.
+            # 3a. Slug assignment. If `.ki/vault.yaml` already exists, honor
+            # its `uri:` field unconditionally — that's how a synced vault
+            # keeps the same Vault.uri across machines. Otherwise compute the
+            # base slug from the directory basename and find the next
+            # unclaimed `{base, base-1, base-2, ...}` in the graph.
+            #
+            # Concurrency: two clients racing on a fresh vault could both
+            # compute the same `base-N`. The Vault.uri uniqueness constraint
+            # catches that — the loser retries with a refreshed
+            # `find_next_vault_slug` once. Two retries handles realistic
+            # contention; if it still fails, surface the error.
+            if existing_marker:
+                vault_uri = str(existing_marker["uri"]).strip()
+                vault_created = False
+            else:
+                base = compute_base_slug(vault_root)
+                vault_uri = ""
+                vault_created = False
+                for attempt in range(2):
+                    candidate = find_next_vault_slug(session, base)
+                    try:
+                        session.run(
+                            "CREATE (v:Vault {uri: $uri}) SET v.firstSeenAt = $now",
+                            uri=candidate, now=now,
+                        ).consume()
+                        vault_uri = candidate
+                        vault_created = True
+                        break
+                    except ClientError:
+                        if attempt == 1:
+                            raise
+                        log.warning(
+                            "vault slug %r collided mid-write; retrying once",
+                            candidate,
+                        )
+
+            # 3b. Finalize the marker now that the URI is settled.
+            # Description precedence: user-supplied (--description) > existing
+            # in the marker > none. force_description was already validated
+            # against existing_description above.
+            final_description: str | None
+            if opts.description is not None:
+                final_description = opts.description
+            elif isinstance(existing_description, str) and existing_description.strip():
+                final_description = existing_description
+            else:
+                final_description = None
+            write_vault_marker(
+                vault_root, uri=vault_uri, description=final_description,
+            )
+            result.vault_uri = vault_uri
+            result.vault_created = vault_created
+            result.vault_description_set = bool(
+                final_description and final_description.strip()
+            )
+
+            # 3c. Per-vault write (User/Vault mutables + USES_VAULT + LOADED).
             vault_mutable: dict[str, Any] = {
                 "name": vault_root.name,
                 "displayName": vault_root.name,
                 "path": vault_root.as_posix(),
                 "isObsidianVault": (vault_root / ".obsidian").exists(),
             }
-            if vault_description is not None:
-                vault_mutable["description"] = vault_description
+            if final_description is not None:
+                vault_mutable["description"] = final_description
             session.run(
                 Q.PER_VAULT_WRITE,
                 userId=user_id,

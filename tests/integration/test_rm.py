@@ -8,7 +8,7 @@ from ki.commands.rm import cmd_rm
 from ki.config import Config, Profile, save_config
 from ki.ingest.pipeline import IngestOptions, ingest_vault
 from ki.neo4j_client import driver_for
-from ki.vault import read_vault_id
+from ki.vault import read_vault_uri
 
 pytestmark = pytest.mark.integration
 
@@ -81,14 +81,14 @@ def test_rm_dry_run_writes_nothing(indexed_vault, vault_dir, neo4j_profile):
 
 
 def test_rm_vault_yes_removes_everything_and_marker(indexed_vault, vault_dir, neo4j_profile):
-    assert read_vault_id(vault_dir) is not None
+    assert read_vault_uri(vault_dir) is not None
     rc = cmd_rm(
         str(vault_dir), profile=None, vault_flag=True,
         dry_run=False, yes=True, keep_marker=False,
     )
     assert rc == 0
     assert _vault_doc_count(neo4j_profile, indexed_vault) == 0
-    assert read_vault_id(vault_dir) is None  # marker gone
+    assert read_vault_uri(vault_dir) is None  # marker gone
 
 
 def test_rm_vault_keep_marker(indexed_vault, vault_dir, neo4j_profile):
@@ -97,7 +97,7 @@ def test_rm_vault_keep_marker(indexed_vault, vault_dir, neo4j_profile):
         dry_run=False, yes=True, keep_marker=True,
     )
     assert rc == 0
-    assert read_vault_id(vault_dir) is not None  # marker preserved
+    assert read_vault_uri(vault_dir) is not None  # marker preserved
 
 
 def test_rm_dry_run_vault_writes_nothing(indexed_vault, vault_dir, neo4j_profile):
@@ -108,4 +108,4 @@ def test_rm_dry_run_vault_writes_nothing(indexed_vault, vault_dir, neo4j_profile
     )
     assert rc == 0
     assert _vault_doc_count(neo4j_profile, indexed_vault) == before
-    assert read_vault_id(vault_dir) is not None
+    assert read_vault_uri(vault_dir) is not None
