@@ -74,6 +74,7 @@ YIELD node, score
 WHERE node:Document
 RETURN node.uri AS document_uri,
        node.displayName AS title,
+       node.path AS path,
        score
 ORDER BY score DESC
 LIMIT toInteger($k)
@@ -84,6 +85,11 @@ B.2 Section content fulltext search
 // Section is the smallest content unit in the new model (no Paragraph / Chunk).
 // Roll each section hit up to its owning document so callers get both
 // granularities — the section for retrieval, the document for context.
+//
+// `path` is the absolute POSIX file path of the owning Document on the
+// ingesting machine — same value on both `doc.path` and `section.path` by
+// construction. We surface it on the section row so an agent can `Read`
+// the file directly without a second query.
 CALL db.index.fulltext.queryNodes($index_name, toInteger($k * 4))
 YIELD node AS section, score
 WHERE section:Section
@@ -97,6 +103,7 @@ RETURN doc.uri AS document_uri,
        section.displayName AS heading,
        section.headingLevel AS heading_level,
        section.content AS content,
+       section.path AS path,
        score
 ```
 
@@ -193,7 +200,8 @@ RETURN i AS idx,
        section.uri AS section_uri,
        section.displayName AS heading,
        section.headingLevel AS heading_level,
-       section.content AS content
+       section.content AS content,
+       section.path AS path
 ORDER BY i
 ```
 

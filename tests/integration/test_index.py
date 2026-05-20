@@ -629,3 +629,105 @@ def test_folder_layer_rm_vault_clears_folders_too(tmp_path, neo4j_profile):
                 u=v,
             ).single()
             assert row["n"] == 0
+
+
+def test_path_property_is_set_on_every_node(tmp_path, neo4j_profile, cleanup_vault):
+    """After `ki index`, every Folder / Document / Section in the vault carries
+    a `path` property pointing at its on-disk location.
+
+    Sections share their owning Document's path (intentional redundancy — see
+    docs/data-model.md §Section). Folders point at their on-disk directory.
+    Documents point at their on-disk file.
+    """
+    import os
+
+    fresh = tmp_path / "path-vault"
+    fresh.mkdir()
+    (fresh / "notes").mkdir()
+    (fresh / "notes" / "projects").mkdir()
+    (fresh / "root.md").write_text("# Root\n\nbody.\n")
+    (fresh / "notes" / "n1.md").write_text("# N1\n\nbody.\n## Sub\n\nmore.\n")
+    (fresh / "notes" / "projects" / "p1.md").write_text("# P1\n\nbody.\n")
+
+    result = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    cleanup_vault.append(result.vault_uri)
+    v = result.vault_uri
+
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        # Every Folder has a `path` and it exists on disk and is a directory.
+        folder_rows = list(
+            session.run(
+                "MATCH (f:Folder) WHERE f.uri STARTS WITH $u + '/' RETURN f.uri AS uri, f.path AS path",
+                u=v,
+            )
+        )
+        assert folder_rows, "expected at least one Folder"
+        for r in folder_rows:
+            assert r["path"], f"Folder {r['uri']} has no path"
+            assert os.path.isdir(r["path"]), f"Folder.path does not exist on disk: {r['path']}"
+
+        # Every Document has a `path` and it points at an existing file.
+        doc_rows = list(
+            session.run(
+                "MATCH (d:Document) WHERE d.uri STARTS WITH $u + '/' RETURN d.uri AS uri, d.path AS path",
+                u=v,
+            )
+        )
+        assert len(doc_rows) == 3
+        for r in doc_rows:
+            assert r["path"], f"Document {r['uri']} has no path"
+            assert os.path.isfile(r["path"]), f"Document.path is not a file: {r['path']}"
+
+        # Every Section has a `path` matching its owning Document's path.
+        sec_rows = list(
+            session.run(
+                """
+                MATCH (d:Document)-[:HAS*]->(s:Section)
+                WHERE d.uri STARTS WITH $u + '/'
+                RETURN s.uri AS uri, s.path AS section_path, d.path AS doc_path
+                """,
+                u=v,
+            )
+        )
+        assert sec_rows, "expected at least one Section"
+        for r in sec_rows:
+            assert r["section_path"] == r["doc_path"], (
+                f"Section.path ({r['section_path']!r}) should equal "
+                f"owning Document.path ({r['doc_path']!r})"
+            )
+
+
+def test_path_updates_on_reindex_from_different_mount(tmp_path, neo4j_profile, cleanup_vault):
+    """If a vault is re-indexed from a different mount point, every node's
+    `path` updates to the new absolute path (last-write-wins, machine-scoped).
+
+    Simulates the Dropbox / iCloud case: same Vault.uri (preserved by the
+    marker file), different on-disk location.
+    """
+    import shutil
+
+    original = tmp_path / "original-mount" / "my-vault"
+    original.mkdir(parents=True)
+    (original / "foo.md").write_text("# Foo\n\nbody.\n")
+
+    result1 = _run_ingest(original, neo4j_profile, batch_size=64)
+    cleanup_vault.append(result1.vault_uri)
+    v = result1.vault_uri
+
+    # Move the vault to a new mount (preserves the .ki/vault.yaml marker, so
+    # the Vault.uri stays the same when we re-index).
+    relocated = tmp_path / "relocated-mount" / "my-vault"
+    relocated.parent.mkdir(parents=True)
+    shutil.move(str(original), str(relocated))
+
+    result2 = _run_ingest(relocated, neo4j_profile, batch_size=64)
+    assert result2.vault_uri == v  # marker file preserved → same vault
+
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        row = session.run(
+            "MATCH (d:Document) WHERE d.uri STARTS WITH $u + '/' RETURN d.path AS path",
+            u=v,
+        ).single()
+        assert row["path"].startswith(str(relocated)), (
+            f"Document.path should reflect the new mount point; got {row['path']!r}"
+        )

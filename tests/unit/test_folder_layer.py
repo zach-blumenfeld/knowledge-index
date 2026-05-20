@@ -183,3 +183,26 @@ def test_re_run_with_same_paths_is_deterministic(tmp_path):
     out1 = _build_folder_and_tree_rows(VAULT, tmp_path, paths)
     out2 = _build_folder_and_tree_rows(VAULT, tmp_path, paths)
     assert out1 == out2
+
+
+def test_folder_row_has_absolute_path(tmp_path):
+    """Each Folder.props carries the absolute POSIX dir path on the ingesting machine."""
+    paths = _doc_paths(tmp_path, ["notes/projects/big-idea.md"])
+    folders, _ = _build_folder_and_tree_rows(VAULT, tmp_path, paths)
+
+    by_uri = {f["uri"]: f for f in folders}
+    notes = by_uri[folder_uri(VAULT, ("notes",))]
+    projects = by_uri[folder_uri(VAULT, ("notes", "projects"))]
+
+    assert notes["props"]["path"] == str(tmp_path / "notes")
+    assert projects["props"]["path"] == str(tmp_path / "notes" / "projects")
+
+
+def test_folder_path_is_absolute(tmp_path):
+    """Folder.path is an absolute path, not relative."""
+    from pathlib import Path
+
+    paths = _doc_paths(tmp_path, ["a/b.md"])
+    folders, _ = _build_folder_and_tree_rows(VAULT, tmp_path, paths)
+    assert len(folders) == 1
+    assert Path(folders[0]["props"]["path"]).is_absolute()
