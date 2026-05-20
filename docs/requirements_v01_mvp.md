@@ -107,7 +107,7 @@ KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents /
 
 `ki index` is intentionally do-the-right-thing on first run rather than gated behind a separate init step. Specifically:
 
-- **Missing `.ki/vault.yaml`** → auto-create the marker (a tiny YAML file containing a fresh `uri:` UUID; reversible with `rm -rf .ki/`). Prints a one-line notice: *"Initialized vault at ./my-vault (id: 7f3c…)."* The file is also where the user can add an optional `description:` to give agents a routing hint about what this vault is for; `ki` is read-only w.r.t. that field.
+- **Missing `.ki/vault.yaml`** → auto-create the marker (a tiny YAML file containing the assigned `uri:` slug; reversible with `rm -rf .ki/`). Prints a one-line notice: *"Initialized vault at ./my-vault (uri: my-vault)."* The file is also where the user can add an optional `description:` to give agents a routing hint about what this vault is for; `ki` is read-only w.r.t. that field except when `--description` is passed.
 - **Missing `~/.config/ki/config.yaml`** → drop into the `ki configure` flow interactively. On agent auto-mode, default to local `neo4j-local` and tell the user (see *Agent auto-mode behavior* below).
 - **Re-index of unchanged files** → skip via `Document.fileHash` (SHA-256 stored per document; that's literally what `fileHash` is for in the schema). Only changed / new files hit Neo4j.
 
@@ -198,11 +198,11 @@ Both option 1 and option 2 shell out to existing tools, parse the resulting cred
 ## Key design decisions
 
 ### Vault identity via marker file
-Vault `uri` is a UUID v4 written to `.ki/vault.yaml` on first ingest (mirrors `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user and machine. This makes `USES_VAULT` load-bearing: multiple users can use the same vault. The same file optionally carries a user-authored `description:` that flows into `Vault.description` on each ingest (latest write wins) and powers `ki search --types vault`.
+Vault `uri` is a **human-readable slug** derived from the vault directory's basename, written to `.ki/vault.yaml` on first ingest (mirrors `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user and machine. This makes `USES_VAULT` load-bearing: multiple users can use the same vault. On collision (another vault on the same Neo4j has already claimed the base slug), a `-N` suffix is appended where N is one more than the highest existing suffix in the family. The algorithm operates on currently-present slugs, so deleting a vault frees its slug for later reassignment (permanent never-reuse would need a tombstone scheme; not in 0.4.0). Basenames that don't contain any alphanumeric content (e.g. `~/___`) are refused with a clear error asking the user to rename the folder. The same file optionally carries a user-authored `description:` that flows into `Vault.description` on each ingest (latest write wins) and powers `ki search --types vault`.
 
 ### Node schema: User / Vault / Document / Section
 All non-User nodes identified by `uri` (single-property MERGE key):
-- `Vault.uri` = UUID from marker file
+- `Vault.uri` = human-readable slug from marker file (slugified basename, `-N` suffix on collision)
 - `Document.uri` = `<vaultId>/<file path within vault>`
 - `Section.uri` = `<vaultId>/<file path within vault>#<slugified heading path>`
 

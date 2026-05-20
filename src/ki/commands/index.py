@@ -17,9 +17,7 @@ from ..ingest.pipeline import (
 )
 from ..vault import (
     VaultDescriptionExists,
-    read_or_create_vault_id,
     vault_marker_path,
-    write_vault_description,
 )
 from .configure import configure as configure_flow
 
@@ -62,32 +60,21 @@ def cmd_index(
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    # Handle vault description before ingest. Two paths:
-    #   --description "..."  → write it (refusing to clobber existing unless --force-description)
-    #   first-run on a fresh marker with a TTY and no --yes → prompt
-    # In both cases, `read_or_create_vault_id` ensures the marker exists so
-    # `write_vault_description` has a file to round-trip through.
+    # Vault description: --description flag is canonical; otherwise prompt
+    # the first-time human user. ingest_vault writes both the URI and the
+    # description into `.ki/vault.yaml` in one shot after slug assignment
+    # (which needs the Neo4j session), so we just collect the desired value
+    # here and pass it through IngestOptions.
     marker_existed_before = vault_marker_path(path).exists()
-    if description is not None:
-        read_or_create_vault_id(path)
-        try:
-            write_vault_description(path, description, force=force_description)
-        except VaultDescriptionExists as exc:
-            raise click.ClickException(
-                f"vault at {path} already has a description set "
-                f"(\"{exc.existing[:60]}...\"). Pass --force-description to overwrite."
-            ) from exc
-        console.print(
-            f"[green]✓[/green] Wrote vault description to "
-            f"[cyan]{vault_marker_path(path)}[/cyan]."
-        )
-    elif (
-        not marker_existed_before
+    effective_description: str | None = description
+    if (
+        description is None
+        and not marker_existed_before
         and not yes
         and sys.stdin.isatty()
     ):
-        # First-time human user. Prompt — but don't block: empty input falls
-        # through to the existing post-ingest warning.
+        # First-time human user. Empty input is fine — falls through to the
+        # post-ingest warning that nudges the user to add one.
         console.print(
             "\n[bold]This vault is being indexed for the first time.[/bold]"
         )
@@ -96,27 +83,30 @@ def cmd_index(
             "this vault is for (or leave blank to skip)."
         )
         prompted = Prompt.ask("description", default="").strip()
-        read_or_create_vault_id(path)
         if prompted:
-            write_vault_description(path, prompted, force=False)
-            console.print(
-                f"[green]✓[/green] Wrote vault description to "
-                f"[cyan]{vault_marker_path(path)}[/cyan]."
-            )
+            effective_description = prompted
 
     opts = IngestOptions(
         profile=prof,
         batch_size=batch_size,
         concurrency=concurrency,
         max_file_size=max_file_size,
+        description=effective_description,
+        force_description=force_description,
     )
-    result = ingest_vault(path, opts)
+    try:
+        result = ingest_vault(path, opts)
+    except VaultDescriptionExists as exc:
+        raise click.ClickException(
+            f"vault at {path} already has a description set "
+            f"(\"{exc.existing[:60]}...\"). Pass --force-description to overwrite."
+        ) from exc
 
     # Output summary.
     if result.vault_created:
         console.print(
             f"[green]✓[/green] Initialized vault at {path} "
-            f"(id: {result.vault_uri[:8]}…)"
+            f"(uri: {result.vault_uri})"
         )
     console.print(
         f"Indexed: [green]{result.docs_added}[/green] added, "

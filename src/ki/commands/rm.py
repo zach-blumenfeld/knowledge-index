@@ -26,7 +26,7 @@ from ..ingest import queries as Q
 from ..neo4j_client import driver_for
 from ..vault import (
     document_uri,
-    read_vault_id,
+    read_vault_marker,
     remove_vault_marker,
     slugify_path,
 )
@@ -66,9 +66,10 @@ def cmd_rm(
             f"no .ki/vault.yaml found above {p}. If you want to remove an entire "
             f"vault by URI, use `ki rm <vault-uri> --vault`."
         )
-    vault_uri = read_vault_id(vault_root)
-    if not vault_uri:
+    marker_data = read_vault_marker(vault_root)
+    if marker_data is None or not marker_data.get("uri"):
         raise click.ClickException(f"vault marker at {vault_root}/.ki/vault.yaml is empty")
+    vault_uri = str(marker_data["uri"]).strip()
 
     if p.is_file():
         return _rm_document(p, vault_root, vault_uri, prof, dry_run=dry_run)
@@ -146,13 +147,30 @@ def _rm_vault(
     yes: bool,
     keep_marker: bool,
 ) -> int:
-    """Remove an entire vault. `target` may be a path or a UUID."""
-    p = Path(target).expanduser().resolve() if not _looks_like_uuid(target) else None
-    vault_uri = target if p is None else read_vault_id(p) if p.exists() else None
+    """Remove an entire vault. `target` may be a directory path or a Vault.uri slug."""
+    # Prefer the path interpretation if the target resolves to an existing
+    # directory with a marker. Otherwise treat the literal string as a
+    # Vault.uri slug — leave `p` as None so post-delete marker cleanup is
+    # skipped.
+    candidate = Path(target).expanduser()
+    p: Path | None
+    vault_uri: str | None
+    if candidate.exists() and candidate.is_dir():
+        p = candidate.resolve()
+        marker = read_vault_marker(p)
+        if marker is None:
+            raise click.ClickException(
+                f"{p} has no .ki/vault.yaml — if you want to remove a vault "
+                f"by its URI, pass the URI directly (e.g. 'my-notes')."
+            )
+        vault_uri = str(marker["uri"]).strip()
+    else:
+        p = None
+        vault_uri = target.strip() or None
     if not vault_uri:
         raise click.ClickException(
-            f"could not resolve vault from {target!r} — pass a UUID or a "
-            f"directory containing .ki/vault.yaml"
+            f"could not resolve vault from {target!r} — pass a Vault.uri slug "
+            f"or a directory containing .ki/vault.yaml"
         )
 
     with driver_for(profile) as driver:
@@ -198,5 +216,3 @@ def _rm_vault(
     return 0
 
 
-def _looks_like_uuid(s: str) -> bool:
-    return len(s) >= 32 and "-" in s and "/" not in s and "\\" not in s

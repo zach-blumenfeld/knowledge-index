@@ -2,7 +2,7 @@
 
 All `Vault`, `Folder`, `Document`, and `Section` nodes MERGE on `uri`:
 
-- `Vault.uri`    = UUID v4 from the `.ki/vault.yaml` marker file in the vault root.
+- `Vault.uri`    = human-readable slug from the `.ki/vault.yaml` marker file in the vault root (slugified directory basename, with `-N` suffix on collision).
 - `Folder.uri`   = `<vaultId>/<slugified directory path within vault>` (no trailing `/`).
 - `Document.uri` = `<vaultId>/<file path within vault>` (slugified).
 - `Section.uri`  = `<vaultId>/<file path within vault>#<slugified heading path>`.
@@ -13,9 +13,9 @@ The `Folder` URI scheme is a strict *prefix* of any `Document` URI living under 
 
 `LOADED` relationships can be parallel (one per ingest) and so require a relationship-level MERGE key: a system-generated UUID stored as `loadId`. All other relationships (`USES_VAULT`, `HAS`, `LINKS_TO`) are non-parallel and MERGE on the endpoint pair alone.
 
-**Vault marker file.** On first ingest of a folder, the writer reads `.ki/vault.yaml`. If present, its `uri:` field is the vault identity. If absent, a fresh UUID is generated and a minimal `vault.yaml` containing just `uri:` is written to the marker. Treating the marker as authoritative means a folder synced across machines (Dropbox, iCloud, git) resolves to the same `:Vault` node across users and machines, and `USES_VAULT` becomes load-bearing (multiple users can `USES_VAULT` the same vault). Identity is independent of user and machine; only `Vault.path` is machine-scoped.
+**Vault marker file.** On first ingest of a folder, the writer reads `.ki/vault.yaml`. If present, its `uri:` field is the vault identity. If absent, the writer computes a base slug from the directory basename (`compute_base_slug` in `src/ki/vault.py`), queries the graph for any `Vault` nodes already in the `{base, base-1, base-2, ...}` family, picks the next unclaimed slug (max+1 over currently-present slugs — deleted slugs become available for reassignment), `CREATE`s the `:Vault` node under a uniqueness constraint to catch parallel writers, and writes the assigned slug back to `.ki/vault.yaml`. Treating the marker as authoritative on subsequent ingests means a folder synced across machines (Dropbox, iCloud, git) resolves to the same `:Vault` node across users and machines, and `USES_VAULT` becomes load-bearing (multiple users can `USES_VAULT` the same vault). Identity is independent of user and machine once assigned; only `Vault.path` is machine-scoped.
 
-The same file also optionally carries a user-authored `description:` field — a short routing hint about what this vault is for. On each ingest the writer reads it and includes it in `$vaultMutable` (see step 2 of the per-vault-ingest write below), so it flows into `Vault.description` with latest-write-wins semantics. `ki` writes `uri:` on first creation and is **read-only** w.r.t. every other field. The pre-0.4.0 bare-UUID `.ki/vault-id` format is no longer supported — wipe + re-index to upgrade.
+The same file also optionally carries a user-authored `description:` field — a short routing hint about what this vault is for. On each ingest the writer reads it and includes it in `$vaultMutable` (see step 2 of the per-vault-ingest write below), so it flows into `Vault.description` with latest-write-wins semantics. `ki` writes `uri:` on first creation (and on subsequent ingests, idempotently re-stamping the same slug) and is **read-only** w.r.t. every other field except `description` when the user passes `--description`.
 
 #### Per-vault-ingest write
 
