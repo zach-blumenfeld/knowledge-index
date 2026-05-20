@@ -53,10 +53,12 @@ def test_index_force_description_requires_description(tmp_path):
     assert "--force-description requires --description" in res.output
 
 
-def test_search_help_lists_type_choices():
+def test_search_help_lists_types_flag_and_valid_values():
     runner = CliRunner()
     res = runner.invoke(main, ["search", "--help"])
     assert res.exit_code == 0
+    # New 0.4.0 surface: --types (plural) replaces --type. Default = all three.
+    assert "--types" in res.output
     for choice in ("section", "document", "vault"):
         assert choice in res.output
     # `neighbors` was dropped in 0.4.0 — see #33 / #35.
