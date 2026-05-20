@@ -16,7 +16,7 @@ profiles:
     uri: "bolt://localhost:7687"
     user: "neo4j"
     password: "..."
-    source: "neo4j-local"     # one of: neo4j-local | aura | existing
+    source: "local-podman"    # one of: local-podman | aura | existing
   work:
     uri: "neo4j+s://..."
     user: "neo4j"
@@ -44,7 +44,7 @@ class Profile:
     uri: str
     user: str
     password: str
-    source: str = "existing"  # neo4j-local | aura | existing
+    source: str = "existing"  # local-podman | aura | existing
 
     def to_dict(self) -> dict:
         return {

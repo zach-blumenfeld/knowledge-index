@@ -1,7 +1,8 @@
 """`ki configure` — interactive wizard for a Neo4j connection profile.
 
 Three paths:
-  1) Local      → wraps `neo4j-local` (no Docker, plugins pre-installed).
+  1) Local      → wraps `podman` to run `neo4j:latest` locally.
+                  See references/neo4j-podman.md for the full runbook.
   2) Aura       → wraps `neo4j-cli aura create` (cloud — billable).
   3) Existing   → prompt for URI + credentials.
 
@@ -19,7 +20,7 @@ import click
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from .. import neo4j_local
+from .. import neo4j_podman
 from ..config import (
     Profile,
     default_config_path,
@@ -69,14 +70,16 @@ def configure(
     else:
         console.print("[bold]No Neo4j connection found. Set one up?[/bold]\n")
         console.print(
-            "  [cyan]1) Local[/cyan]    → wraps `neo4j-local`"
-            " (no Docker; APOC + GDS + GenAI plugins by default)"
+            "  [cyan]1) Local (neo4j w/ podman)[/cyan] → runs `neo4j:latest`"
+            " in a local Podman container (APOC + GenAI plugins)"
         )
         console.print(
-            "  [cyan]2) Aura[/cyan]     → wraps `neo4j-cli aura create`"
+            "  [cyan]2) Aura[/cyan]                    → wraps `neo4j-cli aura create`"
             " ([red]billable cloud resource[/red])"
         )
-        console.print("  [cyan]3) Existing[/cyan] → prompt for URI + credentials\n")
+        console.print(
+            "  [cyan]3) Existing[/cyan]                → prompt for URI + credentials\n"
+        )
         choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
 
     if choice == "1":
@@ -103,21 +106,39 @@ def configure(
 
 
 def _configure_local(name: str) -> Profile:
-    if not neo4j_local.is_installed():
+    if not neo4j_podman.is_installed():
         raise click.ClickException(
-            "`neo4j-local` is not installed. Install it from "
-            "https://github.com/johnymontana/neo4j-local, then re-run."
+            "`podman` is not installed. See references/neo4j-podman.md "
+            "(Preflight) for install steps — on macOS: `brew install podman` "
+            "then `podman machine init && podman machine start`."
         )
-    console.print("[dim]Starting neo4j-local (downloads Neo4j + JRE on first run)...[/dim]")
-    neo4j_local.start()
-    creds = neo4j_local.credentials()
-    console.print(f"[green]✓[/green] Started Neo4j locally at {creds.uri}")
+    state = neo4j_podman.container_state()
+    if state == "missing":
+        console.print(
+            "[dim]Starting Neo4j via podman "
+            f"(image: {neo4j_podman.IMAGE}, first-run pulls the image)...[/dim]"
+        )
+    elif state == "stopped":
+        console.print(
+            f"[dim]Starting existing `{neo4j_podman.CONTAINER_NAME}` container...[/dim]"
+        )
+    else:
+        console.print(
+            f"[dim]`{neo4j_podman.CONTAINER_NAME}` is already running.[/dim]"
+        )
+    try:
+        creds = neo4j_podman.ensure_running()
+    except neo4j_podman.PortInUseError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except neo4j_podman.PodmanError as exc:
+        raise click.ClickException(str(exc)) from exc
+    console.print(f"[green]✓[/green] Neo4j ready at {creds.uri}")
     return Profile(
         name=name,
         uri=creds.uri,
         user=creds.user,
         password=creds.password,
-        source="neo4j-local",
+        source="local-podman",
     )
 
 
