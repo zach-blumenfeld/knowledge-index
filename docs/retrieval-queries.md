@@ -27,11 +27,12 @@ Same query *shapes* as [docs/research](research-data-model/research-retrieval-qu
 - `$uri` — the `Document.uri` (UUID-prefixed slugified path, see §4.3).
 - `$section_uri`, `$section_uris` — same convention for sections.
 - `$folder_uri` — a `Folder.uri` (UUID-prefixed slugified directory path) used as a prefix in `--under` scoping for B.1/B.2/B.11 — see *Scoping* below.
-- `$root_uri` — for B.12 / `ki tree`; URI of any node to start the tree walk from (`:Vault`, `:Folder`, `:Document`, or `:Section`).
+- `$root_uri` — for B.12 / `ki tree`; URI of any node to start the tree walk from (`:Vault`, `:Folder`, `:Document`, or `:Section`). When `null` / absent, B.12 falls back to matching every `:Vault` in the graph — see B.12 below.
+- `$source_uris` — for B.12-links / `ki tree`; list of `:Document` and `:Section` URIs to fetch outbound `:LINKS_TO` edges from. Populated by the renderer from the B.12 result.
 - `$index_name` — `'content_search'` (the fulltext index from §4.4).
 - `$query` — fulltext query string (Lucene syntax).
 - `$k`, `$n` — limit / window size.
-- `$depth` — for B.12 / `ki tree`; cap on tree traversal depth.
+- `$depth` — for B.12 / `ki tree`; cap on tree traversal depth (must be >= 1).
 
 ### Scoping with `:Folder` (`--under`)
 
@@ -56,7 +57,10 @@ The same idea works for any of B.1 / B.2 / B.11 (with `:Vault`-scope `folder_uri
 - **B.8 windowing (summary)** — same `±N` walk as B.7 over `NEXT_SECTION` but returns `heading`, `first_child_section_uri`, `child_count` instead of full content. The `first_child` lookup exploits the DFS property: a section's first child is the section it points to via `NEXT_SECTION` that is also a `HAS` child of it. Mirrors A.8's summary semantics.
 - **B.9 / B.10** — straightforward `LINKS_TO` ports with endpoint-projection (any section endpoint → its owning `Document`) so the result shape stays at document granularity like the originals.
 - **B.11 Vault fulltext** — see *Per-query* notes above; same shared `content_search` index, filtered to `:Vault`. Powers `ki search --type vault` for cross-vault routing.
-- **B.12 Containment tree** — pure graph walk over `:HAS` (the universal containment edge), depth-capped via a **quantified path pattern** quantifier (`{1,$depth}`) so the depth bound prunes during traversal rather than as a post-filter — same trick as B.3. Powers `ki tree`. Starts from any `:Vault`, `:Folder`, `:Document`, or `:Section` URI (`$root_uri`), so the same query renders the whole vault, a folder subtree, the heading tree of one document, or the sub-headings under a heading. The caller decides which `kind`s to keep (e.g. `ki tree` against a `:Vault` root hides `:Section` rows for a directory-style view).
+- **B.12 / B.12-links Containment tree** — `ki tree`'s engine. Two queries:
+  - **B.12** walks `:HAS` from `$root_uri` up to `$depth` steps, depth-capped via a quantified path pattern (`{1,$depth}`) so the bound prunes during traversal rather than as a post-filter (same trick as B.3). Returns one row per node — root + HAS descendants — in the wire format defined by `docs/tree-format.md` *Wire record format*: `{depth, inrel, label, name, displayName, uri, parent_uri, sort_pos}`. Sections carry `sort_pos` (NEXT_SECTION position in their parent document) so the renderer can order sibling sections by reading order, not alphabetically. When `$root_uri` is `null` / absent, B.12 matches every `:Vault` as a root and fans out — the renderer treats them as a multi-root sibling group at `parent_uri = null`, sorted alphabetically by `name`. Multi-user scoping via `:USES_VAULT` is a follow-up; single-user makes "all vaults" unambiguous today.
+  - **B.12-links** is the LINKS_TO sub-pass: given a list of D/S URIs (`$source_uris`), returns their outbound `:LINKS_TO` edges. The renderer combines B.12 + B.12-links output, groups by `parent_uri`, sorts per the rules in `docs/tree-format.md` *Sibling ordering*, and DFS-emits.
+  - Splitting hierarchy and LINKS_TO into two queries keeps each small. The cost is one extra round trip, paid every `ki tree` invocation.
 
 
 B.1 Document title fulltext search
@@ -340,22 +344,27 @@ LIMIT toInteger($k)
 ```
 
 
-B.12 Containment tree (depth-capped)
+B.12 Containment tree (hierarchy walk)
 ```cypher
-// New in v0.4.0. Walks the containment tree from any `$root_uri` outward via
-// the single `HAS` relationship type. Roots can be a `:Vault`, `:Folder`,
-// `:Document`, or `:Section` — same query for "the whole vault as a tree",
-// "this folder's subtree", "the heading tree of one doc", or "everything
-// nested under this heading".
+// New in v0.4.0. `ki tree`'s HAS walker. Returns the root row + one row per
+// HAS-descendant up to $depth steps. The full wire format is defined in
+// `docs/tree-format.md` *Wire record format* — this query is its only producer.
 //
-// Pure graph walk — no fulltext, no scoring. Returns one row per descendant
-// with its parent URI and depth from the root; the caller (`ki tree`)
-// rebuilds the tree client-side and decides how to render (directory-style
-// in the terminal, YAML with `--out-file`, etc.) and which kinds to include
-// (e.g. `ki tree` filters Sections out by default for a folder root).
+// Sections additionally carry `sort_pos` (their index in the parent document's
+// NEXT_SECTION chain) so the renderer can order sibling sections by reading
+// order rather than alphabetically.
 //
-// $root_uri — a Vault / Folder / Document / Section URI.
-// $depth    — cap on traversal depth from the root (must be >= 1).
+// When $root_uri is null/absent, every :Vault in the graph is matched as a
+// root and the walk fans out from each. The renderer treats multi-root
+// output as a sibling group at parent_uri=null sorted alphabetically by name.
+// Multi-user scoping via :USES_VAULT is a follow-up — single-user makes
+// "all vaults" unambiguous today.
+//
+// Outbound :LINKS_TO edges are surfaced by B.12-links — this query is HAS-only.
+//
+// $root_uri — Vault / Folder / Document / Section URI, or null to match all
+//             :Vault nodes as roots.
+// $depth    — max HAS steps from each root (must be >= 1).
 //
 // We use a **quantified path pattern** for the `:HAS` hop chain rather than
 // legacy `*1..n` variable-length syntax — legacy `*m..n` requires literal
@@ -366,13 +375,64 @@ B.12 Containment tree (depth-capped)
 // quantifier, so the wrapper (`run_b12` once `ki tree` lands in phase 3 of
 // #17) must substitute the literal int client-side, same as B.3.
 //   https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/
-MATCH (root {uri: $root_uri})
-WHERE root:Vault OR root:Folder OR root:Document OR root:Section
-MATCH path = (root) (()-[:HAS]->()){1,$depth} (child)
-RETURN child.uri AS uri,
-       labels(child)[0] AS kind,
-       child.displayName AS display_name,
-       [n IN nodes(path)[-2..-1] | n.uri][0] AS parent_uri,
-       length(path) AS depth
-ORDER BY depth, parent_uri, display_name
+MATCH (root)
+WHERE ($root_uri IS NOT NULL
+       AND root.uri = $root_uri
+       AND (root:Vault OR root:Folder OR root:Document OR root:Section))
+   OR ($root_uri IS NULL AND root:Vault)
+
+CALL (root) {
+  // Root row.
+  RETURN 0                                       AS depth,
+         null                                    AS inrel,
+         labels(root)[0]                         AS label,
+         coalesce(root.name, root.displayName)   AS name,
+         root.displayName                        AS displayName,
+         root.uri                                AS uri,
+         null                                    AS parent_uri,
+         null                                    AS sort_pos
+
+  UNION
+
+  // HAS descendants, up to $depth steps from root.
+  MATCH path = (root) (()-[:HAS]->()){1,$depth} (d)
+  // For Section descendants, find the unique start of the doc's NEXT_SECTION
+  // chain and compute d's position in it. firstSec has no incoming
+  // NEXT_SECTION. For non-Section d, nsp stays null.
+  OPTIONAL MATCH nsp = (firstSec:Section)-[:NEXT_SECTION*0..]->(d)
+  WHERE d:Section
+    AND NOT EXISTS { MATCH (:Section)-[:NEXT_SECTION]->(firstSec) }
+  RETURN length(path)                            AS depth,
+         'HAS'                                   AS inrel,
+         labels(d)[0]                            AS label,
+         coalesce(d.name, d.displayName)         AS name,
+         d.displayName                           AS displayName,
+         d.uri                                   AS uri,
+         nodes(path)[-2].uri                     AS parent_uri,
+         CASE WHEN d:Section THEN length(nsp) ELSE null END AS sort_pos
+}
+
+RETURN depth, inrel, label, name, displayName, uri, parent_uri, sort_pos
+```
+
+B.12-links Outbound LINKS_TO sub-pass
+```cypher
+// New in v0.4.0. Outbound :LINKS_TO edges from a set of source URIs.
+// Called by `ki tree` after B.12 to surface horizontal LINKS_TO branches
+// (one row per outbound edge, source identified by parent_uri).
+//
+// The renderer combines these rows with the B.12 hierarchy rows, sets
+// `depth = source_depth + 1` and `inrel = 'LINKS_TO'`, and sorts L siblings
+// alphabetically by target uri. See `docs/tree-format.md` *Renderer pseudocode*.
+//
+// $source_uris — list of :Document and :Section URIs from the B.12 result.
+UNWIND $source_uris AS source_uri
+MATCH (src {uri: source_uri})-[:LINKS_TO]->(tgt)
+WHERE src:Document OR src:Section
+RETURN src.uri                              AS parent_uri,
+       labels(tgt)[0]                       AS label,
+       coalesce(tgt.name, tgt.displayName)  AS name,
+       tgt.displayName                      AS displayName,
+       tgt.uri                              AS uri
+ORDER BY parent_uri, uri
 ```
