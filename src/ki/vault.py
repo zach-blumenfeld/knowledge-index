@@ -219,6 +219,18 @@ def document_uri(vault_id: str, rel_path: Path | str) -> str:
     return f"{vault_id}/{slugify_path(rel)}"
 
 
+def folder_uri(vault_id: str, segments: tuple[str, ...] | list[str]) -> str:
+    """Compute Folder.uri = '<vaultId>/<slugified path>' (no trailing slash).
+
+    `segments` is the path segments from the vault root, un-slugified. e.g.
+    `('notes', 'My Projects')` → `'<vault_id>/notes/my-projects'`.
+    """
+    if not segments:
+        raise ValueError("folder_uri requires at least one path segment")
+    slugified = "/".join(slugify_segment(p) for p in segments)
+    return f"{vault_id}/{slugified}"
+
+
 def section_uri(doc_uri: str, heading_path: list[str]) -> str:
     """Compute Section.uri = '<doc_uri>#<slugified heading path>'.
 

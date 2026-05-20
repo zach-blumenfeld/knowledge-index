@@ -12,17 +12,26 @@ Order of operations per ingest run:
   4. Open a single Neo4j session.
      a. Apply schema (constraints + fulltext index).
      b. Run the per-vault upsert (User, Vault, USES_VAULT, vault LOADED).
-     c. Fetch existing Document.fileHash for fileHash-skip.
-     d. Build a wikilink resolver from existing docs in this vault.
+     c. Compute the :Folder layer from `keep` (one entry per distinct
+        directory containing an indexed doc) and write Folder nodes.
+        The HAS edges that wire the tree together are written later.
+     d. Fetch existing Document.fileHash for fileHash-skip.
+     e. Build a wikilink resolver from existing docs in this vault
+        (walks `[:HAS*]` so nested docs are included).
   5. For each changed/new doc:
      - Parse markdown → ParsedDocument.
      - Assign URIs + Rule-1 content.
      - Build doc/section/has-section/next-section/doc-loaded row batches.
-     - Write them in order. Release.
+     - Write them in order (nodes only — Vault|Folder -> Document HAS
+       edges live in the per-vault tree-edge write below). Release.
      - Update the resolver with this doc's name/aliases.
      - Stash links for the post-pass.
-  6. Resolve wikilinks/markdown-links against the resolver; emit LINKS_TO.
-  7. Aggregate piped-wikilink display texts per target URI, normalize, and
+  6. Write the tree HAS edges in one batch (Vault->Folder, Folder->Folder,
+     Vault->Document for root docs, Folder->Document for nested docs).
+     Single-parent invariant: each Folder / Document has exactly one
+     incoming HAS edge.
+  7. Resolve wikilinks/markdown-links against the resolver; emit LINKS_TO.
+  8. Aggregate piped-wikilink display texts per target URI, normalize, and
      union into the target's `aliases` (docs/ingest-cypher.md §4.3 step 7).
 
 Scalability levers (docs/requirements_v01_mvp.md):
@@ -60,6 +69,7 @@ from ..parser.markdown import (
 )
 from ..vault import (
     document_uri,
+    folder_uri,
     iter_markdown_files,
     read_or_create_vault_id,
     read_vault_description,
@@ -93,6 +103,7 @@ class IngestResult:
     docs_skipped_oversize: int = 0
     sections_written: int = 0
     links_written: int = 0
+    folders_total: int = 0  # distinct :Folder nodes touched by this ingest
     oversize_files: list[Path] = field(default_factory=list)
     batch_shrunk_to: int | None = None  # set if we hit an OOM retry
 
@@ -228,6 +239,62 @@ def _next_section_rows(doc: ParsedDocument) -> list[dict[str, str]]:
     return rows
 
 
+def _build_folder_and_tree_rows(
+    vault_uri: str,
+    vault_root: Path,
+    doc_paths: list[Path],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Build :Folder upsert rows + Vault|Folder -[:HAS]-> Folder|Document edges.
+
+    Walks each document's directory chain from vault root downward and
+    materialises a :Folder for every distinct intermediate directory plus one
+    HAS edge per parent → child relationship. Empty directories (no indexed
+    docs under them) never appear in the result. Each Folder and Document
+    gets exactly one incoming HAS edge — the single-parent invariant.
+
+    Returns (folder_rows, tree_edge_rows):
+      folder_rows    — [{ uri, props: { name, displayName } }, ...]
+      tree_edge_rows — [{ parentUri, childUri }, ...] covering all four valid
+                       endpoint shapes (Vault→Folder, Vault→Document,
+                       Folder→Folder, Folder→Document).
+    """
+    folders: dict[str, dict[str, Any]] = {}
+    tree_edges: list[dict[str, str]] = []
+
+    for p in doc_paths:
+        rel_parts = p.relative_to(vault_root).parts
+        dir_parts = rel_parts[:-1]  # exclude the filename
+        doc_uri_str = document_uri(vault_uri, p.relative_to(vault_root))
+
+        if not dir_parts:
+            # Root-level document: Vault -[:HAS]-> Document.
+            tree_edges.append({"parentUri": vault_uri, "childUri": doc_uri_str})
+            continue
+
+        # Walk the folder chain from root downward; materialise each level the
+        # first time we see it. parent_uri tracks the immediate parent for the
+        # next level down so we emit a single HAS edge per child.
+        parent_uri = vault_uri
+        for depth in range(len(dir_parts)):
+            segments = dir_parts[: depth + 1]
+            f_uri = folder_uri(vault_uri, segments)
+            if f_uri not in folders:
+                folders[f_uri] = {
+                    "uri": f_uri,
+                    "props": {
+                        "name": slugify_segment(dir_parts[depth]),
+                        "displayName": dir_parts[depth],
+                    },
+                }
+                tree_edges.append({"parentUri": parent_uri, "childUri": f_uri})
+            parent_uri = f_uri
+
+        # Document's parent is the deepest folder.
+        tree_edges.append({"parentUri": parent_uri, "childUri": doc_uri_str})
+
+    return list(folders.values()), tree_edges
+
+
 # --- Pipeline orchestration ------------------------------------------------
 
 
@@ -332,14 +399,34 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                 now=now,
             ).consume()
 
-            # 4. Existing doc hashes for fileHash-skip.
+            # 4. Build the folder layer up-front from the kept doc paths and
+            # write the Folder nodes now. The HAS edges that wire the tree
+            # together (Vault|Folder -> Folder|Document) are written *after*
+            # the per-doc loop in step 8, so Document nodes exist as MATCH
+            # targets.
+            folder_rows, tree_edge_rows = _build_folder_and_tree_rows(
+                vault_uri, vault_root, keep
+            )
+            result.folders_total = len(folder_rows)
+            if folder_rows:
+                run_batched(
+                    session,
+                    Q.WRITE_FOLDERS,
+                    "folderRows",
+                    folder_rows,
+                    batch_size=opts.batch_size,
+                    extra_params={"now": now},
+                    on_shrink=on_shrink,
+                )
+
+            # 5. Existing doc hashes for fileHash-skip.
             doc_uris = [document_uri(vault_uri, p.relative_to(vault_root)) for p in keep]
             existing_hashes = _fetch_existing_hashes(session, doc_uris)
 
-            # 5. Existing-vault resolver.
+            # 6. Existing-vault resolver.
             resolver = _load_resolver(session, vault_uri)
 
-            # 6. Per-document loop.
+            # 7. Per-document loop.
             pending_links: list[tuple[str, list[ParsedLink], list[tuple[str, list[ParsedLink]]]]] = []
             doc_uris_loaded_this_run: list[str] = []
 
@@ -396,7 +483,20 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     )
                 )
 
-            # 7. Per-doc LOADED provenance — all in one batched call.
+            # 8. Tree HAS edges (Vault|Folder -> Folder|Document) — written
+            # after the doc loop so every Document MATCH target exists. Folder
+            # nodes were already written in step 4.
+            if tree_edge_rows:
+                run_batched(
+                    session,
+                    Q.WRITE_TREE_EDGES,
+                    "treeEdgeRows",
+                    tree_edge_rows,
+                    batch_size=opts.batch_size,
+                    on_shrink=on_shrink,
+                )
+
+            # 9. Per-doc LOADED provenance — all in one batched call.
             if doc_uris_loaded_this_run:
                 doc_load_rows = [{"docUri": u} for u in doc_uris_loaded_this_run]
                 run_batched(
@@ -414,7 +514,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     on_shrink=on_shrink,
                 )
 
-            # 8. Resolve wikilinks and write LINKS_TO.
+            # 10. Resolve wikilinks and write LINKS_TO.
             link_rows, display_texts_per_target = _build_links_to_rows(
                 pending_links, resolver
             )
@@ -428,7 +528,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             )
             result.links_written = written
 
-            # 9. Wikilink display-text → target aliases (docs/ingest-cypher.md
+            # 11. Wikilink display-text → target aliases (docs/ingest-cypher.md
             # §4.3 step 7). Runs after LINKS_TO so we can read the target's
             # current displayName + aliases for normalization, then union the
             # derived aliases without clobbering frontmatter.
@@ -525,9 +625,11 @@ def _fetch_existing_hashes(session: Any, doc_uris: list[str]) -> dict[str, str]:
 
 
 def _load_resolver(session: Any, vault_uri: str) -> WikilinkResolver:
+    # Walks `[:HAS*]` so docs nested under :Folder nodes are included alongside
+    # root-level docs (which sit directly under the :Vault).
     res = session.run(
         """
-        MATCH (v:Vault {uri: $vaultUri})-[:HAS]->(d:Document)
+        MATCH (v:Vault {uri: $vaultUri})-[:HAS*]->(d:Document)
         RETURN d.uri AS uri, d.name AS name, d.aliases AS aliases
         """,
         vaultUri=vault_uri,

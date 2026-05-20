@@ -10,7 +10,7 @@ import yaml
 
 from ki.ingest.pipeline import IngestOptions, ingest_vault
 from ki.neo4j_client import driver_for
-from ki.search.queries import run_b1, run_b2, run_vault_search
+from ki.search.queries import run_b1, run_b2, run_b3, run_vault_search
 
 pytestmark = pytest.mark.integration
 
@@ -95,6 +95,49 @@ def test_search_b2_returns_owning_document(indexed_vault, neo4j_profile):
     for r in results:
         assert r.get("section_uri")
         assert r.get("document_uri")
+
+
+def test_search_b3_neighbourhood_accepts_parameterized_depth(tmp_path, neo4j_profile, cleanup_vault):
+    """B.3 must accept an arbitrary `n` at runtime.
+
+    Regression guard: Neo4j 5.x (incl. Aura) rejects Cypher parameters inside
+    a quantified-path-pattern quantifier (`{1,$n}`), so `run_b3` substitutes
+    the literal int client-side. If anyone removes that substitution, the
+    query fails with `SyntaxError: Invalid input '$': expected '}'...`.
+
+    The wikilinks are placed in **preambles** (before any H1) so multi-hop
+    traversal works — B.3 walks pure `LINKS_TO` edges, and the parser only
+    emits Doc→Doc `LINKS_TO` for preamble links. Section-internal wikilinks
+    produce Section→Doc edges that can't extend the chain beyond one hop
+    (the target Document has no outgoing `LINKS_TO`). That's a separate
+    B.3 limitation, not what this test guards.
+    """
+    fresh = tmp_path / "b3-vault"
+    fresh.mkdir()
+    (fresh / "a.md").write_text("Refers to [[b]].\n\n# A\n\nbody.\n")
+    (fresh / "b.md").write_text("Refers to [[c]].\n\n# B\n\nbody.\n")
+    (fresh / "c.md").write_text("# C\n\nleaf.\n")
+
+    res = ingest_vault(fresh, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(res.vault_uri)
+
+    a_uri = f"{res.vault_uri}/a.md"
+
+    # n=1: only direct neighbours of A reachable in one LINKS_TO hop → just B.
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            hits = run_b3(session, a_uri, n=1)
+    uris = {h["document_uri"] for h in hits}
+    assert f"{res.vault_uri}/b.md" in uris
+    assert f"{res.vault_uri}/c.md" not in uris  # too far at n=1
+
+    # n=2: A's neighbours up to 2 hops → both B and C.
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            hits = run_b3(session, a_uri, n=2)
+    uris = {h["document_uri"] for h in hits}
+    assert f"{res.vault_uri}/b.md" in uris
+    assert f"{res.vault_uri}/c.md" in uris
 
 
 def test_vault_search_finds_by_description(tmp_path, neo4j_profile, cleanup_vault):

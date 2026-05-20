@@ -61,8 +61,19 @@ LIMIT toInteger($k)
 """.strip()
 
 
-# B.3 — Document neighbourhood (quantified path pattern lets us parameterize
-# the upper bound — legacy `[:LINKS_TO*1..$n]` syntax rejects parameters).
+# B.3 — Document neighbourhood. The `{1,$n}` quantifier is a placeholder —
+# Neo4j 5.x (including current Aura) rejects Cypher parameters inside
+# quantified-path-pattern quantifiers, so `run_b3` substitutes the integer
+# literal client-side before sending the query. Legacy `[:LINKS_TO*1..n]`
+# syntax has the same parameter restriction *and* requires literal n at
+# parse time, so we'd have to substitute either way.
+#
+# Known limitation: the chain walks pure `:LINKS_TO` edges, but the parser
+# emits Doc→Doc `LINKS_TO` only for *preamble* wikilinks. Wikilinks inside a
+# section produce Section→Doc edges, and the landed-on Document has no
+# outgoing `LINKS_TO` to extend the chain — so multi-hop traversal stops
+# at distance 1 for section-internal links. Fixing this would require
+# interleaving HAS hops inside the LINKS_TO chain. Tracked separately.
 B3_NEIGHBOURHOOD = """
 MATCH (start:Document {uri: $uri})
 MATCH (start)-[:HAS*0..]->(startElem)
@@ -98,8 +109,12 @@ def run_b2(session, query: str, k: int = 10) -> list[dict]:
 
 
 def run_b3(session, doc_uri: str, n: int = 2) -> list[dict]:
-    # `n` is bounded server-side via the quantified path pattern bound.
-    res = session.run(B3_NEIGHBOURHOOD, parameters={"uri": doc_uri, "n": int(n)})
+    # Neo4j 5.x (incl. current Aura) rejects Cypher parameters inside
+    # quantified-path-pattern quantifiers — substitute the literal int into
+    # the query string client-side. Safe because `n` is coerced to int first.
+    n_int = max(1, int(n))
+    query = B3_NEIGHBOURHOOD.replace("$n", str(n_int))
+    res = session.run(query, parameters={"uri": doc_uri})
     return [dict(r) for r in res]
 
 

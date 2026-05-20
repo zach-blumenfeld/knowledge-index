@@ -35,7 +35,7 @@ def _vault_doc_count(profile, vault_uri):
     with driver_for(profile) as driver:
         with driver.session() as session:
             row = session.run(
-                "MATCH (v:Vault {uri: $u})-[:HAS]->(d) RETURN count(d) AS n",
+                "MATCH (v:Vault {uri: $u})-[:HAS*]->(d:Document) RETURN count(DISTINCT d) AS n",
                 u=vault_uri,
             ).single()
             return row["n"] if row else 0

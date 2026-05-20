@@ -123,6 +123,7 @@ def cmd_index(
         f"[yellow]{result.docs_updated}[/yellow] updated, "
         f"[dim]{result.docs_skipped_unchanged} unchanged[/dim], "
         f"{result.sections_written} sections, "
+        f"{result.folders_total} folders, "
         f"{result.links_written} links."
     )
     if result.docs_skipped_oversize:

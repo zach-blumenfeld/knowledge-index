@@ -106,9 +106,13 @@ B.3 Document neighbourhood
 // owning Document.
 //
 // We use a *quantified path pattern* for the `:LINKS_TO` hop chain rather
-// than legacy `*1..n` variable-length syntax, because legacy variable-length
-// requires a literal upper bound; quantified path patterns accept a parameter
-// in the quantifier. See:
+// than legacy `*1..n` variable-length syntax — the legacy form requires a
+// literal upper bound at parse time and so wouldn't accept `$n` either.
+// The `{1,$n}` quantifier shown is a *template*: current Neo4j 5.x server
+// versions (incl. Aura) reject Cypher parameters inside the quantifier, so
+// the wrapper (`run_b3` in src/ki/search/queries.py) substitutes the literal
+// int client-side before sending the query. Safe because the client-side
+// code coerces `n` to int first.
 //   https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/
 MATCH (start:Document {uri: $uri})
 MATCH (start)-[:HAS*0..]->(startElem)
@@ -357,8 +361,10 @@ B.12 Containment tree (depth-capped)
 // legacy `*1..n` variable-length syntax — legacy `*m..n` requires literal
 // upper bounds, and `*1..` with a post-filter (`WHERE length(path) <= $depth`)
 // is a serious perf trap because it walks the entire reachable subgraph and
-// only then prunes. Quantified path patterns accept the depth parameter *in
-// the quantifier* and prune during traversal. Same trick as B.3.
+// only then prunes. The `{1,$depth}` quantifier prunes during traversal —
+// but current Neo4j 5.x (incl. Aura) rejects Cypher parameters inside the
+// quantifier, so the wrapper (`run_b12` once `ki tree` lands in phase 3 of
+// #17) must substitute the literal int client-side, same as B.3.
 //   https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/
 MATCH (root {uri: $root_uri})
 WHERE root:Vault OR root:Folder OR root:Document OR root:Section

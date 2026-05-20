@@ -28,6 +28,11 @@ CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
   FOR (s:Section) REQUIRE s.uri IS UNIQUE
 """.strip()
 
+CONSTRAINT_FOLDER = """
+CREATE CONSTRAINT folder_uri_unique IF NOT EXISTS
+  FOR (f:Folder) REQUIRE f.uri IS UNIQUE
+""".strip()
+
 CONTENT_SEARCH_INDEX = """
 CREATE FULLTEXT INDEX content_search IF NOT EXISTS
   FOR (n:Document|Section|Vault) ON EACH [n.displayName, n.content, n.aliases, n.description]
@@ -36,6 +41,7 @@ CREATE FULLTEXT INDEX content_search IF NOT EXISTS
 SCHEMA_STATEMENTS = (
     CONSTRAINT_USER,
     CONSTRAINT_VAULT,
+    CONSTRAINT_FOLDER,
     CONSTRAINT_DOCUMENT,
     CONSTRAINT_SECTION,
     CONTENT_SEARCH_INDEX,
@@ -62,7 +68,7 @@ SET lv += $loadProvenance,
 """.strip()
 
 
-# 4.3 step 1 — Documents.
+# 4.3 step 1 — Documents (node upsert only; parent HAS edge lives in step 1c).
 WRITE_DOCUMENTS = """
 UNWIND $documentRows AS row
 MERGE (d:Document {uri: row.uri})
@@ -70,9 +76,39 @@ ON CREATE SET d += row.createOnly,
               d.firstLoadedAt = $now
 SET d += row.props,
     d.lastLoadedAt = $now
-WITH d
-MATCH (v:Vault {uri: $vaultUri})
-MERGE (v)-[:HAS]->(d)
+""".strip()
+
+
+# 4.3 step 1b — Folders (node upsert only).
+# $folderRows: list of { uri, props } where
+#   props = { name, displayName }
+WRITE_FOLDERS = """
+UNWIND $folderRows AS row
+MERGE (f:Folder {uri: row.uri})
+ON CREATE SET f += row.props,
+              f.firstSeenAt = $now
+SET f.lastSeenAt = $now
+""".strip()
+
+
+# 4.3 step 1c — folder/document tree HAS edges.
+# Single edge type for all containment in the vault/folder/document layer.
+# Covers all four valid endpoint shapes in a single UNWIND:
+#   Vault   -[:HAS]-> Folder      (top-level folder)
+#   Vault   -[:HAS]-> Document    (root-level document, no enclosing folder)
+#   Folder  -[:HAS]-> Folder      (nested subdirectory)
+#   Folder  -[:HAS]-> Document    (document under that folder)
+# Each child gets exactly one incoming HAS edge — the writer picks the
+# immediate parent (Vault for root-level children, the containing Folder
+# otherwise) and emits one row per child.
+# $treeEdgeRows: list of { parentUri, childUri }
+WRITE_TREE_EDGES = """
+UNWIND $treeEdgeRows AS row
+MATCH (parent {uri: row.parentUri})
+WHERE parent:Vault OR parent:Folder
+MATCH (child {uri: row.childUri})
+WHERE child:Folder OR child:Document
+MERGE (parent)-[:HAS]->(child)
 """.strip()
 
 
@@ -193,20 +229,21 @@ RETURN count(d) AS doc_count
 
 COUNT_VAULT = """
 MATCH (v:Vault {uri: $vaultUri})
-OPTIONAL MATCH (v)-[:HAS]->(d:Document)
+OPTIONAL MATCH (v)-[:HAS*]->(d:Document)
 OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
 RETURN v.displayName AS display_name,
        count(DISTINCT d) AS doc_count,
        count(DISTINCT s) AS section_count
 """.strip()
 
+# Whole-vault removal: walk `(v)-[:HAS*]->(any)` to collect every descendant
+# (Folder / Document / Section), DETACH DELETE each (which also drops their
+# incident NEXT_SECTION, LINKS_TO, LOADED, and HAS edges), then drop the Vault.
 DELETE_VAULT = """
 MATCH (v:Vault {uri: $vaultUri})
-OPTIONAL MATCH (v)-[:HAS]->(d:Document)
-OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
-WITH v, collect(DISTINCT d) AS docs, collect(DISTINCT s) AS secs
-FOREACH (s IN secs | DETACH DELETE s)
-FOREACH (d IN docs | DETACH DELETE d)
+OPTIONAL MATCH (v)-[:HAS*]->(descendant)
+WITH v, collect(DISTINCT descendant) AS descendants
+FOREACH (n IN descendants | DETACH DELETE n)
 DETACH DELETE v
 """.strip()
 
