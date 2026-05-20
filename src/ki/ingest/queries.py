@@ -81,13 +81,15 @@ SET d += row.props,
 
 # 4.3 step 1b — Folders (node upsert only).
 # $folderRows: list of { uri, props } where
-#   props = { name, displayName }
+#   props = { name, displayName, path }
+# `path` updates on every ingest (machine-scoped, last-write-wins) so the
+# always-run `SET f += row.props` is load-bearing — not folded into ON CREATE.
 WRITE_FOLDERS = """
 UNWIND $folderRows AS row
 MERGE (f:Folder {uri: row.uri})
-ON CREATE SET f += row.props,
-              f.firstSeenAt = $now
-SET f.lastSeenAt = $now
+ON CREATE SET f.firstSeenAt = $now
+SET f += row.props,
+    f.lastSeenAt = $now
 """.strip()
 
 
@@ -119,6 +121,25 @@ MERGE (s:Section {uri: row.uri})
 ON CREATE SET s.firstLoadedAt = $now
 SET s += row.props,
     s.lastLoadedAt = $now
+""".strip()
+
+
+# Path-only refresh for documents skipped via fileHash match.
+#
+# When a document's bytes are unchanged across ingests, the writer skips the
+# normal WRITE_DOCUMENTS / WRITE_SECTIONS pass — but `Document.path` and
+# `Section.path` are machine-scoped and may have shifted (vault moved from
+# one mount to another). This pass stamps the new path on the skipped
+# document and propagates to every Section under it.
+#
+# $pathRefreshRows: list of { docUri, path }
+REFRESH_DOC_AND_SECTION_PATHS = """
+UNWIND $pathRefreshRows AS row
+MATCH (d:Document {uri: row.docUri})
+SET d.path = row.path
+WITH d, row
+OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
+SET s.path = row.path
 """.strip()
 
 

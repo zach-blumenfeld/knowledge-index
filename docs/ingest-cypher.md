@@ -56,8 +56,13 @@ Each `row` is a plain dict. `row.props` is the mutable property bag fed into `SE
 // 1. Documents — batched node upsert (no parent edge yet — see step 1c).
 // $documentRows: list of { uri, createOnly, props } where
 //   createOnly = { frontmatterCreatedAt }   // first-write-wins fields
-//   props      = { name, displayName, aliases, fileHash, frontmatter,
+//   props      = { name, displayName, path, aliases, fileHash, frontmatter,
 //                  content, sourceType }
+//
+// `path` is the absolute POSIX file path on the ingesting machine. Same
+// machine-scoped caveat as `Vault.path` (see data-model.md §Vault). Stamped
+// on every ingest; last writer wins if the same vault is indexed from two
+// different mount points.
 UNWIND $documentRows AS row
 MERGE (d:Document {uri: row.uri})
 ON CREATE SET d += row.createOnly,
@@ -74,13 +79,21 @@ SET d += row.props,
 // slugified directory path under `$vaultId`); nodes are created on first
 // sight and touched on every ingest.
 //
+// `path` is the absolute POSIX directory path on the ingesting machine.
+// Same machine-scoped caveat as `Vault.path` and `Document.path`.
+//
 // $folderRows: list of { uri, props } where
-//   props = { name, displayName }
+//   props = { name, displayName, path }
+//
+// `path` is the load-bearing case for the always-run `SET f += row.props`:
+// if the vault is re-indexed from a different mount point, the existing
+// Folder's `path` updates to the new absolute path. Same last-write-wins
+// rule as `Vault.path`.
 UNWIND $folderRows AS row
 MERGE (f:Folder {uri: row.uri})
-ON CREATE SET f += row.props,
-              f.firstSeenAt = $now
-SET f.lastSeenAt = $now
+ON CREATE SET f.firstSeenAt = $now
+SET f += row.props,
+    f.lastSeenAt = $now
 ```
 
 ```cypher
@@ -113,7 +126,12 @@ MERGE (parent)-[:HAS]->(child)
 ```cypher
 // 2. Sections — batched node upsert (no parent edge yet — see step 3).
 // $sectionRows: list of { uri, props } where
-//   props = { name, displayName, headingLevel, content }
+//   props = { name, displayName, headingLevel, content, path }
+//
+// `path` is the absolute POSIX path of the owning Document — redundant with
+// `Document.path` but stamped on every Section for one-shot agent UX (any
+// Section query result is enough to `Read` the file). Last writer wins on
+// re-ingest from a different mount, mirroring Document.path / Folder.path.
 UNWIND $sectionRows AS row
 MERGE (s:Section {uri: row.uri})
 ON CREATE SET s.firstLoadedAt = $now

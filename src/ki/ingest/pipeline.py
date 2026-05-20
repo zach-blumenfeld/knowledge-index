@@ -193,13 +193,14 @@ def _slugify_section_path(s: str) -> str:
 # --- Row builders -----------------------------------------------------------
 
 
-def _document_row(doc: ParsedDocument, doc_uri: str) -> dict[str, Any]:
+def _document_row(doc: ParsedDocument, doc_uri: str, file_path: str) -> dict[str, Any]:
     create_only: dict[str, Any] = {}
     if doc.frontmatter_created_at is not None:
         create_only["frontmatterCreatedAt"] = doc.frontmatter_created_at
     props: dict[str, Any] = {
         "name": doc.name,
         "displayName": doc.display_name,
+        "path": file_path,
         "aliases": doc.aliases,
         "fileHash": doc.file_hash,
         "content": document_content_from(doc),
@@ -210,7 +211,7 @@ def _document_row(doc: ParsedDocument, doc_uri: str) -> dict[str, Any]:
     return {"uri": doc_uri, "createOnly": create_only, "props": props}
 
 
-def _section_row(sec) -> dict[str, Any]:
+def _section_row(sec, file_path: str) -> dict[str, Any]:
     return {
         "uri": sec.uri,
         "props": {
@@ -218,6 +219,7 @@ def _section_row(sec) -> dict[str, Any]:
             "displayName": sec.heading_text,
             "headingLevel": sec.heading_level,
             "content": sec.content,
+            "path": file_path,
         },
     }
 
@@ -253,7 +255,9 @@ def _build_folder_and_tree_rows(
     gets exactly one incoming HAS edge — the single-parent invariant.
 
     Returns (folder_rows, tree_edge_rows):
-      folder_rows    — [{ uri, props: { name, displayName } }, ...]
+      folder_rows    — [{ uri, props: { name, displayName, path } }, ...]
+                       `path` is the absolute POSIX directory path on the
+                       ingesting machine (machine-scoped, like Vault.path).
       tree_edge_rows — [{ parentUri, childUri }, ...] covering all four valid
                        endpoint shapes (Vault→Folder, Vault→Document,
                        Folder→Folder, Folder→Document).
@@ -279,11 +283,15 @@ def _build_folder_and_tree_rows(
             segments = dir_parts[: depth + 1]
             f_uri = folder_uri(vault_uri, segments)
             if f_uri not in folders:
+                # Compute the folder's absolute path on the ingesting machine
+                # by joining vault_root with the on-disk directory parts.
+                folder_abs_path = vault_root.joinpath(*dir_parts[: depth + 1])
                 folders[f_uri] = {
                     "uri": f_uri,
                     "props": {
                         "name": slugify_segment(dir_parts[depth]),
                         "displayName": dir_parts[depth],
+                        "path": str(folder_abs_path),
                     },
                 }
                 tree_edges.append({"parentUri": parent_uri, "childUri": f_uri})
@@ -429,6 +437,10 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             # 7. Per-document loop.
             pending_links: list[tuple[str, list[ParsedLink], list[tuple[str, list[ParsedLink]]]]] = []
             doc_uris_loaded_this_run: list[str] = []
+            # Path-only refresh rows for fileHash-skipped docs. Machine-scoped
+            # `path` may have shifted (vault moved across mounts) even when
+            # contents haven't changed, so we stamp the new path post-loop.
+            path_refresh_rows: list[dict[str, str]] = []
 
             for path, content_bytes in files_bytes:
                 rel_path = path.relative_to(vault_root)
@@ -436,8 +448,11 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                 fh = hash_bytes(content_bytes)
                 if existing_hashes.get(doc_uri) == fh:
                     result.docs_skipped_unchanged += 1
-                    # Even though we skip writes, we'd still want this doc in the
-                    # resolver — but it's already in there from _load_resolver.
+                    # Even though we skip the heavy writes, the doc's `path`
+                    # property must still be refreshed because it's
+                    # machine-scoped and may have moved. The resolver is
+                    # already populated from _load_resolver.
+                    path_refresh_rows.append({"docUri": doc_uri, "path": str(path)})
                     continue
 
                 is_new = existing_hashes.get(doc_uri) is None
@@ -462,6 +477,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     parsed=parsed,
                     doc_uri=doc_uri,
                     vault_uri=vault_uri,
+                    file_path=str(path),
                     batch_size=opts.batch_size,
                     on_shrink=on_shrink,
                 )
@@ -492,6 +508,21 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     Q.WRITE_TREE_EDGES,
                     "treeEdgeRows",
                     tree_edge_rows,
+                    batch_size=opts.batch_size,
+                    on_shrink=on_shrink,
+                )
+
+            # 8b. Path-only refresh for fileHash-skipped docs. Their content
+            # didn't change so the heavy writes were skipped, but `path` is
+            # machine-scoped and may have moved across mounts — stamp it.
+            # Updates Section.path too (every Section under each refreshed
+            # Document, since Section.path mirrors Document.path).
+            if path_refresh_rows:
+                run_batched(
+                    session,
+                    Q.REFRESH_DOC_AND_SECTION_PATHS,
+                    "pathRefreshRows",
+                    path_refresh_rows,
                     batch_size=opts.batch_size,
                     on_shrink=on_shrink,
                 )
@@ -555,10 +586,11 @@ def _write_one_document(
     parsed: ParsedDocument,
     doc_uri: str,
     vault_uri: str,
+    file_path: str,
     batch_size: int,
     on_shrink: Any,
 ) -> None:
-    doc_row = _document_row(parsed, doc_uri)
+    doc_row = _document_row(parsed, doc_uri, file_path)
     run_batched(
         session,
         Q.WRITE_DOCUMENTS,
@@ -569,7 +601,7 @@ def _write_one_document(
         on_shrink=on_shrink,
     )
 
-    section_rows = [_section_row(s) for s in parsed.flat_sections]
+    section_rows = [_section_row(s, file_path) for s in parsed.flat_sections]
     if section_rows:
         run_batched(
             session,

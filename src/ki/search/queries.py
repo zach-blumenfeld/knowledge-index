@@ -16,6 +16,7 @@ YIELD node, score
 WHERE node:Document
 RETURN node.uri AS document_uri,
        node.displayName AS title,
+       node.path AS path,
        score
 ORDER BY score DESC
 LIMIT toInteger($k)
@@ -38,6 +39,7 @@ RETURN doc.uri AS document_uri,
        section.displayName AS heading,
        section.headingLevel AS heading_level,
        section.content AS content,
+       section.path AS path,
        score
 """.strip()
 
