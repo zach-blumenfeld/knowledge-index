@@ -32,8 +32,25 @@ def test_index_help_lists_flags():
     runner = CliRunner()
     res = runner.invoke(main, ["index", "--help"])
     assert res.exit_code == 0
-    for flag in ("--profile", "--batch-size", "--max-file-size", "--concurrency"):
+    for flag in (
+        "--profile",
+        "--batch-size",
+        "--max-file-size",
+        "--concurrency",
+        "--description",
+        "--force-description",
+    ):
         assert flag in res.output
+
+
+def test_index_force_description_requires_description(tmp_path):
+    """`--force-description` without `--description` is nonsensical and must error."""
+    runner = CliRunner()
+    res = runner.invoke(
+        main, ["index", "--force-description", str(tmp_path)]
+    )
+    assert res.exit_code != 0
+    assert "--force-description requires --description" in res.output
 
 
 def test_search_help_lists_type_choices():

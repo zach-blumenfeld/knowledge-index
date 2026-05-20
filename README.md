@@ -125,7 +125,7 @@ ki rm ~/Documents/my-vault --vault             # remove a whole vault (typed con
 
 All commands: `ki configure | index | search | vault | rm | init | skill`. Run any with `--help` for flags. `KI_PROFILE=work ki index ./vault` overrides the profile per-invocation. Run `uvx knowledge-index --help` first if you'd rather not install globally.
 
-Per-vault routing is driven by `<vault>/.ki/vault.yaml`. `ki` writes the `uri:` UUID on first ingest; add an optional `description:` to give agents a short routing hint about what this vault is for. The description flows into `Vault.description` on each ingest and powers `ki search --type vault`.
+Per-vault routing is driven by `<vault>/.ki/vault.yaml`. `ki` writes the `uri:` UUID on first ingest; add an optional `description:` to give agents a short routing hint about what this vault is for. Quickest way to set it: `ki index <vault> --description "..."` (or wait for the interactive prompt on the very first `ki index`). The description flows into `Vault.description` on each ingest and powers `ki search --type vault`.
 
 ### From a chat app (Claude, ChatGPT, Gemini, Copilot — web / desktop)
 

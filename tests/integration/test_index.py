@@ -176,6 +176,82 @@ def test_first_index_of_fresh_dir_creates_marker(tmp_path, neo4j_profile, cleanu
     assert result.vault_description_set is False
 
 
+def test_ki_index_with_description_flag_sets_property(tmp_path, neo4j_profile, cleanup_vault):
+    """`ki index --description "..."` writes the YAML + propagates to Neo4j in one run."""
+    from ki.commands.index import cmd_index
+
+    fresh = tmp_path / "flag-vault"
+    fresh.mkdir()
+    (fresh / "n.md").write_text("# N\n\nbody.\n")
+
+    # Drive cmd_index directly to avoid CliRunner's config-loading machinery.
+    # We need a config on disk for it to find — write a minimal one pointing at
+    # the live test Neo4j.
+    import os
+
+    import yaml as _yaml
+
+    cfg_dir = tmp_path / "ki-config"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        _yaml.safe_dump(
+            {
+                "default_profile": "test",
+                "profiles": {
+                    "test": {
+                        "uri": neo4j_profile.uri,
+                        "user": neo4j_profile.user,
+                        "password": neo4j_profile.password,
+                        "source": "existing",
+                    }
+                },
+            }
+        )
+    )
+    old_xdg = os.environ.get("XDG_CONFIG_HOME")
+    os.environ["XDG_CONFIG_HOME"] = str(tmp_path)
+    try:
+        # `find_config_path` resolves ~/.config/ki/config.yaml; XDG_CONFIG_HOME
+        # redirects ~/.config to our tmp dir, but config dir is named "ki/", not
+        # "ki-config/". Rename to match.
+        (cfg_dir).rename(tmp_path / "ki")
+
+        rc = cmd_index(
+            fresh,
+            profile=None,
+            batch_size=64,
+            max_file_size=10 * 1024 * 1024,
+            concurrency=4,
+            yes=True,
+            description="Vault for graph DB integration tests.",
+            force_description=False,
+        )
+        assert rc == 0
+    finally:
+        if old_xdg is None:
+            os.environ.pop("XDG_CONFIG_HOME", None)
+        else:
+            os.environ["XDG_CONFIG_HOME"] = old_xdg
+
+    # Marker should now have both uri: and description:
+    marker = fresh / ".ki" / "vault.yaml"
+    data = _yaml.safe_load(marker.read_text())
+    assert "uri" in data
+    assert data["description"] == "Vault for graph DB integration tests."
+
+    cleanup_vault.append(data["uri"])
+
+    # And Neo4j has it.
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            row = session.run(
+                "MATCH (v:Vault {uri: $u}) RETURN v.description AS d",
+                u=data["uri"],
+            ).single()
+    assert row is not None
+    assert "graph DB" in (row["d"] or "")
+
+
 def test_ingest_sets_description_from_yaml(tmp_path, neo4j_profile, cleanup_vault):
     """User-authored `description:` in `.ki/vault.yaml` ends up on `:Vault`."""
     import yaml as _yaml

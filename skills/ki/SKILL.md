@@ -71,13 +71,20 @@ Also available: `ki init <path>` (advanced: write the vault marker without index
 
 Add `--json` for machine-readable output. `--k` is the result limit (or hop depth for `neighbors`). `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
 
-**Multi-vault routing.** When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --type vault`) to pick the right one. There is no CLI flag yet to scope a follow-up `ki search` to that vault ([#17](https://github.com/zach-blumenfeld/knowledge-index/issues/17) tracks `--under`); for now, run the cross-vault search and filter results client-side by `document_uri` prefix matching the chosen vault's URI. If a vault has no `description:` set, `ki` emits a warning — at index time (right after the ingest summary), and again per result on `ki search --type vault` / `ki vault list`. Treat that as a prompt to *ask the user* what the vault is for and offer to add a line to `<vault>/.ki/vault.yaml`:
+**Multi-vault routing.** When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --type vault`) to pick the right one. There is no CLI flag yet to scope a follow-up `ki search` to that vault ([#17](https://github.com/zach-blumenfeld/knowledge-index/issues/17) tracks `--under`); for now, run the cross-vault search and filter results client-side by `document_uri` prefix matching the chosen vault's URI.
+
+If a vault has no `description:` set, `ki` emits a warning at index time and on every `ki search --type vault` / `ki vault list` result. Treat that as a prompt to *ask the user* what the vault is for, then write it in one command:
+
+```bash
+ki index <vault> --description "One or two sentences on what's in this vault and when an agent should pick it."
+```
+
+`--description` refuses to overwrite an existing one — add `--force-description` to replace. If you'd rather edit the YAML by hand, the file is `<vault>/.ki/vault.yaml`:
 
 ```yaml
 uri: <existing UUID — do not touch>
 description: |
-  One or two sentences on what's in this vault and when an agent should
-  pick it. Be specific about the *topic*, not the medium.
+  ...
 ```
 
 (Once #17's `ki tree` lands, agents will also be able to infer a description from the doc tree — until then, asking the user is the path.)
