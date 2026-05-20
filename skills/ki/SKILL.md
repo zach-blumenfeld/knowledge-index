@@ -62,16 +62,25 @@ Also available: `ki init <path>` (advanced: write the vault marker without index
 
 ### Picking a search mode
 
-`ki search` takes `--type` to choose the retrieval shape. Match the flag to the user's intent:
+`ki search` runs across **all three** node types by default (`:Document`, `:Section`, `:Vault`) and returns the top-`k` results overall, sorted by fulltext score. Narrow with `--types` when you know which granularity you want:
 
-| User intent                                              | Flag                                            | Underlying query |
-|----------------------------------------------------------|-------------------------------------------------|------------------|
-| *"What did I write about X?"* (default; finest grain)    | `--type section` (default)                      | B.2 — section content fulltext |
-| *"Find the doc called Y"* / *"the note where I…"*        | `--type document --k 5`                         | B.1 — document title fulltext  |
-| *"Which of my vaults is about X?"* (cross-vault routing) | `--type vault --k 5`                            | B.11 — vault fulltext over `description` |
-| *"What's related to this doc?"* / *"what links to X?"*   | (not wired — see *Capabilities not yet wired*)  | — |
+| User intent                                              | Command                                                | Underlying query |
+|----------------------------------------------------------|--------------------------------------------------------|------------------|
+| *"What did I write about X?"* (cast a wide net)          | `ki search "X"` (default — all three types)            | B.1 + B.2 + B.11 merged by score |
+| *"What did I write about X?"* (finest grain only)        | `ki search "X" --types section`                        | B.2 — section content fulltext |
+| *"Find the doc called Y"* / *"the note where I…"*        | `ki search "Y" --types document --k 5`                 | B.1 — document title fulltext  |
+| *"Which of my vaults is about X?"* (cross-vault routing) | `ki search "X" --types vault --k 5`                    | B.11 — vault fulltext over `description` |
+| *"What's related to this doc?"* / *"what links to X?"*   | (not wired — see *Capabilities not yet wired*)         | — |
 
-Add `--json` for machine-readable output. `--k` is the result limit. `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
+Flag mechanics:
+- `--types` is a comma-separated subset of `{document,section,vault}`. Omit to default to all three. Combine arbitrarily: `--types section,vault`.
+- `--k N` is the **total** result cap across all selected types — not per-type. Each underlying query is run with the same `k`; results are merged, sorted by score, and capped to `N` rows total.
+- `--json` emits a machine-readable list. The list is heterogeneous — each row keeps its native B.1 / B.2 / B.11 shape plus a `label` field (`"Document"` / `"Section"` / `"Vault"`). Key off `label` (or off the `document_uri` / `section_uri` / `vault_uri` field) to identify each row's type.
+- `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
+
+Plain-text output uses the same `T` letter convention as `ki tree`: `V`=Vault, `D`=Document, `S`=Section. The `uri` column carries the load-bearing identifier you can paste into `ki get <uri>` or `ki tree --at <uri>`.
+
+**Cross-type score caveat.** Fulltext scores are not strictly comparable across queries (different term-frequency normalization per set size), so the merged ranking is a heuristic. If a query feels off, re-run with `--types <one>` to see the native ranking for that type alone.
 
 The `--type neighbors` flag (1-hop `LINKS_TO` traversal via B.3) was removed in 0.4.0. To see what a specific doc/section links to, use `ki tree --at "<uri>" --depth 1` — outbound `LINKS_TO` edges render as horizontal branches by default. For backlinks ("what links *to* this?"), there is no CLI surface yet — see [#35](https://github.com/zach-blumenfeld/knowledge-index/issues/35).
 
@@ -141,9 +150,9 @@ To **expand** any inferred URI, run `ki tree --at "<that-uri>" --depth N`. To **
 
 ### Multi-vault routing
 
-When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --type vault`) to pick the right one. There is no CLI flag yet to scope a follow-up `ki search` to that vault ([#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36) tracks `--under`); for now, run the cross-vault search and filter results client-side by `document_uri` prefix matching the chosen vault's URI, or use `ki tree --at "<vault-uri>"` to navigate within the chosen vault.
+When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --types vault`) to pick the right one. There is no CLI flag yet to scope a follow-up `ki search` to that vault ([#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36) tracks `--under`); for now, run the cross-vault search and filter results client-side by `document_uri` prefix matching the chosen vault's URI, or use `ki tree --at "<vault-uri>"` to navigate within the chosen vault.
 
-If a vault has no `description:` set, `ki` emits a warning at index time and on every `ki search --type vault` / `ki vault list` result. Treat that as a prompt to *ask the user* what the vault is for, then write it in one command:
+If a vault has no `description:` set, `ki` emits a warning at index time and on every `ki search --types vault` / `ki vault list` result. Treat that as a prompt to *ask the user* what the vault is for, then write it in one command:
 
 ```bash
 ki index <vault> --description "One or two sentences on what's in this vault and when an agent should pick it."
@@ -197,7 +206,7 @@ Safe to run unattended in agent auto-mode (idempotent, per-user, reversible via 
 
 ## Capabilities not yet wired
 
-The retrieval shapes reachable today are: `ki search --type {section,document,vault}` (B.2 / B.1 / B.11), `ki tree` (B.12 + B.12-links — containment + outbound `LINKS_TO`), and `ki get` (B.4 / B.13 / B.14 — node metadata + reading-order content for a Document or Section URI). If a user asks for something `ki` doesn't currently expose — **backlinks** (#35), **subtree-scoped search** (`--under`, #36), section windowing, shortest path, vector / semantic search, native non-markdown ingest, MCP-bridged chat-app access — **don't pretend you'll run it**.
+The retrieval shapes reachable today are: `ki search` (B.1 + B.2 + B.11 — fulltext across all three node types by default, narrow with `--types`), `ki tree` (B.12 + B.12-links — containment + outbound `LINKS_TO`), and `ki get` (B.4 / B.13 / B.14 — node metadata + reading-order content for a Document or Section URI). If a user asks for something `ki` doesn't currently expose — **backlinks** (#35), **subtree-scoped search** (`--under`, #36), section windowing, shortest path, vector / semantic search, native non-markdown ingest, MCP-bridged chat-app access — **don't pretend you'll run it**.
 
 Instead:
 

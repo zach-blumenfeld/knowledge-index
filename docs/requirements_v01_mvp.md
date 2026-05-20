@@ -89,7 +89,7 @@ ki configure --profile work # add/edit a named profile
 mkdir my-vault              # plain folder, no special tooling
 echo "some ideas" >> my-vault/ideas.md
 ki index ./my-vault         # syncs to Neo4j (idempotent; auto-creates .ki/vault.yaml on first run)
-ki search "..." [flags]     # exposes retrieval queries via flags
+ki search "..." [flags]     # fulltext across {Document,Section,Vault} (B.1+B.2+B.11); --types narrows
 ki tree [--at "<uri>"]      # render the containment hierarchy (Vault → Folder → Doc → Section) — see docs/tree-format.md
 ki get "<uri>" [flags]      # fetch metadata + content at a Doc / Section URI; --type {path,content,full}
 ki rm ./my-vault/notes/idea.md      # remove a document from the index (source file untouched)
@@ -198,7 +198,7 @@ Both option 1 and option 2 shell out to existing tools, parse the resulting cred
 ## Key design decisions
 
 ### Vault identity via marker file
-Vault `uri` is a UUID v4 written to `.ki/vault.yaml` on first ingest (mirrors `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user and machine. This makes `USES_VAULT` load-bearing: multiple users can use the same vault. The same file optionally carries a user-authored `description:` that flows into `Vault.description` on each ingest (latest write wins) and powers `ki search --type vault`.
+Vault `uri` is a UUID v4 written to `.ki/vault.yaml` on first ingest (mirrors `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user and machine. This makes `USES_VAULT` load-bearing: multiple users can use the same vault. The same file optionally carries a user-authored `description:` that flows into `Vault.description` on each ingest (latest write wins) and powers `ki search --types vault`.
 
 ### Node schema: User / Vault / Document / Section
 All non-User nodes identified by `uri` (single-property MERGE key):
@@ -215,7 +215,7 @@ User is *not* in the URI — load provenance lives on the `LOADED` edge.
 Documents, sections, and edges all use the standard `UNWIND` pattern — driver-side batches of 1–5k rows per transaction. `LOADED` provenance props (`agentName`, `agentVersion`, `os`, `hostname`, …) are lifted out of `UNWIND` into a single `$loadProps` map so they aren't duplicated `N`× per row. One `$loadId` UUID is shared between the User→Vault and User→Document `LOADED` edges produced by a single ingest, so a single `loadId` retrieves the full ingest event.
 
 ### Fulltext as v1 retrieval substrate (no embeddings)
-`content_search` fulltext index over `Document|Section|Vault` on `displayName + content + aliases + description`. Vector indexes deferred. Indexing `aliases` lets wikilink alternates ("JFK", "John F Kennedy") hit the same doc; indexing `description` on `:Vault` enables `ki search --type vault` for agent routing across vaults. Neo4j silently skips missing properties per label, so the same index serves all three node types.
+`content_search` fulltext index over `Document|Section|Vault` on `displayName + content + aliases + description`. Vector indexes deferred. Indexing `aliases` lets wikilink alternates ("JFK", "John F Kennedy") hit the same doc; indexing `description` on `:Vault` enables `ki search --types vault` for agent routing across vaults. Neo4j silently skips missing properties per label, so the same index serves all three node types.
 
 ## Scalability
 

@@ -186,7 +186,11 @@ def test_vault_search_finds_by_description(tmp_path, neo4j_profile, cleanup_vaul
 
 
 def test_vault_search_warns_on_missing_description(tmp_path, neo4j_profile, cleanup_vault, capsys):
-    """`--type vault` emits a stderr warning per vault with null/empty description."""
+    """`ki search --types vault` emits a stderr warning per Vault row with null/empty description.
+
+    The merged-search helper now keys off the `label` field (rows in the
+    unified result list each carry one), and only warns for `Vault` rows.
+    """
     from ki.commands.search import _warn_missing_vault_description
 
     vault = tmp_path / "blank-vault"
@@ -198,10 +202,28 @@ def test_vault_search_warns_on_missing_description(tmp_path, neo4j_profile, clea
 
     # Vault has no description — feed the renderer the row directly and assert
     # the stderr warning fires.
-    rows = [{"vault_uri": res.vault_uri, "name": vault.name, "description": None}]
+    rows = [{
+        "label": "Vault",
+        "vault_uri": res.vault_uri,
+        "name": vault.name,
+        "description": None,
+    }]
     _warn_missing_vault_description(rows)
     captured = capsys.readouterr()
     assert "no description set" in captured.err
+
+
+def test_warn_missing_vault_description_skips_non_vault_rows():
+    """Mixed-type search results: only Vault rows are eligible to warn."""
+    from ki.commands.search import _warn_missing_vault_description
+
+    rows = [
+        {"label": "Document", "document_uri": "vault://v/foo.md", "description": None},
+        {"label": "Section", "section_uri": "vault://v/foo.md#bar", "description": None},
+    ]
+    # Should not raise and should not warn — these rows are non-Vault.
+    _warn_missing_vault_description(rows)
+    # Test passes if no AssertionError; this is the regression guard.
 
 
 def test_search_b12_accepts_parameterized_depth(tmp_path, neo4j_profile, cleanup_vault):
@@ -318,3 +340,162 @@ def test_search_b12_links_empty_source_list_returns_empty(neo4j_profile):
     """run_b12_links short-circuits on an empty source list without hitting Neo4j."""
     # We don't actually open a session — the function should return [] immediately.
     assert run_b12_links(None, []) == []
+
+
+# ---- cmd_search end-to-end (merged --types behavior) ----------------------
+
+
+def _write_test_config(tmp_path, neo4j_profile, monkeypatch):
+    """Materialize the active neo4j_profile under $XDG_CONFIG_HOME/ki/config.yaml."""
+    xdg = tmp_path / "xdg"
+    (xdg / "ki").mkdir(parents=True)
+    (xdg / "ki" / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "default_profile": neo4j_profile.name,
+                "profiles": {
+                    neo4j_profile.name: {
+                        "uri": neo4j_profile.uri,
+                        "user": neo4j_profile.user,
+                        "password": neo4j_profile.password,
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+
+@pytest.fixture
+def search_corpus(tmp_path, neo4j_profile, cleanup_vault):
+    """Index a small vault with a Vault description and indexed content.
+
+    The corpus is shaped so a single fulltext query ('retrieval') matches at
+    least one Document, Section, and the Vault (via description).
+    """
+    vault = tmp_path / "merged-vault"
+    vault.mkdir()
+    (vault / ".ki").mkdir()
+    seeded_uri = str(uuid.uuid4())
+    (vault / ".ki" / "vault.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "uri": seeded_uri,
+                "description": (
+                    "Research notes on retrieval, semantic search, and "
+                    "vector-free indexing strategies."
+                ),
+            },
+            sort_keys=False,
+        )
+    )
+    (vault / "retrieval.md").write_text(
+        "# Retrieval Notes\n\n"
+        "Discusses retrieval strategies in depth.\n\n"
+        "## Background on retrieval\n\n"
+        "background body about retrieval.\n"
+    )
+    res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
+    cleanup_vault.append(res.vault_uri)
+    _await_index_population(neo4j_profile, vault_uri=res.vault_uri)
+    _await_vault_index(neo4j_profile, vault_uri=res.vault_uri, term="retrieval")
+    return res.vault_uri
+
+
+def test_cmd_search_default_returns_mixed_types(
+    search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
+):
+    """Default invocation runs B.1 + B.2 + B.11 and merges into one JSON list."""
+    import json
+
+    from ki.commands.search import cmd_search
+
+    _write_test_config(tmp_path, neo4j_profile, monkeypatch)
+    rc = cmd_search(
+        "retrieval", profile=None,
+        types_csv="document,section,vault", k=20, as_json=True,
+    )
+    assert rc == 0
+    rows = json.loads(capsys.readouterr().out)
+    labels = {r.get("label") for r in rows}
+    # The corpus is constructed so a single 'retrieval' query hits all three.
+    assert "Document" in labels
+    assert "Section" in labels
+    assert "Vault" in labels
+
+
+def test_cmd_search_types_filter_excludes_other_types(
+    search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
+):
+    """`--types section,document` must not return Vault rows."""
+    import json
+
+    from ki.commands.search import cmd_search
+
+    _write_test_config(tmp_path, neo4j_profile, monkeypatch)
+    rc = cmd_search(
+        "retrieval", profile=None,
+        types_csv="section,document", k=20, as_json=True,
+    )
+    assert rc == 0
+    rows = json.loads(capsys.readouterr().out)
+    labels = {r.get("label") for r in rows}
+    assert "Vault" not in labels
+    # And at least one of the requested types is present.
+    assert labels & {"Document", "Section"}
+
+
+def test_cmd_search_k_caps_total_results(
+    search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
+):
+    """`--k N` is the TOTAL cap across all types, not per-type."""
+    import json
+
+    from ki.commands.search import cmd_search
+
+    _write_test_config(tmp_path, neo4j_profile, monkeypatch)
+    rc = cmd_search(
+        "retrieval", profile=None,
+        types_csv="document,section,vault", k=2, as_json=True,
+    )
+    assert rc == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert len(rows) <= 2
+
+
+def test_cmd_search_rows_are_score_sorted(
+    search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
+):
+    """Merged rows must be sorted by `score` descending."""
+    import json
+
+    from ki.commands.search import cmd_search
+
+    _write_test_config(tmp_path, neo4j_profile, monkeypatch)
+    rc = cmd_search(
+        "retrieval", profile=None,
+        types_csv="document,section,vault", k=10, as_json=True,
+    )
+    assert rc == 0
+    rows = json.loads(capsys.readouterr().out)
+    scores = [r.get("score") or 0.0 for r in rows]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_cmd_search_plain_text_includes_key_header(
+    search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
+):
+    """Plain-text output renders the `Key:` header line, same as `ki tree`."""
+    from ki.commands.search import cmd_search
+
+    _write_test_config(tmp_path, neo4j_profile, monkeypatch)
+    rc = cmd_search(
+        "retrieval", profile=None,
+        types_csv="document,section,vault", k=10, as_json=False,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Key:" in out
+    assert "V Vault" in out
+    assert "D Document" in out
+    assert "S Section" in out

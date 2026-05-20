@@ -3,7 +3,7 @@
 User-visible commands:
   ki configure              one-time Neo4j connection setup
   ki index <path>           sync a folder of markdown into the graph
-  ki search <query>         retrieve via fulltext + graph (B.1 / B.2 / B.3 / B.11)
+  ki search <query>         fulltext across {Document,Section,Vault} (B.1 / B.2 / B.11)
   ki tree                   render the containment tree (B.12)
   ki get <uri> ...          fetch metadata + content for a Document / Section URI
   ki rm <path>              remove a doc / subtree / vault from the index
@@ -114,21 +114,29 @@ def index_cmd(
     )
 
 
-@main.command("search", help="Search the index. Default --type section (B.2).")
+@main.command(
+    "search",
+    help="Fulltext search across documents, sections, and vaults. "
+         "By default returns all three types; narrow with --types.",
+)
 @click.argument("query")
 @click.option("--profile", default=None)
 @click.option(
-    "--type", "search_type",
-    type=click.Choice(["section", "document", "vault"]),
-    default="section",
-    help="section=B.2, document=B.1, vault=B.11",
+    "--types", "types_csv",
+    default="document,section,vault",
+    show_default=True,
+    help="Comma-separated subset of {document,section,vault}. "
+         "Default: all three. Examples: --types section / --types section,document.",
 )
-@click.option("--k", "k", type=int, default=10, help="result limit")
+@click.option(
+    "--k", "k", type=int, default=10,
+    help="Total result cap across all selected types (default: 10).",
+)
 @click.option("--json", "as_json", is_flag=True, default=False)
 def search_cmd(
     query: str,
     profile: str | None,
-    search_type: str,
+    types_csv: str,
     k: int,
     as_json: bool,
 ) -> None:
@@ -136,7 +144,7 @@ def search_cmd(
         cmd_search(
             query,
             profile=profile,
-            search_type=search_type,
+            types_csv=types_csv,
             k=k,
             as_json=as_json,
         )
