@@ -213,3 +213,78 @@ def run_b12_links(session, source_uris: list[str]) -> list[dict]:
         return []
     res = session.run(B12_LINKS, parameters={"source_uris": list(source_uris)})
     return [dict(r) for r in res]
+
+
+# B.4 — Document text in reading order. Used by `ki get --type full` on
+# a `:Document` URI. Walks the NEXT_SECTION chain from the doc's first
+# section to its last; defensive `(start)-[:HAS*]->(section)` keeps the
+# walk inside this document.
+B4_DOCUMENT_TEXT = """
+MATCH (start:Document {uri: $uri})-[:HAS]->(first:Section)
+WHERE NOT (:Section)-[:NEXT_SECTION]->(first)
+MATCH path = (first)-[:NEXT_SECTION*0..]->(section:Section)
+WHERE (start)-[:HAS*]->(section)
+RETURN section.uri AS section_uri,
+       section.displayName AS heading,
+       section.headingLevel AS heading_level,
+       section.content AS content,
+       length(path) AS reading_order
+ORDER BY reading_order
+""".strip()
+
+
+# B.13 — Node lookup. `ki get`'s metadata reader. Returns `label` plus
+# the node's property bag — naming label-optional properties (frontmatter,
+# aliases, ...) directly in Cypher would trigger Neo4j's `01N52`
+# "property does not exist" notification on small vaults where no node
+# has ever been written with that key. `properties(n)` returns only the
+# keys that actually exist on the node. The Python wrapper flattens
+# `props` into the top level so callers see `row["frontmatter"]` /
+# `row.get("frontmatter")` exactly as before.
+B13_NODE_LOOKUP = """
+MATCH (n {uri: $uri})
+RETURN labels(n)[0] AS label, properties(n) AS props
+""".strip()
+
+
+# B.14 — Section text with subtree. Used by `ki get --type full` on a
+# `:Section` URI. Walks NEXT_SECTION from the start section, bounded to
+# the subtree under start via `start = s OR (start)-[:HAS*]->(s)`.
+B14_SECTION_SUBTREE = """
+MATCH (start:Section {uri: $uri})
+MATCH path = (start)-[:NEXT_SECTION*0..]->(s:Section)
+WHERE start = s OR (start)-[:HAS*]->(s)
+RETURN s.uri          AS section_uri,
+       s.displayName  AS heading,
+       s.headingLevel AS heading_level,
+       s.content      AS content,
+       length(path)   AS reading_order
+ORDER BY reading_order
+""".strip()
+
+
+def run_b4(session, doc_uri: str) -> list[dict]:
+    res = session.run(B4_DOCUMENT_TEXT, parameters={"uri": doc_uri})
+    return [dict(r) for r in res]
+
+
+def run_b13(session, uri: str) -> dict | None:
+    """Single-row node lookup.
+
+    Flattens the Cypher `{label, props}` shape into a single dict so
+    callers see `row["uri"]`, `row.get("frontmatter")`, etc. — same
+    interface as if the columns had been named explicitly. Returns None
+    if the URI doesn't resolve.
+    """
+    res = session.run(B13_NODE_LOOKUP, parameters={"uri": uri})
+    rows = [dict(r) for r in res]
+    if not rows:
+        return None
+    row = rows[0]
+    props = row.get("props") or {}
+    return {**props, "label": row.get("label")}
+
+
+def run_b14(session, section_uri: str) -> list[dict]:
+    res = session.run(B14_SECTION_SUBTREE, parameters={"uri": section_uri})
+    return [dict(r) for r in res]

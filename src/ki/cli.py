@@ -5,6 +5,7 @@ User-visible commands:
   ki index <path>           sync a folder of markdown into the graph
   ki search <query>         retrieve via fulltext + graph (B.1 / B.2 / B.3 / B.11)
   ki tree                   render the containment tree (B.12)
+  ki get <uri> ...          fetch metadata + content for a Document / Section URI
   ki rm <path>              remove a doc / subtree / vault from the index
   ki vault list             list every indexed vault with its description
   ki init <path>            (advanced) write `.ki/vault.yaml` without indexing
@@ -20,6 +21,7 @@ import click
 
 from . import __version__
 from .commands.configure import configure as configure_flow
+from .commands.get import cmd_get
 from .commands.index import cmd_index
 from .commands.init import cmd_init
 from .commands.rm import cmd_rm
@@ -163,6 +165,38 @@ def search_cmd(
 )
 def tree_cmd(profile: str | None, at: str | None, depth: int, full: bool) -> None:
     sys.exit(cmd_tree(profile=profile, at=at, depth=depth, full=full))
+
+
+@main.command(
+    "get",
+    help="Fetch metadata + content at a Document / Section URI. "
+         "Use `ki tree` / `ki search` to find URIs first.",
+)
+@click.argument("uris", nargs=-1, required=True)
+@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+@click.option(
+    "--type", "get_type",
+    type=click.Choice(["path", "content", "full"]),
+    default="content",
+    help="path = metadata shell only; content = node's stored content "
+         "(preamble + child URI pointers per Rule 1); full = reconstructed "
+         "reading-order body via B.4 / B.14.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False)
+def get_cmd(
+    uris: tuple[str, ...],
+    profile: str | None,
+    get_type: str,
+    as_json: bool,
+) -> None:
+    sys.exit(
+        cmd_get(
+            uris,
+            profile=profile,
+            get_type=get_type,
+            as_json=as_json,
+        )
+    )
 
 
 @main.command("rm", help="Remove a document / subtree / vault from the index.")

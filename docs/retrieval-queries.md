@@ -61,6 +61,10 @@ The same idea works for any of B.1 / B.2 / B.11 (with `:Vault`-scope `folder_uri
   - **B.12** walks `:HAS` from `$root_uri` up to `$depth` steps, depth-capped via a quantified path pattern (`{1,$depth}`) so the bound prunes during traversal rather than as a post-filter (same trick as B.3). Returns one row per node — root + HAS descendants — in the wire format defined by `docs/tree-format.md` *Wire record format*: `{depth, inrel, label, name, displayName, uri, parent_uri, sort_pos}`. Sections carry `sort_pos` (NEXT_SECTION position in their parent document) so the renderer can order sibling sections by reading order, not alphabetically. When `$root_uri` is `null` / absent, B.12 matches every `:Vault` as a root and fans out — the renderer treats them as a multi-root sibling group at `parent_uri = null`, sorted alphabetically by `name`. Multi-user scoping via `:USES_VAULT` is a follow-up; single-user makes "all vaults" unambiguous today.
   - **B.12-links** is the LINKS_TO sub-pass: given a list of D/S URIs (`$source_uris`), returns their outbound `:LINKS_TO` edges. The renderer combines B.12 + B.12-links output, groups by `parent_uri`, sorts per the rules in `docs/tree-format.md` *Sibling ordering*, and DFS-emits.
   - Splitting hierarchy and LINKS_TO into two queries keeps each small. The cost is one extra round trip, paid every `ki tree` invocation.
+- **B.13 / B.14 `ki get`** — fetch a node's metadata and content by URI. Two queries:
+  - **B.13** is a single-node lookup that returns the union of properties across `:Document` and `:Section` (Neo4j returns `null` for missing properties, so one query covers both). The dispatcher in `src/ki/commands/get.py` keys off `label` to pick the relevant subset for output. `ki get` rejects `:Folder` and `:Vault` URIs with a hint pointing at `ki tree` / `ki vault list` — text retrieval isn't what those nodes represent. B.13 is the metadata "shell" returned for every `ki get` row regardless of `--type`.
+  - **B.14** is the section-subtree reconstruction used only when `--type full` is applied to a `:Section` URI. Walks the same `NEXT_SECTION` chain B.4 walks, but bounded to the subtree under the start section via `start = s OR (start)-[:HAS*]->(s)`. For `--type full` on a `:Document` URI the dispatcher calls **B.4** directly (the existing document-text query) plus a separate read of `Document.content` for the preamble.
+  - Lift convention: B.4 / B.13 / B.14 are all lifted into `src/ki/search/queries.py` as constants per the AGENTS.md rule that Cypher source-of-truth lives under `docs/`.
 
 
 B.1 Document title fulltext search
@@ -443,4 +447,56 @@ RETURN src.uri                              AS parent_uri,
        tgt.displayName                      AS displayName,
        tgt.uri                              AS uri
 ORDER BY parent_uri, uri
+```
+
+B.13 Node lookup (any URI, label-aware metadata)
+```cypher
+// New in v0.4.0. `ki get`'s metadata reader. Returns the node's label
+// plus all of its properties in a single bag — the dispatcher in
+// `src/ki/commands/get.py` picks the label-relevant subset client-side.
+//
+// `:Folder` and `:Vault` URIs also match this query — the dispatcher
+// surfaces them with an error pointing at `ki tree` / `ki vault list`.
+// Returning `label` lets the dispatcher reject Folder/Vault cleanly
+// without a second round trip.
+//
+// Why `properties(n)` instead of naming columns: per-label optional
+// properties (`Document.frontmatter`, `Document.aliases`, ...) trigger a
+// `01N52` "property does not exist" notification when the DB has no
+// node that's ever been written with that key — common on small vaults
+// with no custom frontmatter. `properties(n)` returns only the keys
+// that actually exist on the node, so no spurious warnings. The shape
+// client-side is unchanged: `row.get("frontmatter")` returns the value
+// or `None` exactly as before.
+//
+// The `content` field (per Content Construction Rule 1: preamble + URI
+// pointers to direct children) is what `ki get --type content` emits
+// as-is. `--type path` drops it; `--type full` replaces it with a
+// reconstructed reading-order body via B.4 (Document) or B.14 (Section).
+MATCH (n {uri: $uri})
+RETURN labels(n)[0] AS label, properties(n) AS props
+```
+
+B.14 Section text with subtree
+```cypher
+// New in v0.4.0. Section-side analog of B.4. Used by `ki get --type full`
+// when the URI resolves to a `:Section`. Walks the document's NEXT_SECTION
+// chain starting from the given section, bounded to the subtree under
+// `start` via `start = s OR (start)-[:HAS*]->(s)`. The NEXT_SECTION walk
+// may continue past the subtree before the WHERE filter prunes — that's
+// OK, bounded by doc section count and resolved in a single query.
+//
+// Why this instead of just B.4 on the owning Document: an H1 with deep
+// H2/H3 children should return just that subtree, not the whole doc.
+// `ki get <h2-uri> --type full` returns the H2's body + its H3
+// descendants in reading order, nothing else.
+MATCH (start:Section {uri: $uri})
+MATCH path = (start)-[:NEXT_SECTION*0..]->(s:Section)
+WHERE start = s OR (start)-[:HAS*]->(s)
+RETURN s.uri          AS section_uri,
+       s.displayName  AS heading,
+       s.headingLevel AS heading_level,
+       s.content      AS content,
+       length(path)   AS reading_order
+ORDER BY reading_order
 ```

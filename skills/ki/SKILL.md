@@ -52,6 +52,7 @@ ki configure                     # one-time per machine: writes ~/.config/ki/con
 ki index ./path/to/vault         # sync a folder into the graph (idempotent; auto-creates the vault marker)
 ki search "query" [flags]        # retrieve via fulltext
 ki tree [--at "<Label>:<uri>"]   # render the containment tree (B.12) — see "When to invoke ki tree"
+ki get "<uri>" [flags]           # fetch metadata + content at a Doc / Section URI — see "When to invoke ki get"
 ki vault list                    # show every indexed vault with its description (routing hint)
 ki rm ./path/to/file.md          # remove a document from the index (source file untouched)
 ki rm ./path/to/vault --vault    # remove a whole vault from the index (source files untouched)
@@ -93,9 +94,36 @@ ki tree --full                         # also show vault description sub-lines
 
 **Row order is meaningful.** Folders and Documents under a parent are alphabetical by `name`. Sections under a Document or another Section are in **reading order** (NEXT_SECTION), not alphabetical — the first child section is the one that appears first in the source file. `LINKS_TO` siblings are alphabetical by target URI. See `docs/tree-format.md` *Sibling ordering*.
 
+### When to invoke `ki get`
+
+`ki get` is the **content fetch** step in the canonical chain `ki search` / `ki tree` → URI → `ki get`. Once you have a URI for a Document or Section, `ki get` returns its metadata + (optionally) its content.
+
+```bash
+ki get "<uri>"                          # default --type content
+ki get "<uri>" --type path              # metadata only — read the file via `path`
+ki get "<uri>" --type content           # node's stored content (preamble + child URI pointers per Rule 1)
+ki get "<uri>" --type full              # reconstructed reading-order body (B.4 for Documents, B.14 for Sections)
+ki get "<uri-a>" "<uri-b>" "<uri-c>"    # batch — multiple URIs in one invocation
+ki get "<uri>" --json                   # machine-readable; always includes `path` (from #40)
+```
+
+**Pick `--type` by intent:**
+
+| You want                                                              | Flag                 |
+|-----------------------------------------------------------------------|----------------------|
+| Just the metadata so you can `Read` the file yourself                 | `--type path`        |
+| The node's own content + URI handles to drill into children           | `--type content` (default) |
+| The reconstructed full reading-order body in one call                 | `--type full`        |
+
+`--type content` returns the node's stored `content` field. Per Content Construction Rule 1, that's the *preamble text directly under this node's heading* followed by `uri:` references to direct children — child body text is **not** inlined. Drill into a child URI with another `ki get`, or escalate to `--type full` to get the whole subtree in one query.
+
+`--type full` does a single bounded Cypher walk (no client-side recursion) — cheap even on long documents. Use it when you actually want the bytes back without a second round trip.
+
+**`ki get` only accepts `:Document` and `:Section` URIs.** Passing a `:Folder` URI errors and points at `ki tree --at <uri>` (enumeration is what folders are for). Passing a `:Vault` URI errors and points at `ki vault list` / `ki tree --at <uri>`. Passing an unknown URI errors and cites the URI verbatim.
+
 ### Walking the URI schema
 
-`ki` URIs encode the containment hierarchy as a path. `ki tree`'s URI column shows the **full URI** for every row — no shorthand — so you can copy a URI directly out of the tree and feed it straight back into `ki tree --at <uri>` (or `ki get <uri>` once that lands).
+`ki` URIs encode the containment hierarchy as a path. `ki tree`'s URI column shows the **full URI** for every row — no shorthand — so you can copy a URI directly out of the tree and feed it straight back into `ki tree --at <uri>` or `ki get <uri>`.
 
 You can also derive **ancestor** URIs by trimming, without any "go up" query:
 
@@ -169,7 +197,7 @@ Safe to run unattended in agent auto-mode (idempotent, per-user, reversible via 
 
 ## Capabilities not yet wired
 
-The retrieval shapes reachable today are: `ki search --type {section,document,vault}` (B.2 / B.1 / B.11) and `ki tree` (B.12 + B.12-links — containment + outbound `LINKS_TO`). If a user asks for something `ki` doesn't currently expose — **backlinks** (#35), **subtree-scoped search** (`--under`, #36), full-document text in reading order, section windowing, shortest path, vector / semantic search, native non-markdown ingest, MCP-bridged chat-app access — **don't pretend you'll run it**.
+The retrieval shapes reachable today are: `ki search --type {section,document,vault}` (B.2 / B.1 / B.11), `ki tree` (B.12 + B.12-links — containment + outbound `LINKS_TO`), and `ki get` (B.4 / B.13 / B.14 — node metadata + reading-order content for a Document or Section URI). If a user asks for something `ki` doesn't currently expose — **backlinks** (#35), **subtree-scoped search** (`--under`, #36), section windowing, shortest path, vector / semantic search, native non-markdown ingest, MCP-bridged chat-app access — **don't pretend you'll run it**.
 
 Instead:
 
