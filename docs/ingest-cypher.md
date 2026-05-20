@@ -1,14 +1,17 @@
 ### 4.3 MERGE key strategy
 
-All `Vault`, `Document`, and `Section` nodes MERGE on `uri`:
+All `Vault`, `Folder`, `Document`, and `Section` nodes MERGE on `uri`:
 
 - `Vault.uri`    = UUID v4 from the `.ki/vault.yaml` marker file in the vault root.
+- `Folder.uri`   = `<vaultId>/<slugified directory path within vault>` (no trailing `/`).
 - `Document.uri` = `<vaultId>/<file path within vault>` (slugified).
 - `Section.uri`  = `<vaultId>/<file path within vault>#<slugified heading path>`.
 
+The `Folder` URI scheme is a strict *prefix* of any `Document` URI living under it (after slugification of each path segment), which is what makes `STARTS WITH`-based subtree queries cheap.
+
 `User` nodes MERGE on the system-provided `id`.
 
-`LOADED` relationships can be parallel (one per ingest) and so require a relationship-level MERGE key: a system-generated UUID stored as `loadId`. All other relationships (`USES_VAULT`, `HAS_DOCUMENT`, `HAS_SECTION`, `LINKS_TO`) are non-parallel and MERGE on the endpoint pair alone.
+`LOADED` relationships can be parallel (one per ingest) and so require a relationship-level MERGE key: a system-generated UUID stored as `loadId`. All other relationships (`USES_VAULT`, `HAS`, `LINKS_TO`) are non-parallel and MERGE on the endpoint pair alone.
 
 **Vault marker file.** On first ingest of a folder, the writer reads `.ki/vault.yaml`. If present, its `uri:` field is the vault identity. If absent, a fresh UUID is generated and a minimal `vault.yaml` containing just `uri:` is written to the marker. Treating the marker as authoritative means a folder synced across machines (Dropbox, iCloud, git) resolves to the same `:Vault` node across users and machines, and `USES_VAULT` becomes load-bearing (multiple users can `USES_VAULT` the same vault). Identity is independent of user and machine; only `Vault.path` is machine-scoped.
 
@@ -47,10 +50,10 @@ Run after the per-vault-ingest write. All document/section/relationship writes f
 
 Each `row` is a plain dict. `row.props` is the mutable property bag fed into `SET n += row.props`; create-only fields are split out into `row.createOnly` so they're only applied on `ON CREATE`.
 
-**Write order matters:** documents and sections first (so their `uri`s exist as MATCH targets), then `HAS_SECTION` (tree edges), then `NEXT_SECTION` (linear reading-order chain — cleared and rebuilt each ingest), then User→Document `LOADED` provenance edges, then `LINKS_TO` (so cross-document wikilink targets resolve), and finally the wikilink-display-text → target `aliases` aggregation (step 7), which depends on the vault-wide set of `LINKS_TO` display texts already being gathered client-side.
+**Write order matters:** documents, folders, and sections first (so their `uri`s exist as MATCH targets), then folder/doc tree `HAS` edges (step 1c), then section tree `HAS` edges (step 3), then `NEXT_SECTION` (linear reading-order chain — cleared and rebuilt each ingest), then User→Document `LOADED` provenance edges, then `LINKS_TO` (so cross-document wikilink targets resolve), and finally the wikilink-display-text → target `aliases` aggregation (step 7), which depends on the vault-wide set of `LINKS_TO` display texts already being gathered client-side.
 
 ```cypher
-// 1. Documents — batched upsert.
+// 1. Documents — batched node upsert (no parent edge yet — see step 1c).
 // $documentRows: list of { uri, createOnly, props } where
 //   createOnly = { frontmatterCreatedAt }   // first-write-wins fields
 //   props      = { name, displayName, aliases, fileHash, frontmatter,
@@ -61,13 +64,54 @@ ON CREATE SET d += row.createOnly,
               d.firstLoadedAt = $now
 SET d += row.props,
     d.lastLoadedAt = $now
-WITH d
-MATCH (v:Vault {uri: $vaultUri})
-MERGE (v)-[:HAS_DOCUMENT]->(d)
 ```
 
 ```cypher
-// 2. Sections — batched upsert.
+// 1b. Folders — batched node upsert (nodes only, no edges yet).
+//
+// The writer computes the set of distinct directory paths across all indexed
+// documents and ships one row per Folder. Folder MERGE is on `uri` (= the
+// slugified directory path under `$vaultId`); nodes are created on first
+// sight and touched on every ingest.
+//
+// $folderRows: list of { uri, props } where
+//   props = { name, displayName }
+UNWIND $folderRows AS row
+MERGE (f:Folder {uri: row.uri})
+ON CREATE SET f += row.props,
+              f.firstSeenAt = $now
+SET f.lastSeenAt = $now
+```
+
+```cypher
+// 1c. HAS — batched edges for the vault/folder/document tree.
+//
+// Single edge type for all containment (see `docs/data-model.md` §4.2 *Why
+// one relationship type instead of three*). One UNWIND covers every parent
+// → child relationship in the folder/doc layer:
+//
+//    Vault   -[:HAS]-> Folder      (top-level folder)
+//    Vault   -[:HAS]-> Document    (root-level document, no enclosing folder)
+//    Folder  -[:HAS]-> Folder      (nested subdirectory)
+//    Folder  -[:HAS]-> Document    (document under that folder)
+//
+// Each child gets exactly one incoming HAS edge — the writer picks the
+// immediate parent (Vault for root-level children, the containing Folder
+// otherwise) and emits one row per child. Parent and child labels are
+// resolved by URI lookup; the WHERE filter on labels keeps the query
+// honest about what shapes are legal.
+//
+// $treeEdgeRows: list of { parentUri, childUri }
+UNWIND $treeEdgeRows AS row
+MATCH (parent {uri: row.parentUri})
+WHERE parent:Vault OR parent:Folder
+MATCH (child {uri: row.childUri})
+WHERE child:Folder OR child:Document
+MERGE (parent)-[:HAS]->(child)
+```
+
+```cypher
+// 2. Sections — batched node upsert (no parent edge yet — see step 3).
 // $sectionRows: list of { uri, props } where
 //   props = { name, displayName, headingLevel, content }
 UNWIND $sectionRows AS row
@@ -78,15 +122,19 @@ SET s += row.props,
 ```
 
 ```cypher
-// 3. HAS_SECTION — batched edges from (Document|Section) parent to Section child.
-// $hasSectionRows: list of { parentUri, childUri }
-// Parent label is resolved by URI; both Document and Section URIs live in the
-// same uniqueness namespace, so a plain MATCH on {uri} is sufficient.
-UNWIND $hasSectionRows AS row
+// 3. HAS — batched edges for the section tree (Document|Section → Section).
+//
+// Same relationship type as step 1c — `HAS` is the universal containment
+// edge across the whole hierarchy. Kept in its own step (separate from 1c)
+// because section trees are *per-document* and constructed alongside section
+// node writes; folder trees are *per-vault* and constructed once.
+//
+// $sectionEdgeRows: list of { parentUri, childUri }
+UNWIND $sectionEdgeRows AS row
 MATCH (parent {uri: row.parentUri})
 WHERE parent:Document OR parent:Section
 MATCH (child:Section {uri: row.childUri})
-MERGE (parent)-[:HAS_SECTION]->(child)
+MERGE (parent)-[:HAS]->(child)
 ```
 
 ```cypher
@@ -208,6 +256,9 @@ CREATE CONSTRAINT document_uri_unique IF NOT EXISTS
 CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
   FOR (s:Section) REQUIRE s.uri IS UNIQUE;
 
+CREATE CONSTRAINT folder_uri_unique IF NOT EXISTS
+  FOR (f:Folder) REQUIRE f.uri IS UNIQUE;
+
 // LOADED uniqueness is handled by MERGE semantics on the `loadId` property
 // between two already-unique endpoints — no explicit relationship-key constraint
 // is required (and relationship-key constraints are Enterprise-only / unavailable
@@ -223,6 +274,11 @@ CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
 // per label, so `:Document` / `:Section` rows simply have no `description`
 // and `:Vault` rows have no `content` / `aliases`. `ki search` filters by
 // label in the query (B.1 → `:Document`, B.2 → `:Section`, B.11 → `:Vault`).
+//
+// `:Folder` is deliberately **not** included — folders carry no `content`,
+// `aliases`, or `description` (see `docs/data-model.md` §Folder). They're a
+// navigation surface, not a retrieval surface. `ki tree` and `--under`
+// scoping use graph traversal (HAS edges), not fulltext.
 // The mapper writes `content` with `uri:` child-pointer lines appended, which
 // add some junk tokens to the index; if recall suffers, switch to a sanitised
 // `contentForIndex` copy that strips those pointer lines.

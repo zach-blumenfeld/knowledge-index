@@ -13,7 +13,7 @@ Invoke `ki` when a user asks to:
 - build a knowledge base around a topic
 - incorporate a folder of notes / vault / documents into durable memory
 - search or recall information they've saved
-- find connections / backlinks / related notes across their writing
+- find connections / related notes across their writing (outbound `LINKS_TO` is wired; backlinks are not — see #35)
 - get full text or sibling context for a section in their notes
 
 Example user prompts that should route here:
@@ -41,7 +41,7 @@ The agent does the conversion; `ki` does not. This is by design — `ki` is an i
 - The user wants to **modify their source files** (rename, rewrite, reorganize). `ki` never mutates sources. Use a separate file-editing flow.
 - The content is not markdown **and** the user doesn't want it converted (see *PREPARE when* for the conversion path).
 
-Note: `ki` is **cross-vault by default**, and today that's the *only* mode — `ki search` runs across every vault indexed to the same Neo4j with no CLI-side scoping flag (a `--under <vault|folder|doc|section>` flag is proposed in [#17](https://github.com/zach-blumenfeld/knowledge-index/issues/17)). Don't skip `ki` because the request spans multiple folders / projects / vaults — that's the case it's *built for*. To narrow to a specific vault today, search cross-vault and filter the results client-side by `document_uri` prefix.
+Note: `ki search` is **cross-vault by default**, and today that's the *only* mode — it runs across every vault indexed to the same Neo4j with no CLI-side scoping flag (a `--under <vault|folder|doc|section>` flag is tracked in [#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36)). Don't skip `ki` because the request spans multiple folders / projects / vaults — that's the case it's *built for*. To narrow to a specific vault today, search cross-vault and filter the results client-side by `document_uri` prefix, or use `ki tree --at "<vault-uri>"` to navigate within a single vault's structure.
 
 ## How to invoke
 
@@ -50,7 +50,8 @@ The commands you'll actually use:
 ```bash
 ki configure                     # one-time per machine: writes ~/.config/ki/config.yaml
 ki index ./path/to/vault         # sync a folder into the graph (idempotent; auto-creates the vault marker)
-ki search "query" [flags]        # retrieve via fulltext + graph traversal
+ki search "query" [flags]        # retrieve via fulltext
+ki tree [--at "<Label>:<uri>"]   # render the containment tree (B.12) — see "When to invoke ki tree"
 ki vault list                    # show every indexed vault with its description (routing hint)
 ki rm ./path/to/file.md          # remove a document from the index (source file untouched)
 ki rm ./path/to/vault --vault    # remove a whole vault from the index (source files untouched)
@@ -66,12 +67,53 @@ Also available: `ki init <path>` (advanced: write the vault marker without index
 |----------------------------------------------------------|-------------------------------------------------|------------------|
 | *"What did I write about X?"* (default; finest grain)    | `--type section` (default)                      | B.2 — section content fulltext |
 | *"Find the doc called Y"* / *"the note where I…"*        | `--type document --k 5`                         | B.1 — document title fulltext  |
-| *"What's related to this doc?"*                          | `--type neighbors --doc-uri <uri> --k 2`        | B.3 — 1-hop `LINKS_TO` neighbourhood |
 | *"Which of my vaults is about X?"* (cross-vault routing) | `--type vault --k 5`                            | B.11 — vault fulltext over `description` |
+| *"What's related to this doc?"* / *"what links to X?"*   | (not wired — see *Capabilities not yet wired*)  | — |
 
-Add `--json` for machine-readable output. `--k` is the result limit (or hop depth for `neighbors`). `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
+Add `--json` for machine-readable output. `--k` is the result limit. `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
 
-**Multi-vault routing.** When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --type vault`) to pick the right one. There is no CLI flag yet to scope a follow-up `ki search` to that vault ([#17](https://github.com/zach-blumenfeld/knowledge-index/issues/17) tracks `--under`); for now, run the cross-vault search and filter results client-side by `document_uri` prefix matching the chosen vault's URI.
+The `--type neighbors` flag (1-hop `LINKS_TO` traversal via B.3) was removed in 0.4.0. To see what a specific doc/section links to, use `ki tree --at "<uri>" --depth 1` — outbound `LINKS_TO` edges render as horizontal branches by default. For backlinks ("what links *to* this?"), there is no CLI surface yet — see [#35](https://github.com/zach-blumenfeld/knowledge-index/issues/35).
+
+### When to invoke `ki tree`
+
+`ki tree` renders the containment hierarchy (Vault → Folder → Document → Section) plus outbound `LINKS_TO` edges, as a table-of-contents-style terminal output. See `docs/tree-format.md` for the exact format.
+
+Use `ki tree` when:
+- **Search is returning weak results** and you want to see what's actually in the vault. The order to escalate: `ki search` → `ki search` with query-expansion alternates → `ki tree`. The tree shows you what docs / headings exist so you can re-search with better terms.
+- **You need to understand the vault's structure** before navigating (e.g. *"summarize what's in this vault"*, *"is there a folder for X?"*).
+- **You want to see what a doc/section links to.** `ki tree --at "<uri>" --depth 1` surfaces outbound `LINKS_TO` from that node as horizontal branches.
+
+```bash
+ki tree                                # render every indexed vault, depth 4
+ki tree --at "vault://<uuid>"          # render one specific vault
+ki tree --at "Vault:vault://<uuid>"    # same, with the Label: prefix (issue convention)
+ki tree --at "<doc-uri>" --depth 2     # render a doc and its section subtree
+ki tree --full                         # also show vault description sub-lines
+```
+
+**Row order is meaningful.** Folders and Documents under a parent are alphabetical by `name`. Sections under a Document or another Section are in **reading order** (NEXT_SECTION), not alphabetical — the first child section is the one that appears first in the source file. `LINKS_TO` siblings are alphabetical by target URI. See `docs/tree-format.md` *Sibling ordering*.
+
+### Walking the URI schema
+
+`ki` URIs encode the containment hierarchy as a path. `ki tree`'s URI column shows the **full URI** for every row — no shorthand — so you can copy a URI directly out of the tree and feed it straight back into `ki tree --at <uri>` (or `ki get <uri>` once that lands).
+
+You can also derive **ancestor** URIs by trimming, without any "go up" query:
+
+| URI shape                                                                                                  | Trim to get parent                                                          |
+|------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| `<uuid>/projects/foo.md#h1-slug/h2-slug` (nested section)                                                  | Trim `/h2-slug` → `<uuid>/projects/foo.md#h1-slug` (the parent Section).    |
+| `<uuid>/projects/foo.md#some-heading` (top-level section)                                                  | Trim `#some-heading` → `<uuid>/projects/foo.md` (the owning Doc).           |
+| `<uuid>/projects/foo.md`                                                                                   | Trim `/foo.md` → `<uuid>/projects` (the parent Folder).                     |
+| `<uuid>/projects`                                                                                          | Trim `/projects` → `<uuid>` (the Vault root, just the UUID).                |
+| `<uuid>`                                                                                                   | No further trim — Vault is the top. (`User` is not surfaced in URIs.)       |
+
+Section URI fragments encode the **full heading path** (`<h1-slug>/<h2-slug>/...`), so trimming the last `/<segment>` of the fragment gives the parent section's URI — and trimming the whole `#...` gives the owning Doc.
+
+To **expand** any inferred URI, run `ki tree --at "<that-uri>" --depth N`. To **search within** a subtree, [#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36) tracks the `--under` scoping flag; until it ships, search cross-vault and filter results by URI prefix.
+
+### Multi-vault routing
+
+When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --type vault`) to pick the right one. There is no CLI flag yet to scope a follow-up `ki search` to that vault ([#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36) tracks `--under`); for now, run the cross-vault search and filter results client-side by `document_uri` prefix matching the chosen vault's URI, or use `ki tree --at "<vault-uri>"` to navigate within the chosen vault.
 
 If a vault has no `description:` set, `ki` emits a warning at index time and on every `ki search --type vault` / `ki vault list` result. Treat that as a prompt to *ask the user* what the vault is for, then write it in one command:
 
@@ -87,7 +129,7 @@ description: |
   ...
 ```
 
-(Once #17's `ki tree` lands, agents will also be able to infer a description from the doc tree — until then, asking the user is the path.)
+(If asking the user isn't possible, `ki tree --at "<vault-uri>"` lets you skim the vault's structure and propose a description for confirmation.)
 
 ### Query expansion for semantic equivalence
 
@@ -127,12 +169,12 @@ Safe to run unattended in agent auto-mode (idempotent, per-user, reversible via 
 
 ## Capabilities not yet wired
 
-The only retrieval shapes reachable through `ki search` today are the three listed in *Picking a search mode* above (document-title, section-content, 1-hop link neighbourhood). If a user asks for something `ki` doesn't currently expose — backlinks, full-document text in reading order, section windowing, shortest path, vector / semantic search, native non-markdown ingest, MCP-bridged chat-app access — **don't pretend you'll run it**.
+The retrieval shapes reachable today are: `ki search --type {section,document,vault}` (B.2 / B.1 / B.11) and `ki tree` (B.12 + B.12-links — containment + outbound `LINKS_TO`). If a user asks for something `ki` doesn't currently expose — **backlinks** (#35), **subtree-scoped search** (`--under`, #36), full-document text in reading order, section windowing, shortest path, vector / semantic search, native non-markdown ingest, MCP-bridged chat-app access — **don't pretend you'll run it**.
 
 Instead:
 
 1. Tell the user the capability isn't wired today.
-2. Suggest the closest wired alternative if there is one (e.g. for "what's related to X?" → `--type neighbors`).
+2. Suggest the closest wired alternative if there is one (e.g. for "what does this doc link to?" → `ki tree --at "<uri>" --depth 1`).
 3. Point them at the open issues for the roadmap: <https://github.com/zach-blumenfeld/knowledge-index/issues>.
 
 The full Cypher for each unwired retrieval shape exists in `docs/retrieval-queries.md`, so if the user really needs the answer once, they can run the query directly against Neo4j — but that's an explicit fallback, not something `ki` invokes for them.

@@ -32,18 +32,34 @@ Vault identity is carried by a `.ki/vault.yaml` marker file written into the vau
 | `firstSeenAt`     | datetime | yes      | First-seen. ON CREATE only.                                                                                                                                                                                                                              |
 | `lastSeenAt`      | datetime | yes      | Updated on each ingest for vault.                                                                                                                                                                                                                        |
 
+#### `Folder`
+
+Subdirectories inside a vault. Auto-constructed at ingest from the on-disk path of each `:Document` — no separate input, no user-authored metadata, no `description` / `aliases` / `content`. Folders exist so agent-side navigation has a node to land on (`ki tree`, `--under <folder-uri>` scoping); they carry no semantic content of their own. **A `:Folder` is materialised only when at least one indexed `:Document` lives under that path** — empty directories never appear in the graph.
+
+Reversing the v1 "no `:Folder` node" stance: the v1 path-only scheme was queryable via `STARTS WITH` prefix matching but offered nothing for agents wanting to *enumerate* the hierarchy or reason about siblings. With `:Folder` the vault becomes a proper tree — every Folder, Document, and Section has exactly one incoming `:HAS` edge from its parent. Document and Section URIs are unchanged from v1, but their *parent edge* now goes through the folder chain rather than straight to the Vault (see §4.2).
+
+| Property      | Type     | Required | Description                                                                                                                                            |
+|---------------|----------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `uri`         | string   | yes      | PK. **The URI** — MERGE key formatted as `<vaultId>/<slugified path within vault>` (no trailing `/`). e.g. `<vaultId>/notes`, `<vaultId>/notes/projects`. |
+| `name`        | string   | yes      | Basename of the directory (last path segment, slugified).                                                                                              |
+| `displayName` | string   | yes      | Human-friendly display name. Defaults to `name`.                                                                                                       |
+| `firstSeenAt` | datetime | yes      | First-seen. ON CREATE only.                                                                                                                            |
+| `lastSeenAt`  | datetime | yes      | Updated on each ingest.                                                                                                                                |
+
+No `description`, no `aliases`, no `content`, no `fileHash`. If users want a folder-level note, they put a Document there (e.g. `_index.md`) and that Document carries the metadata, not the Folder.
+
 #### `Document`
 Inherits the v2 connector spec (§3) and adds:
 
-**Path conventions.** Nested directories inside the vault are encoded in the URI path — there is **no `:Folder` node** in v1. Slugify each path *segment* independently and keep `/` as the segment separator, so the hierarchy stays queryable via prefix match (e.g., `WHERE d.uri STARTS WITH $vaultId + '/notes/projects/'` returns all docs in that subtree).
+**Path conventions.** Document URIs are unchanged from v1: slugified `<vaultId>/<file path within vault>`. The on-disk path's nested directories are *also* materialised as `:Folder` nodes (see above), so the same hierarchy is reachable both via URI prefix match (cheap subtree scan) *and* via `(:Vault|:Folder)-[:HAS*1..]->(:Document)` traversal (cheap enumeration / `ki tree`).
 
-| Source file                               | `Document.uri`                            |
-|-------------------------------------------|-------------------------------------------|
-| `~/my-vault/ideas.md`                     | `<vaultId>/ideas.md`                      |
-| `~/my-vault/notes/My Projects/Big Idea.md`| `<vaultId>/notes/my-projects/big-idea.md` |
-| `~/my-vault/notes/projects/_index.md`     | `<vaultId>/notes/projects/_index.md`      |
+| Source file                               | `Document.uri`                            | Materialised `:Folder` nodes                          |
+|-------------------------------------------|-------------------------------------------|-------------------------------------------------------|
+| `~/my-vault/ideas.md`                     | `<vaultId>/ideas.md`                      | *(none — document sits at the vault root)*            |
+| `~/my-vault/notes/My Projects/Big Idea.md`| `<vaultId>/notes/my-projects/big-idea.md` | `<vaultId>/notes`, `<vaultId>/notes/my-projects`       |
+| `~/my-vault/notes/projects/_index.md`     | `<vaultId>/notes/projects/_index.md`      | `<vaultId>/notes`, `<vaultId>/notes/projects`          |
 
-Folder-level metadata (Obsidian folder notes, Hugo `_index.md`, etc.) is captured by indexing whatever Document lives at that path — no special handling. Empty folders simply don't appear in the graph.
+Folder-level metadata (Obsidian folder notes, Hugo `_index.md`, etc.) is still captured by indexing whatever Document lives at that path — the `:Folder` node itself stays intentionally property-poor.
 
 | Property               | Type         | Required | Description                                                                                                                                                                                     |
 |------------------------|--------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -77,13 +93,27 @@ Inherits §3. `Section.uri` is globally unique by virtue of including `Vault.uri
 
 | Type           | From | To | Properties | Parallel Allowed | Description |
 |----------------|---|---|---|---|---|
-| `USES_VAULT`   | `User` | `Vault` | NO | NO | One per (user, vault) pair. |
+| `USES_VAULT`   | `User` | `Vault` | NO | NO | One per (user, vault) pair. Access edge, **not containment** — kept distinct from `HAS`. |
 | `LOADED`       | `User` | `Document` | YES - See Below Property Table | YES | One per (user, document). MERGE-upsert on each ingest: `ON CREATE SET firstLoadedAt=...`, `ON MATCH SET lastLoadedAt=...,`. Captures **provenance** — who/what/when loaded each document, and from which machine. |
 | `LOADED`       | `User` | `Vault` | YES - See Below Property Table | YES | One per (user, vault). Tracks vault-level ingest provenance. |
-| `HAS_DOCUMENT` | `Vault` | `Document` | NO | NO | One per (vault, document). Replaces the v1 draft's `IN_VAULT`. A document belongs to exactly one vault. |
-| `HAS_SECTION`  | `Document\|Section` | `Section` | NO | NO | Tree edge. Same as v2 connector spec. |
-| `NEXT_SECTION` | `Section` | `Section` | NO | NO | Linear chain threading **all** sections of a document in DFS reading order (top to bottom as a human would read the file). Crosses heading levels — an H1's last descendant's `NEXT_SECTION` points to the next H1, not to a sibling at the same level. Lets retrieval do cheap `±N` windowing and full-text-order walks without parsing `uri:` pointer lines out of `content`. Re-built per ingest (delete then re-create — see §4.3). |
-| `LINKS_TO`     | `Document\|Section` | `Document\|Section` | YES - See Below Property Table | NO | Includes wikilinks; `wikilink=true` marks Obsidian `[[...]]` origin. |
+| `HAS`          | `Vault\|Folder\|Document\|Section` | `Folder\|Document\|Section` | NO | NO | **The** containment edge. Each child node has exactly one incoming `HAS`. See *Valid `HAS` endpoint pairs* below. Walks of the form `(root)-[:HAS*1..N]->(descendant)` work across the whole hierarchy uniformly — caller filters by descendant label as needed. |
+| `NEXT_SECTION` | `Section` | `Section` | NO | NO | Linear chain threading **all** sections of a document in DFS reading order (top to bottom as a human would read the file). Crosses heading levels — an H1's last descendant's `NEXT_SECTION` points to the next H1, not to a sibling at the same level. Lets retrieval do cheap `±N` windowing and full-text-order walks without parsing `uri:` pointer lines out of `content`. Re-built per ingest (delete then re-create — see §4.3). Sequence, **not containment** — kept distinct from `HAS`. |
+| `LINKS_TO`     | `Document\|Section` | `Document\|Section` | YES - See Below Property Table | NO | Includes wikilinks; `wikilink=true` marks Obsidian `[[...]]` origin. Cross-tree reference, **not containment** — kept distinct from `HAS`. |
+
+**Valid `HAS` endpoint pairs.** Enforced by ingest (not by Neo4j's relationship-type system, which doesn't constrain endpoint labels). Anything else is a bug.
+
+| Parent label | Child label | Notes |
+|--------------|-------------|-------|
+| `Vault`    | `Folder`   | Top-level folder (immediate child of the vault root). |
+| `Vault`    | `Document` | Root-level document (no enclosing folder). |
+| `Folder`   | `Folder`   | Nested subdirectory. |
+| `Folder`   | `Document` | Document nested under that folder. |
+| `Document` | `Section`  | Top-level section (H1, or a higher heading that's the document's first heading). |
+| `Section`  | `Section`  | Nested heading. |
+
+Each `Folder` / `Document` / `Section` has **exactly one** incoming `HAS` edge. The Vault itself has zero — it's the root.
+
+**Why one relationship type instead of three (`HAS_FOLDER` / `HAS_DOCUMENT` / `HAS_SECTION`).** All three would be different *names* for the same semantic ("parent in the containment tree"). Neo4j can naturally express "any of these types" via `[:A|B|C]` alternation, but for a hierarchy where every containment edge has the same meaning, separate names add ceremony without information — the endpoint labels already carry "what kind of containment." Single-type `HAS` lets us write tree walks as `[:HAS*]` instead of `[:HAS_FOLDER|HAS_DOCUMENT|HAS_SECTION*]`, and makes the single-parent invariant trivial to state and lint. Non-containment edges (`USES_VAULT`, `LOADED`, `NEXT_SECTION`, `LINKS_TO`) keep their own types because they mean different things.
 
 > ** __Parallel Allowed__ indicates whether multiple instances of the same relationship type can exist between the same pair of nodes; for example, a User can have multiple LOADED relationships to a Document (one per ingest), whereas a User has only one USES_VAULT relationship per Vault. In the Case of parellel relationships a MERGE key is required to uniquely identify relationships (since multiple may be to/from the same nodes)
 
@@ -128,10 +158,10 @@ uri:/docs/guide.md#installation/python
 uri:/docs/guide.md#installation/cli
 ```
 
-The `uri:` prefix is a deliberate sentinel — it is unambiguous, easy to parse programmatically, and signals to the agent that deeper content exists and can be retrieved by traversing `HAS_SECTION` relationships.
+The `uri:` prefix is a deliberate sentinel — it is unambiguous, easy to parse programmatically, and signals to the agent that deeper content exists and can be retrieved by traversing `HAS` relationships.
 
 **Rule 2 — Skipped heading levels:**
-If a document jumps from H1 to H3 (skipping H2), the H3 becomes a **direct child** of the H1 in the tree. `HAS_SECTION` goes from the H1 Section (or Document) directly to the H3 Section. `headingLevel` on the node accurately reflects `3`. The parent's content lists the H3 URI as a direct child pointer. No synthetic H2 node is created.
+If a document jumps from H1 to H3 (skipping H2), the H3 becomes a **direct child** of the H1 in the tree. The `HAS` edge goes from the H1 Section (or Document) directly to the H3 Section. `headingLevel` on the node accurately reflects `3`. The parent's content lists the H3 URI as a direct child pointer. No synthetic H2 node is created.
 
 **Rule 3 — Duplicate heading disambiguation:**
 Duplicate headings at the same nesting level are disambiguated by appending `-1`, `-2`, etc. starting from the **second** occurrence (GitHub/Pandoc convention):

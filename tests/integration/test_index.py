@@ -35,13 +35,15 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
     assert result.sections_written > expected_files  # multiple sections per doc
     assert read_vault_id(vault_dir) == result.vault_uri
 
-    # Check the graph contents.
+    # Check the graph contents. The fixture has docs at multiple depths, so
+    # walks of the form `(v)-[:HAS*]->(d:Document)` are required — only
+    # root-level docs sit directly under the Vault.
     with driver_for(neo4j_profile) as driver:
         with driver.session() as session:
             row = session.run(
                 """
-                MATCH (v:Vault {uri: $uri})-[:HAS_DOCUMENT]->(d:Document)
-                RETURN count(d) AS n_docs
+                MATCH (v:Vault {uri: $uri})-[:HAS*]->(d:Document)
+                RETURN count(DISTINCT d) AS n_docs
                 """,
                 uri=result.vault_uri,
             ).single()
@@ -50,8 +52,8 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
             # All documents have at least one section (except no-headings.md)
             row = session.run(
                 """
-                MATCH (v:Vault {uri: $uri})-[:HAS_DOCUMENT]->(:Document)-[:HAS_SECTION]->(s:Section)
-                RETURN count(s) AS n_sections
+                MATCH (v:Vault {uri: $uri})-[:HAS*]->(d:Document)-[:HAS*]->(s:Section)
+                RETURN count(DISTINCT s) AS n_sections
                 """,
                 uri=result.vault_uri,
             ).single()
@@ -80,8 +82,8 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
             # NEXT_SECTION chain exists for at least one doc
             row = session.run(
                 """
-                MATCH (v:Vault {uri: $uri})-[:HAS_DOCUMENT]->(d)-[:HAS_SECTION*]->(s)-[:NEXT_SECTION]->(:Section)
-                RETURN count(s) AS n
+                MATCH (v:Vault {uri: $uri})-[:HAS*]->(d:Document)-[:HAS*]->(s:Section)-[:NEXT_SECTION]->(:Section)
+                RETURN count(DISTINCT s) AS n
                 """,
                 uri=result.vault_uri,
             ).single()
@@ -93,6 +95,7 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
             for expected in (
                 "user_id_unique",
                 "vault_uri_unique",
+                "folder_uri_unique",
                 "document_uri_unique",
                 "section_uri_unique",
             ):
@@ -140,7 +143,7 @@ def _count_sections_for_doc(neo4j_profile, vault_uri, doc_name):
         with driver.session() as session:
             row = session.run(
                 """
-                MATCH (d:Document)-[:HAS_SECTION*]->(s:Section)
+                MATCH (d:Document)-[:HAS*]->(s:Section)
                 WHERE d.uri STARTS WITH $vault AND d.name = $name
                 RETURN count(s) AS n
                 """,
@@ -299,3 +302,330 @@ def test_oversize_files_skipped_with_summary(vault_dir, neo4j_profile, cleanup_v
     cleanup_vault.append(result.vault_uri)
     assert result.docs_skipped_oversize == 1
     assert big in result.oversize_files
+
+
+# --- :Folder layer (#17 phase 2b) ------------------------------------------
+
+
+def _build_nasty_vault(root):
+    """Stress fixture covering every shape the folder layer needs to handle.
+
+    Layout:
+      root.md                                      (root doc)
+      another-root.md                              (sibling root doc)
+      notes/one.md                                 (depth 1)
+      notes/two.md                                 (sibling at depth 1)
+      notes/three.md                               (third sibling)
+      notes/projects/alpha.md                      (depth 2 — shared parent with archive/)
+      notes/projects/beta.md                       (sibling at depth 2)
+      notes/archive/old.md                         (sibling folder of projects/)
+      deep/very/deeply/nested/directory/buried.md  (depth 6 — single chain)
+      branch/a.md                                  (separate top-level branch)
+      branch/sub/b.md                              (nested under branch/)
+      empty/                                       (empty dir — should NOT materialize)
+    """
+    (root / "root.md").write_text("# Root\n\nbody.\n")
+    (root / "another-root.md").write_text("# Another\n\nbody.\n")
+    (root / "notes").mkdir()
+    (root / "notes" / "one.md").write_text("# One\n\nbody.\n")
+    (root / "notes" / "two.md").write_text("# Two\n\nbody.\n")
+    (root / "notes" / "three.md").write_text("# Three\n\nbody.\n")
+    (root / "notes" / "projects").mkdir()
+    (root / "notes" / "projects" / "alpha.md").write_text("# Alpha\n")
+    (root / "notes" / "projects" / "beta.md").write_text("# Beta\n")
+    (root / "notes" / "archive").mkdir()
+    (root / "notes" / "archive" / "old.md").write_text("# Old\n")
+    deep = root / "deep" / "very" / "deeply" / "nested" / "directory"
+    deep.mkdir(parents=True)
+    (deep / "buried.md").write_text("# Buried\n")
+    (root / "branch").mkdir()
+    (root / "branch" / "a.md").write_text("# A\n")
+    (root / "branch" / "sub").mkdir()
+    (root / "branch" / "sub" / "b.md").write_text("# B\n")
+    (root / "empty").mkdir()  # no docs — should NOT appear in graph
+
+
+def test_folder_layer_nasty_structure(tmp_path, neo4j_profile, cleanup_vault):
+    """End-to-end: index a multi-level vault, verify the :Folder layer."""
+    fresh = tmp_path / "nasty-vault"
+    fresh.mkdir()
+    _build_nasty_vault(fresh)
+
+    result = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    cleanup_vault.append(result.vault_uri)
+
+    # 11 indexed docs, all the way down (2 root + 3 notes + 2 projects + 1 archive
+    # + 1 deep chain + 1 branch root + 1 branch/sub).
+    assert result.docs_added == 11
+
+    # Expected folders (11):
+    #   notes
+    #   notes/projects
+    #   notes/archive
+    #   deep
+    #   deep/very
+    #   deep/very/deeply
+    #   deep/very/deeply/nested
+    #   deep/very/deeply/nested/directory
+    #   branch
+    #   branch/sub
+    # Plus: `empty/` is NOT materialized (zero indexed docs under it).
+    assert result.folders_total == 10
+
+    v = result.vault_uri
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            # All folders reachable from the Vault via HAS*.
+            row = session.run(
+                "MATCH (v:Vault {uri: $u})-[:HAS*]->(f:Folder) "
+                "RETURN count(DISTINCT f) AS n",
+                u=v,
+            ).single()
+            assert row["n"] == 10
+
+            # Empty directory is NOT materialized.
+            row = session.run(
+                "MATCH (f:Folder {uri: $u + '/empty'}) RETURN f",
+                u=v,
+            ).single()
+            assert row is None
+
+            # Single-parent invariant: every Folder has exactly one incoming HAS.
+            bad_folders = list(
+                session.run(
+                    """
+                    MATCH (f:Folder) WHERE f.uri STARTS WITH $u + '/'
+                    OPTIONAL MATCH ()-[r:HAS]->(f)
+                    WITH f, count(r) AS in_count
+                    WHERE in_count <> 1
+                    RETURN f.uri AS uri, in_count
+                    """,
+                    u=v,
+                )
+            )
+            assert bad_folders == [], f"folder single-parent invariant violated: {bad_folders}"
+
+            # Single-parent invariant: every Document has exactly one incoming HAS.
+            bad_docs = list(
+                session.run(
+                    """
+                    MATCH (d:Document) WHERE d.uri STARTS WITH $u + '/'
+                    OPTIONAL MATCH ()-[r:HAS]->(d)
+                    WITH d, count(r) AS in_count
+                    WHERE in_count <> 1
+                    RETURN d.uri AS uri, in_count
+                    """,
+                    u=v,
+                )
+            )
+            assert bad_docs == [], f"document single-parent invariant violated: {bad_docs}"
+
+            # Root doc has a DIRECT Vault->HAS->Document edge (one hop).
+            row = session.run(
+                "MATCH (v:Vault {uri: $u})-[:HAS]->(d:Document {uri: $u + '/root.md'}) RETURN d",
+                u=v,
+            ).single()
+            assert row is not None, "expected direct Vault->HAS->Document for root.md"
+
+            # Nested doc has NO direct Vault->HAS->Document edge (must go via folders).
+            row = session.run(
+                """
+                MATCH (v:Vault {uri: $u})-[:HAS]->(d:Document)
+                WHERE d.uri = $u + '/notes/projects/alpha.md'
+                RETURN d
+                """,
+                u=v,
+            ).single()
+            assert row is None, "nested doc should not have a direct Vault edge"
+
+            # Nested doc IS reachable via the folder chain (Vault -> notes -> projects -> alpha).
+            row = session.run(
+                """
+                MATCH path = (v:Vault {uri: $u})-[:HAS*]->(d:Document)
+                WHERE d.uri = $u + '/notes/projects/alpha.md'
+                RETURN length(path) AS hops
+                """,
+                u=v,
+            ).single()
+            assert row is not None and row["hops"] == 3, (
+                f"alpha.md should be 3 hops from Vault (notes -> projects -> doc); "
+                f"got {row['hops'] if row else None}"
+            )
+
+            # Depth-6 buried doc is reachable through its full folder chain.
+            row = session.run(
+                """
+                MATCH path = (v:Vault {uri: $u})-[:HAS*]->(d:Document)
+                WHERE d.uri ENDS WITH '/buried.md'
+                RETURN length(path) AS hops
+                """,
+                u=v,
+            ).single()
+            assert row["hops"] == 6, (
+                f"buried.md is 5 folder hops + 1 doc hop = 6; got {row['hops']}"
+            )
+
+            # Sibling folders under `notes/` both exist with shared parent.
+            row = session.run(
+                """
+                MATCH (parent:Folder {uri: $u + '/notes'})-[:HAS]->(child:Folder)
+                RETURN collect(child.name) AS names
+                """,
+                u=v,
+            ).single()
+            assert set(row["names"]) == {"projects", "archive"}
+
+            # The `notes` folder also owns three documents (HAS to docs).
+            row = session.run(
+                """
+                MATCH (parent:Folder {uri: $u + '/notes'})-[:HAS]->(d:Document)
+                RETURN count(d) AS n
+                """,
+                u=v,
+            ).single()
+            assert row["n"] == 3  # one.md, two.md, three.md (NOT alpha/beta/old)
+
+
+def test_folder_layer_reindex_is_idempotent(tmp_path, neo4j_profile, cleanup_vault):
+    """A second ingest with no filesystem changes must not duplicate folders/edges."""
+    fresh = tmp_path / "idempotent-vault"
+    fresh.mkdir()
+    _build_nasty_vault(fresh)
+
+    first = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    cleanup_vault.append(first.vault_uri)
+    assert first.folders_total == 10
+
+    second = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    assert second.folders_total == 10  # same count — MERGE is idempotent
+    assert second.docs_added == 0
+    assert second.docs_updated == 0
+    assert second.docs_skipped_unchanged == 11
+
+    v = first.vault_uri
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            # No duplicate Folder nodes (would imply MERGE-key bug).
+            row = session.run(
+                "MATCH (f:Folder) WHERE f.uri STARTS WITH $u + '/' RETURN count(f) AS n",
+                u=v,
+            ).single()
+            assert row["n"] == 10
+
+            # No duplicate HAS edges incident to any Folder.
+            row = session.run(
+                """
+                MATCH (f:Folder) WHERE f.uri STARTS WITH $u + '/'
+                MATCH ()-[r:HAS]->(f)
+                WITH f, count(r) AS in_count
+                WHERE in_count > 1
+                RETURN count(f) AS dups
+                """,
+                u=v,
+            ).single()
+            assert row["dups"] == 0
+
+
+def test_folder_layer_root_only_vault_has_no_folders(tmp_path, neo4j_profile, cleanup_vault):
+    """A vault with only root-level docs creates zero Folder nodes."""
+    fresh = tmp_path / "flat-vault"
+    fresh.mkdir()
+    (fresh / "a.md").write_text("# A\n")
+    (fresh / "b.md").write_text("# B\n")
+    (fresh / "c.md").write_text("# C\n")
+
+    result = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    cleanup_vault.append(result.vault_uri)
+    assert result.folders_total == 0
+
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            row = session.run(
+                "MATCH (v:Vault {uri: $u})-[:HAS*]->(f:Folder) RETURN count(f) AS n",
+                u=result.vault_uri,
+            ).single()
+            assert row["n"] == 0
+
+            # Each root doc gets a direct Vault->HAS->Document edge.
+            row = session.run(
+                "MATCH (v:Vault {uri: $u})-[:HAS]->(d:Document) RETURN count(d) AS n",
+                u=result.vault_uri,
+            ).single()
+            assert row["n"] == 3
+
+
+def test_folder_layer_wikilink_resolver_finds_nested_docs(tmp_path, neo4j_profile, cleanup_vault):
+    """A wikilink from a root-level doc must resolve to a doc nested several levels deep."""
+    fresh = tmp_path / "wikilink-vault"
+    fresh.mkdir()
+    (fresh / "index.md").write_text("# Index\n\nSee [[target]] and [[Other]].\n")
+    nested = fresh / "buried" / "deep" / "down"
+    nested.mkdir(parents=True)
+    (nested / "target.md").write_text("# Target\n\nbody.\n")
+    (fresh / "buried" / "Other.md").write_text("# Other\n\nbody.\n")
+
+    # First ingest establishes the graph.
+    first = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    cleanup_vault.append(first.vault_uri)
+
+    # Re-ingest with a clean fileHash so the resolver loads via the graph
+    # (it would otherwise also work from in-memory state during the first run).
+    (fresh / "index.md").write_text(
+        "# Index\n\nSee [[target]] and [[Other]] for details.\n"
+    )
+    second = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    assert second.docs_updated == 1
+
+    v = first.vault_uri
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            # `index.md` resolved both wikilinks (one to a 3-level-deep doc,
+            # one to a 1-level-deep sibling-of-the-folder doc). The actual
+            # `LINKS_TO` source is the H1 Section inside `index.md` (that's
+            # where the wikilink text lives), so we walk the section tree
+            # to find every origin attached to this Document.
+            row = session.run(
+                """
+                MATCH (src:Document {uri: $u + '/index.md'})
+                MATCH (src)-[:HAS*0..]->(origin)
+                MATCH (origin)-[:LINKS_TO]->(tgt:Document)
+                RETURN collect(DISTINCT tgt.uri) AS tgts
+                """,
+                u=v,
+            ).single()
+            tgts = set(row["tgts"])
+            assert f"{v}/buried/deep/down/target.md" in tgts
+            assert f"{v}/buried/other.md" in tgts
+
+
+def test_folder_layer_rm_vault_clears_folders_too(tmp_path, neo4j_profile):
+    """`ki rm --vault` deletes the Folder nodes alongside Documents and Sections."""
+    from ki.ingest import queries as Q
+
+    fresh = tmp_path / "rm-folders-vault"
+    fresh.mkdir()
+    _build_nasty_vault(fresh)
+    result = _run_ingest(fresh, neo4j_profile, batch_size=64)
+    v = result.vault_uri
+
+    with driver_for(neo4j_profile) as driver:
+        with driver.session() as session:
+            session.run(Q.DELETE_VAULT, vaultUri=v).consume()
+
+            # Vault is gone.
+            row = session.run("MATCH (v:Vault {uri: $u}) RETURN v", u=v).single()
+            assert row is None
+
+            # No Folder nodes from this vault survive.
+            row = session.run(
+                "MATCH (f:Folder) WHERE f.uri STARTS WITH $u + '/' RETURN count(f) AS n",
+                u=v,
+            ).single()
+            assert row["n"] == 0
+
+            # Documents gone too.
+            row = session.run(
+                "MATCH (d:Document) WHERE d.uri STARTS WITH $u + '/' RETURN count(d) AS n",
+                u=v,
+            ).single()
+            assert row["n"] == 0
