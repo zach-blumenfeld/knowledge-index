@@ -1,10 +1,13 @@
 ### 4.3 MERGE key strategy
 
-All `Vault`, `Document`, and `Section` nodes MERGE on `uri`:
+All `Vault`, `Folder`, `Document`, and `Section` nodes MERGE on `uri`:
 
 - `Vault.uri`    = UUID v4 from the `.ki/vault.yaml` marker file in the vault root.
+- `Folder.uri`   = `<vaultId>/<slugified directory path within vault>` (no trailing `/`).
 - `Document.uri` = `<vaultId>/<file path within vault>` (slugified).
 - `Section.uri`  = `<vaultId>/<file path within vault>#<slugified heading path>`.
+
+The `Folder` URI scheme is a strict *prefix* of any `Document` URI living under it (after slugification of each path segment), which is what makes `STARTS WITH`-based subtree queries cheap.
 
 `User` nodes MERGE on the system-provided `id`.
 
@@ -64,6 +67,55 @@ SET d += row.props,
 WITH d
 MATCH (v:Vault {uri: $vaultUri})
 MERGE (v)-[:HAS_DOCUMENT]->(d)
+```
+
+```cypher
+// 1b. Folders — batched upsert (nodes only, no edges yet).
+//
+// The writer computes the set of distinct directory paths across all indexed
+// documents and ships one row per Folder. Folder MERGE is on `uri` (= the
+// slugified directory path under `$vaultId`); nodes are created on first
+// sight and touched on every ingest.
+//
+// $folderRows: list of { uri, props } where
+//   props = { name, displayName }
+UNWIND $folderRows AS row
+MERGE (f:Folder {uri: row.uri})
+ON CREATE SET f += row.props,
+              f.firstSeenAt = $now
+SET f.lastSeenAt = $now
+```
+
+```cypher
+// 1c. HAS_FOLDER — batched edges from (:Vault|:Folder) parent to :Folder.
+//
+// Each folder has exactly one incoming HAS_FOLDER edge: the Vault for
+// top-level folders (immediate children of the vault root), the parent
+// Folder otherwise. Parent label is resolved by URI lookup (same trick
+// as HAS_SECTION).
+//
+// $folderEdgeRows: list of { parentUri, folderUri }
+UNWIND $folderEdgeRows AS row
+MATCH (parent {uri: row.parentUri})
+WHERE parent:Vault OR parent:Folder
+MATCH (child:Folder {uri: row.folderUri})
+MERGE (parent)-[:HAS_FOLDER]->(child)
+```
+
+```cypher
+// 1d. Folder -[:HAS_DOCUMENT]-> Document — batched edges.
+//
+// Emitted only for documents whose immediate parent directory is a Folder
+// (i.e. nested docs). Root-level docs already carry Vault -[:HAS_DOCUMENT]->
+// Document from step 1 and skip this step. The Vault -[:HAS_DOCUMENT]-> Document
+// edge **also** exists for nested docs (preserves v1 retrieval shape — see
+// `docs/data-model.md` §4.2 HAS_DOCUMENT row).
+//
+// $folderDocRows: list of { folderUri, docUri }
+UNWIND $folderDocRows AS row
+MATCH (f:Folder {uri: row.folderUri})
+MATCH (d:Document {uri: row.docUri})
+MERGE (f)-[:HAS_DOCUMENT]->(d)
 ```
 
 ```cypher
@@ -208,6 +260,9 @@ CREATE CONSTRAINT document_uri_unique IF NOT EXISTS
 CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
   FOR (s:Section) REQUIRE s.uri IS UNIQUE;
 
+CREATE CONSTRAINT folder_uri_unique IF NOT EXISTS
+  FOR (f:Folder) REQUIRE f.uri IS UNIQUE;
+
 // LOADED uniqueness is handled by MERGE semantics on the `loadId` property
 // between two already-unique endpoints — no explicit relationship-key constraint
 // is required (and relationship-key constraints are Enterprise-only / unavailable
@@ -223,6 +278,11 @@ CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
 // per label, so `:Document` / `:Section` rows simply have no `description`
 // and `:Vault` rows have no `content` / `aliases`. `ki search` filters by
 // label in the query (B.1 → `:Document`, B.2 → `:Section`, B.11 → `:Vault`).
+//
+// `:Folder` is deliberately **not** included — folders carry no `content`,
+// `aliases`, or `description` (see `docs/data-model.md` §Folder). They're a
+// navigation surface, not a retrieval surface. `ki tree` and `--under`
+// scoping use graph traversal (HAS_FOLDER / HAS_DOCUMENT), not fulltext.
 // The mapper writes `content` with `uri:` child-pointer lines appended, which
 // add some junk tokens to the index; if recall suffers, switch to a sanitised
 // `contentForIndex` copy that strips those pointer lines.

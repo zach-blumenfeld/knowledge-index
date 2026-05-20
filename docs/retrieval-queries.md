@@ -1,7 +1,7 @@
 ## Retrieval queries for the new data model
 
 Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
-`(User)–(Vault)–(Document)–(Section)` schema.
+`(User)–(Vault)–(Folder)–(Document)–(Section)` schema.
 
 ### Mapping cheatsheet
 | Old (Wikipedia)                            | New (Graph Vault)                                                                  |
@@ -26,9 +26,24 @@ Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
 ### Parameters
 - `$uri` — the `Document.uri` (UUID-prefixed slugified path, see §4.3).
 - `$section_uri`, `$section_uris` — same convention for sections.
+- `$folder_uri` — a `Folder.uri` (UUID-prefixed slugified directory path) when used as a scoping root (B.12, `--under` scoping in B.1/B.2/B.11 — see *Scoping* below).
 - `$index_name` — `'content_search'` (the fulltext index from §4.4).
 - `$query` — fulltext query string (Lucene syntax).
 - `$k`, `$n` — limit / window size.
+- `$depth` — for B.12 / `ki tree`; cap on tree traversal depth.
+
+### Scoping with `:Folder` (`--under`)
+
+`Folder.uri` is a strict path prefix of every `Document.uri` (and therefore every `Section.uri`) under it, so scoping any fulltext query to a folder subtree is a cheap `STARTS WITH` filter post-fulltext:
+
+```cypher
+CALL db.index.fulltext.queryNodes($index_name, $query)
+YIELD node, score
+WHERE node:Document AND node.uri STARTS WITH $folder_uri + '/'
+...
+```
+
+The same idea works for any of B.1 / B.2 / B.11 (with `:Vault`-scope `folder_uri` = the whole vault URI, which is itself a prefix of every node URI in it). No graph traversal needed for scoping — `STARTS WITH` against the slugified URI prefix is enough. CLI flag mapping: `ki search "..." --under <folder-uri>`.
 
 ### Per-query design notes
 - **B.1 / B.2 / B.11 (vector → fulltext)** — v1 has no vector index per §4.4, so all three use `content_search` (the unified `Document|Section|Vault` fulltext index, over `displayName` + `content` + `aliases` + `description`). Filter by label (`:Document` / `:Section` / `:Vault`) post-yield. Notes on swapping to vector when added.
@@ -39,6 +54,8 @@ Same query *shapes* as `queries-for-old-data-model.md`, ported to the new
 - **B.7 windowing (full content)** — near-verbatim port of old A.7's paragraph windowing. Symmetric `back_path` / `fwd_path` collect-and-merge over `NEXT_SECTION` with `offset`, full content. Old A.7 + A.8 collapse here since the new model has no `Paragraph`.
 - **B.8 windowing (summary)** — same `±N` walk as B.7 over `NEXT_SECTION` but returns `heading`, `first_child_section_uri`, `child_count` instead of full content. The `first_child` lookup exploits the DFS property: a section's first child is the section it points to via `NEXT_SECTION` that is also a `HAS_SECTION` child of it. Mirrors A.8's summary semantics.
 - **B.9 / B.10** — straightforward `LINKS_TO` ports with endpoint-projection (any section endpoint → its owning `Document`) so the result shape stays at document granularity like the originals.
+- **B.11 Vault fulltext** — see *Per-query* notes above; same shared `content_search` index, filtered to `:Vault`. Powers `ki search --type vault` for cross-vault routing.
+- **B.12 Folder tree** — pure graph walk over `:HAS_FOLDER` and `:HAS_DOCUMENT`, depth-capped via `$depth`. No fulltext, no scoring. Powers `ki tree`. Starts from any `:Vault` or `:Folder` URI (`$root_uri`), so the same query renders the whole vault or any subtree.
 
 
 B.1 Document title fulltext search
@@ -315,4 +332,48 @@ RETURN node.uri AS vault_uri,
        score
 ORDER BY score DESC
 LIMIT toInteger($k)
+```
+
+
+B.12 Folder tree (depth-capped)
+```cypher
+// New in v0.4.0. Walks the folder hierarchy from any `$root_uri` (a Vault or
+// Folder URI) outward via HAS_FOLDER, and surfaces the documents owned by
+// each folder along the way via HAS_DOCUMENT.
+//
+// Pure graph walk — no fulltext, no scoring. Returns one row per descendant
+// node (Folder or Document) with its parent URI and depth from the root, so
+// the caller can rebuild the tree client-side and render it however it likes
+// (the `ki tree` command formats it as a directory-style tree in the
+// terminal, or YAML with `--out-file`).
+//
+// $root_uri — a Vault.uri OR a Folder.uri (both are valid roots).
+// $depth    — cap on traversal depth from the root.
+//
+// The two UNION branches handle the two output shapes: Folder rows and
+// Document rows. Both carry the same column set so the caller can stream
+// a single sorted result.
+MATCH (root {uri: $root_uri})
+WHERE root:Vault OR root:Folder
+CALL (root) {
+  WITH root
+  MATCH path = (root)-[:HAS_FOLDER*1..]->(f:Folder)
+  WHERE length(path) <= toInteger($depth)
+  RETURN f.uri AS uri,
+         'Folder' AS kind,
+         f.displayName AS display_name,
+         [n IN nodes(path)[-2..-1] | n.uri][0] AS parent_uri,
+         length(path) AS depth
+  UNION
+  WITH root
+  MATCH path = (root)-[:HAS_FOLDER*0..]->(parent)-[:HAS_DOCUMENT]->(d:Document)
+  WHERE length(path) <= toInteger($depth)
+  RETURN d.uri AS uri,
+         'Document' AS kind,
+         d.displayName AS display_name,
+         parent.uri AS parent_uri,
+         length(path) + 1 AS depth
+}
+RETURN uri, kind, display_name, parent_uri, depth
+ORDER BY depth, parent_uri, kind DESC, display_name
 ```
