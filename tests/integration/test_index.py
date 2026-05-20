@@ -40,7 +40,7 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
         with driver.session() as session:
             row = session.run(
                 """
-                MATCH (v:Vault {uri: $uri})-[:HAS_DOCUMENT]->(d:Document)
+                MATCH (v:Vault {uri: $uri})-[:HAS]->(d:Document)
                 RETURN count(d) AS n_docs
                 """,
                 uri=result.vault_uri,
@@ -50,7 +50,7 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
             # All documents have at least one section (except no-headings.md)
             row = session.run(
                 """
-                MATCH (v:Vault {uri: $uri})-[:HAS_DOCUMENT]->(:Document)-[:HAS_SECTION]->(s:Section)
+                MATCH (v:Vault {uri: $uri})-[:HAS]->(:Document)-[:HAS]->(s:Section)
                 RETURN count(s) AS n_sections
                 """,
                 uri=result.vault_uri,
@@ -80,7 +80,7 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
             # NEXT_SECTION chain exists for at least one doc
             row = session.run(
                 """
-                MATCH (v:Vault {uri: $uri})-[:HAS_DOCUMENT]->(d)-[:HAS_SECTION*]->(s)-[:NEXT_SECTION]->(:Section)
+                MATCH (v:Vault {uri: $uri})-[:HAS]->(d)-[:HAS*]->(s)-[:NEXT_SECTION]->(:Section)
                 RETURN count(s) AS n
                 """,
                 uri=result.vault_uri,
@@ -140,7 +140,7 @@ def _count_sections_for_doc(neo4j_profile, vault_uri, doc_name):
         with driver.session() as session:
             row = session.run(
                 """
-                MATCH (d:Document)-[:HAS_SECTION*]->(s:Section)
+                MATCH (d:Document)-[:HAS*]->(s:Section)
                 WHERE d.uri STARTS WITH $vault AND d.name = $name
                 RETURN count(s) AS n
                 """,

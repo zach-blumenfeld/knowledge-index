@@ -31,7 +31,7 @@ WHERE section:Section
 WITH section, score
 ORDER BY score DESC
 LIMIT toInteger($k)
-MATCH (doc:Document)-[:HAS_SECTION*]->(section)
+MATCH (doc:Document)-[:HAS*]->(section)
 RETURN doc.uri AS document_uri,
        doc.displayName AS document_title,
        section.uri AS section_uri,
@@ -65,10 +65,10 @@ LIMIT toInteger($k)
 # the upper bound — legacy `[:LINKS_TO*1..$n]` syntax rejects parameters).
 B3_NEIGHBOURHOOD = """
 MATCH (start:Document {uri: $uri})
-MATCH (start)-[:HAS_SECTION*0..]->(startElem)
+MATCH (start)-[:HAS*0..]->(startElem)
 MATCH linkPath = (startElem) (()-[:LINKS_TO]->()){1,$n} (endElem)
 WITH endElem, length(linkPath) AS distance
-OPTIONAL MATCH (endDoc:Document)-[:HAS_SECTION*]->(endElem)
+OPTIONAL MATCH (endDoc:Document)-[:HAS*]->(endElem)
 WHERE endElem:Section
 WITH coalesce(endDoc, endElem) AS neighbour, distance
 WHERE neighbour:Document AND neighbour.uri <> $uri

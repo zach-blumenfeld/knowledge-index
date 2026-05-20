@@ -481,10 +481,10 @@ def _write_one_document(
             on_shrink=on_shrink,
         )
 
-        # HAS_SECTION
+        # Section tree HAS edges.
         run_batched(
             session,
-            Q.WRITE_HAS_SECTION,
+            Q.WRITE_SECTION_EDGES,
             "hasSectionRows",
             _has_section_rows(parsed, doc_uri),
             batch_size=batch_size,
@@ -527,7 +527,7 @@ def _fetch_existing_hashes(session: Any, doc_uris: list[str]) -> dict[str, str]:
 def _load_resolver(session: Any, vault_uri: str) -> WikilinkResolver:
     res = session.run(
         """
-        MATCH (v:Vault {uri: $vaultUri})-[:HAS_DOCUMENT]->(d:Document)
+        MATCH (v:Vault {uri: $vaultUri})-[:HAS]->(d:Document)
         RETURN d.uri AS uri, d.name AS name, d.aliases AS aliases
         """,
         vaultUri=vault_uri,

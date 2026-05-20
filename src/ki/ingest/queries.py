@@ -72,7 +72,7 @@ SET d += row.props,
     d.lastLoadedAt = $now
 WITH d
 MATCH (v:Vault {uri: $vaultUri})
-MERGE (v)-[:HAS_DOCUMENT]->(d)
+MERGE (v)-[:HAS]->(d)
 """.strip()
 
 
@@ -86,13 +86,17 @@ SET s += row.props,
 """.strip()
 
 
-# 4.3 step 3 — HAS_SECTION.
-WRITE_HAS_SECTION = """
+# 4.3 step 3 — section-tree HAS edges (Document|Section → Section).
+# Same `:HAS` relationship type as the vault/folder/document tree (step 1c
+# in docs/ingest-cypher.md); kept in its own step here because section
+# trees are constructed per-document alongside section node writes, while
+# folder trees are constructed per-vault.
+WRITE_SECTION_EDGES = """
 UNWIND $hasSectionRows AS row
 MATCH (parent {uri: row.parentUri})
 WHERE parent:Document OR parent:Section
 MATCH (child:Section {uri: row.childUri})
-MERGE (parent)-[:HAS_SECTION]->(child)
+MERGE (parent)-[:HAS]->(child)
 """.strip()
 
 
@@ -155,8 +159,8 @@ SET n.aliases = existing + toAdd
 
 # --- Removal queries (used by `ki rm`). Not in ingest-cypher.md but follow the
 # same single-uri MERGE-key model. `DETACH DELETE` removes incident
-# relationships (HAS_SECTION, HAS_DOCUMENT, LOADED, LINKS_TO, NEXT_SECTION)
-# along with their endpoints, per docs/requirements_v01_mvp.md *Removal*.
+# relationships (HAS, LOADED, LINKS_TO, NEXT_SECTION) along with their
+# endpoints, per docs/requirements_v01_mvp.md *Removal*.
 #
 # Re-stitching NEXT_SECTION across removals is unnecessary for whole-doc
 # deletion: NEXT_SECTION threads sections *within a single document* (see
@@ -164,7 +168,7 @@ SET n.aliases = existing + toAdd
 # chains untouched.
 DELETE_DOCUMENT_AND_SECTIONS = """
 MATCH (d:Document {uri: $docUri})
-OPTIONAL MATCH (d)-[:HAS_SECTION*]->(s:Section)
+OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
 WITH d, collect(DISTINCT s) AS secs
 FOREACH (s IN secs | DETACH DELETE s)
 DETACH DELETE d
@@ -175,7 +179,7 @@ DETACH DELETE d
 DELETE_SUBTREE = """
 MATCH (d:Document)
 WHERE d.uri STARTS WITH $uriPrefix
-OPTIONAL MATCH (d)-[:HAS_SECTION*]->(s:Section)
+OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
 WITH collect(DISTINCT d) AS docs, collect(DISTINCT s) AS secs
 FOREACH (s IN secs | DETACH DELETE s)
 FOREACH (d IN docs | DETACH DELETE d)
@@ -189,8 +193,8 @@ RETURN count(d) AS doc_count
 
 COUNT_VAULT = """
 MATCH (v:Vault {uri: $vaultUri})
-OPTIONAL MATCH (v)-[:HAS_DOCUMENT]->(d:Document)
-OPTIONAL MATCH (d)-[:HAS_SECTION*]->(s:Section)
+OPTIONAL MATCH (v)-[:HAS]->(d:Document)
+OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
 RETURN v.displayName AS display_name,
        count(DISTINCT d) AS doc_count,
        count(DISTINCT s) AS section_count
@@ -198,8 +202,8 @@ RETURN v.displayName AS display_name,
 
 DELETE_VAULT = """
 MATCH (v:Vault {uri: $vaultUri})
-OPTIONAL MATCH (v)-[:HAS_DOCUMENT]->(d:Document)
-OPTIONAL MATCH (d)-[:HAS_SECTION*]->(s:Section)
+OPTIONAL MATCH (v)-[:HAS]->(d:Document)
+OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
 WITH v, collect(DISTINCT d) AS docs, collect(DISTINCT s) AS secs
 FOREACH (s IN secs | DETACH DELETE s)
 FOREACH (d IN docs | DETACH DELETE d)

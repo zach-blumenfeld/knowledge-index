@@ -1,6 +1,6 @@
 ## Retrieval queries for the new data model
 
-Same query *shapes* as [docs/resarch](research-data-model/research-retrieval-queries.md), ported to the new
+Same query *shapes* as [docs/research](research-data-model/research-retrieval-queries.md), ported to the new
 `(User)–(Vault)–(Folder)–(Document)–(Section)` schema.
 
 ### Mapping cheatsheet

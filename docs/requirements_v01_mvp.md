@@ -249,14 +249,14 @@ Documents, sections, and edges all use the standard `UNWIND` pattern — driver-
 
 ## Files in this directory
 
-| File                          | Contents                                                                                                                                                                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `target-data-model.md`        | Property tables (User, Vault, Document, Section) + §4.2 relationships table (`USES_VAULT`, `LOADED`, `HAS_DOCUMENT`, `HAS_SECTION`, `NEXT_SECTION`, `LINKS_TO`)                                                            |
-| `target-data-model-cypher.md` | §4.3 batched ingest queries (steps 1–6: Documents, Sections, HAS_SECTION, NEXT_SECTION clear+rebuild, User-LOADED-Document, LINKS_TO) + §4.4 constraints and fulltext index                                                |
-| `retrieval-queries.md`        | 10 retrieval queries `B.1`–`B.10` + per-query design notes; ported from the Wikipedia-graph queries in `../../scratch/gv-data-model-and-queries/queries-for-old-data-model.md`                                             |
-| `REQUIREMENTS.md`             | (pre-existing)                                                                                                                                                                                                            |
-| `SKILL.md`                    | (pre-existing — agent skill spec)                                                                                                                                                                                         |
-| `ingest.py`, `search.py`      | (pre-existing implementation stubs)                                                                                                                                                                                       |
+| File                          | Contents                                                                                                                                                                    |
+| ----------------------------- |-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `target-data-model.md`        | Property tables (User, Vault, Document, Section) + §4.2 relationships table (`USES_VAULT`, `LOADED`, `HAS_DOCUMENT`, `HAS_SECTION`, `NEXT_SECTION`, `LINKS_TO`)             |
+| `target-data-model-cypher.md` | §4.3 batched ingest queries (steps 1–6: Documents, Sections, HAS_SECTION, NEXT_SECTION clear+rebuild, User-LOADED-Document, LINKS_TO) + §4.4 constraints and fulltext index |
+| `retrieval-queries.md`        | 10 retrieval queries `B.1`–`B.10` + per-query design notes; ported from the Wikipedia-graph queries in [research](research-data-model/research-retrieval-queries.md)        |
+| `REQUIREMENTS.md`             | (pre-existing)                                                                                                                                                              |
+| `SKILL.md`                    | (pre-existing — agent skill spec)                                                                                                                                           |
+| `ingest.py`, `search.py`      | (pre-existing implementation stubs)                                                                                                                                         |
 
 ## Open questions / next steps
 
