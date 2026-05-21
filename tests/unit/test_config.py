@@ -40,7 +40,7 @@ def test_save_then_load_roundtrip(isolated_home):
     cfg = Config()
     cfg.add_profile(Profile(
         name="default", uri="bolt://localhost:7687",
-        user="neo4j", password="hunter2", source="neo4j-local",
+        user="neo4j", password="hunter2", source="local-podman",
     ))
     path = save_config(cfg)
     loaded = load_config(path)

@@ -205,11 +205,17 @@ Safe to run unattended in agent auto-mode (idempotent, per-user, reversible via 
 
 ## Auto-mode rules
 
-- **Reversible, local actions: auto-fire.** Installing `ki`, `ki index`, single-doc and subtree `ki rm`, `ki skill install`. Report what you did after the fact.
+- **Reversible, local actions: auto-fire.** Installing `ki`, `ki index`, single-doc and subtree `ki rm`, `ki skill install`, bringing up the Local Neo4j container (see below). Report what you did after the fact.
 - **Irreversible / billable actions: pause for explicit consent.** Whole-vault `ki rm --vault`, `ki configure → Aura` (creates a billable cloud resource), anything that requires the user to type a confirmation.
-- **Picking a Neo4j on first run.** The `Local` option in `ki configure` depends on the `neo4j-local` binary, which isn't published yet — don't pick it on auto-mode. Order to try:
-  1. **An existing reachable Neo4j** (env vars, a `docker ps` showing `neo4j` on `:7687`, or a profile already in `~/.config/ki/config.yaml`) — use `ki configure` option `3) Existing` and report what you connected to.
-  2. **Otherwise, ask the user.** "I need a Neo4j to point ki at. Should I (a) walk you through Aura — billable cloud, or (b) wait for you to bring up a local one?" Don't pick Aura silently — *"Build me a knowledge base"* is consent for the goal, not for creating cloud resources.
+- **Picking a Neo4j on first run.** Rule of thumb: **Local (Podman)** is right for solo / on-this-laptop work, **Aura** is for sharing an index across machines or a team, **Existing** is for "the user already has a Neo4j running, just point at it." Order to try:
+  1. **An existing reachable Neo4j** (env vars, a profile already in `~/.config/ki/config.yaml`, or a container/service already on `:7687`) — use `ki configure` option `3) Existing` and report what you connected to.
+  2. **Otherwise, the Local (Podman) path** — `ki configure` option `1) Local (neo4j w/ podman)`. Reversible/local; auto-fires *if* `podman` is on PATH and `:7687` is free. If `podman` isn't installed, pause and surface the install one-liner from `references/neo4j-podman.md` (Preflight). If `:7687` is occupied by something other than our container, fall back to option 3.
+  3. **Aura is never silent.** Only pick `2) Aura` if the user explicitly asked for cloud / Aura, or there's already an Aura profile. *"Build me a knowledge base"* is consent for the goal, not for creating cloud resources.
+- **Recovery when `ki` can't reach Neo4j (Local-Podman profiles).** Diagnose the container state and act, all idempotent:
+  - `podman ps -a --filter name=neo4j-ki` → stopped → `podman start neo4j-ki`. Data intact. Auto-fire.
+  - Container missing, `podman volume ls --filter name=neo4j-ki-data` shows the volume → re-run the *Bring up Neo4j* block in `references/neo4j-podman.md`. Data intact. Auto-fire.
+  - Container missing **and** volume missing → re-run *Bring up Neo4j*, then re-run `ki index <path>` for every vault the user had indexed (the indexes are gone). If you don't have the vault paths in conversation history, ask the user.
+  - Full recipes (including macOS `podman machine start` after reboot) live in `references/neo4j-podman.md` *Recovery* and *After a reboot*.
 - **File-system side-effects on the user's vault: never.** `ki` doesn't touch source files; the agent doesn't either, except for writing converted-markdown output to a user-approved folder (see PREPARE).
 
 ## Capabilities not yet wired

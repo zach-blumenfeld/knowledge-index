@@ -108,7 +108,7 @@ KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents /
 `ki index` is intentionally do-the-right-thing on first run rather than gated behind a separate init step. Specifically:
 
 - **Missing `.ki/vault.yaml`** → auto-create the marker (a tiny YAML file containing the assigned `uri:` slug; reversible with `rm -rf .ki/`). Prints a one-line notice: *"Initialized vault at ./my-vault (uri: my-vault)."* The file is also where the user can add an optional `description:` to give agents a routing hint about what this vault is for; `ki` is read-only w.r.t. that field except when `--description` is passed.
-- **Missing `~/.config/ki/config.yaml`** → drop into the `ki configure` flow interactively. On agent auto-mode, default to local `neo4j-local` and tell the user (see *Agent auto-mode behavior* below).
+- **Missing `~/.config/ki/config.yaml`** → drop into the `ki configure` flow interactively. On agent auto-mode, default to the Local (Podman) path and tell the user (see *Agent auto-mode behavior* below).
 - **Re-index of unchanged files** → skip via `Document.fileHash` (SHA-256 stored per document; that's literally what `fileHash` is for in the schema). Only changed / new files hit Neo4j.
 
 ### `ki init` (optional, advanced)
@@ -161,21 +161,24 @@ ki nuke --dry-run / --yes / --chunk-size N
 $ ki configure
 No Neo4j connection found. Set one up?
 
-  1) Local         → wraps `neo4j-local` (native install, no Docker; APOC + GDS + GenAI plugins by default) see https://github.com/johnymontana/neo4j-local
-  2) Aura          → wraps `neo4j-cli aura create` (cloud — billable; creates a real instance) see https://github.com/neo4j-labs/neo4j-cli
-  3) Existing      → prompts for URI + credentials
+  1) Local (neo4j w/ podman) → runs `neo4j:latest` in a local Podman container (APOC + GenAI plugins); full runbook at `references/neo4j-podman.md`
+     Best for: solo work on this laptop
+  2) Aura                    → wraps `neo4j-cli aura create` (cloud — billable; creates a real instance) see https://github.com/neo4j-labs/neo4j-cli
+     Best for: sharing an index across machines or a team
+  3) Existing                → prompts for URI + credentials
+     Best for: pointing at a Neo4j you already run
 
 Choice [1]:
 ```
 
-Both option 1 and option 2 shell out to existing tools, parse the resulting credentials, and write the profile. No reinvention of lifecycle / version pinning / health checks. The `neo4j-local` choice is strictly better than raw `docker run` (zero Docker dependency, plugins pre-installed, full lifecycle commands).
+Option 1 shells out to `podman` (canonical container `neo4j-ki`, named volume `neo4j-ki-data`, `--restart unless-stopped`); option 2 shells out to `neo4j-cli`. Neither reimplements lifecycle / version pinning / health checks. The Podman path is preferred over a raw `docker run` because (a) Podman is rootless by default, (b) the named volume + `--restart` policy give data persistence and reboot-survival without systemd plumbing, and (c) the agent runbook in `references/neo4j-podman.md` covers recovery for the three failure modes (container stopped / removed / volume wiped) the agent has to handle on auto-mode.
 
 ## Agent auto-mode behavior
 
 **Principle: autonomy ≠ permission to do irreversible things on someone's behalf.** Auto-mode lifts UX friction; it doesn't lift agent judgment about real-world side effects.
 
 **Auto without asking** (reversible, local, no cost):
-- Start `neo4j-local` (downloads Neo4j + JRE on first run; reversible via `neo4j-local stop && neo4j-local clear-cache`).
+- Bring up the Local Neo4j container via `podman` (the `ki configure → Local` path; reversible via `podman stop neo4j-ki && podman rm neo4j-ki && podman volume rm neo4j-ki-data`). See `references/neo4j-podman.md`.
 - Write `~/.config/ki/config.yaml` with the resulting credentials.
 - Write `.ki/vault.yaml` markers (auto-create with `uri:` only — leave any user-authored fields alone).
 - Index the vault.
@@ -189,8 +192,8 @@ Both option 1 and option 2 shell out to existing tools, parse the resulting cred
 **Disambiguator**: if the user says "build me a knowledge base **on Aura**" or there's already an Aura profile in the config, that's explicit consent — proceed. Without that, local is the auto-mode default.
 
 **Surface even on auto-mode**:
-- One-line after-the-fact notice: *"Started Neo4j locally; credentials in `~/.config/ki/config.yaml`."* Transparency, not approval-gating.
-- Errors (port 7687 in use, Node missing). Auto-mode should not mean silent failure.
+- One-line after-the-fact notice: *"Started Neo4j locally via podman; credentials in `~/.config/ki/config.yaml`."* Transparency, not approval-gating.
+- Errors (port `:7687` in use, `podman` not installed). Auto-mode should not mean silent failure — pause and surface the install one-liner / port-collision diagnosis from `references/neo4j-podman.md`.
 - The fact that I made a local-vs-cloud decision, so the user can override.
 
 **Preference learning**: if the user says once "always default to Aura for ki" or "never use cloud Neo4j," save a feedback memory and honor it across sessions without re-asking.
@@ -228,12 +231,12 @@ Documents, sections, and edges all use the standard `UNWIND` pattern — driver-
 - Single vault: up to **10,000 markdown files** / **1 GB of content**.
 - Single document: up to **1 MB** / **~10,000 sections**. Files above the threshold are skipped with a warning, not silently truncated (see lever 6).
 - Re-index of an **unchanged** vault: **< 5 seconds** (fileHash skip makes this near-instant).
-- Initial index of a **10k-document vault**: **< 5 minutes** on a developer laptop against local Neo4j (`neo4j-local`).
+- Initial index of a **10k-document vault**: **< 5 minutes** on a developer laptop against local Neo4j (Podman container per `references/neo4j-podman.md`).
 
 ### Levers (in order of impact)
 
 1. **`Document.fileHash` (SHA-256) skip on unchanged files.** Most re-indexes touch <1% of files; everything else short-circuits before any Cypher runs. This is the biggest single win and is already in the schema.
-2. **Configurable batched `UNWIND $rows AS row` ingest, default 1,000 rows / transaction.** Expose `--batch-size N`. Optimal batch size is **bounded by Neo4j's configured heap**, not by Python memory, and depends on per-row payload (a vault of small notes can batch 5–10×bigger than one of long-form documents). Heuristic: ~1,000 is safe on a small local instance (`neo4j-local` defaults); on Aura the right number scales with RAM. YOu should be able to see via neo4j-cli, but if not, as a general heuristic, assume Aura PRO and above tiers can comfortably handle 5,000+ rows / batch and ingest. Tune empirically; there is no general "right" answer.
+2. **Configurable batched `UNWIND $rows AS row` ingest, default 1,000 rows / transaction.** Expose `--batch-size N`. Optimal batch size is **bounded by Neo4j's configured heap**, not by Python memory, and depends on per-row payload (a vault of small notes can batch 5–10×bigger than one of long-form documents). Heuristic: ~1,000 is safe on a small local instance (Neo4j Community defaults); on Aura the right number scales with RAM. YOu should be able to see via neo4j-cli, but if not, as a general heuristic, assume Aura PRO and above tiers can comfortably handle 5,000+ rows / batch and ingest. Tune empirically; there is no general "right" answer.
 3. **Concurrent file reading via `asyncio` + `aiofiles` (or `concurrent.futures.ThreadPoolExecutor`) with bounded parallelism.** Reading is I/O-bound and benefits from concurrency. Default ~16 workers; configurable. This is the only place concurrency lives.
 4. **Process one document at a time end-to-end** (parse → batch → write → release). Peak parse-side memory is bounded by the largest single file's section tree, not by the whole vault. Critical for predictability — vault size grows linearly in time, memory stays flat.
 5. **Single Neo4j write session — no concurrent writes.** Even two concurrent writers can deadlock on shared `MERGE` targets (`Vault`, `User`, parent `Section` for `HAS_SECTION`). Batching does the heavy lifting; concurrency on writes is a foot-gun with no real throughput payoff at v1 scales.
@@ -270,7 +273,6 @@ Documents, sections, and edges all use the standard `UNWIND` pattern — driver-
 - Skill description text: explicit `TRIGGER when:` and `SKIP when:` clauses with 4–6 example prompts. This (not the name) is what determines whether an agent invokes the skill correctly.
 - Wire `ki configure` / `ki init` / `ki index` / `ki search` CLI commands against the queries in `target-data-model-cypher.md` (§4.3 batched writes) and `retrieval-queries.md` (`B.1`–`B.10`).
 - Re-ingest correctness: `NEXT_SECTION` clear-and-rebuild is correct but blunt; if section counts get large, switch to a diff-based update.
-- Confirm `neo4j-local` has a `--detach` mode (or wrap with a PID file) so `ki configure → Local` doesn't tie up a foreground process.
 - Credential storage upgrade path: plaintext-in-`~/.config/ki/config.yaml` for v1 → OS keyring (Python `keyring` lib, or 1Password CLI integration) for v2.
 - Ignore-patterns for `ki index`: hidden directories (`.git/`, `.obsidian/`, `.ki/`, anything starting with `.`) excluded by default. Open question: introduce a `.kiignore` file, reuse `.gitignore` if present, or both? See `target-data-model.md` *Path conventions* for how nested directories are encoded.
 - `:Folder` nodes are intentionally absent in v1 — hierarchy lives in `Document.uri` and prefix-matches handle subtree queries. Revisit if a use case appears for folder-level metadata that isn't captured by a folder-note Document (Obsidian folder notes, Hugo `_index.md`).
