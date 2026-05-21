@@ -107,23 +107,59 @@ def _port_bound(port: int) -> bool:
             return False
 
 
-def _wait_for_ready(timeout: int = 60) -> None:
-    """Poll :7687 until something accepts connections, or raise."""
+def _bolt_ready() -> bool:
+    """Return True if Neo4j is actually serving Bolt queries (not just port-open).
+
+    Neo4j opens :7687 well before it can answer queries (kernel still
+    initializing, plugins still loading). The driver-level handshake fails
+    if we hand it the URI too early. Use the container's own `cypher-shell`
+    as a readiness probe — it succeeds only when the database is live.
+    """
+    proc = _run(
+        [
+            "exec", CONTAINER_NAME,
+            "cypher-shell",
+            "-u", DEFAULT_USER, "-p", DEFAULT_PASSWORD,
+            "--format", "plain",
+            "RETURN 1",
+        ],
+        timeout=10,
+    )
+    return proc.returncode == 0
+
+
+def _wait_for_ready(timeout: int = 120) -> None:
+    """Poll Neo4j until it accepts Bolt queries, or raise.
+
+    Two-phase: first wait for :7687 to be bound (cheap), then for
+    `cypher-shell RETURN 1` to succeed (the real readiness gate). Default
+    timeout is 120s — first-run image pull + plugin load + kernel start
+    can take well over a minute on a fresh machine.
+    """
     deadline = time.monotonic() + timeout
+    # Phase 1: wait for the port to open.
     while time.monotonic() < deadline:
         if _port_bound(BOLT_PORT):
-            # Bolt port is open. Give Neo4j a beat to finish starting up
-            # before we hand it to the Python driver.
-            time.sleep(1)
-            return
+            break
         time.sleep(1)
+    else:
+        raise PodmanError(
+            f"Neo4j did not open :{BOLT_PORT} within {timeout}s. "
+            "Check `podman logs neo4j-ki` and references/neo4j-podman.md."
+        )
+    # Phase 2: wait for actual query readiness.
+    while time.monotonic() < deadline:
+        if _bolt_ready():
+            return
+        time.sleep(2)
     raise PodmanError(
-        f"Neo4j did not become ready on :{BOLT_PORT} within {timeout}s. "
-        "Check `podman logs neo4j-ki` and references/neo4j-podman.md."
+        f"Neo4j opened :{BOLT_PORT} but is not yet serving queries after "
+        f"{timeout}s. Check `podman logs neo4j-ki` and "
+        "references/neo4j-podman.md."
     )
 
 
-def ensure_running(*, wait_seconds: int = 60) -> PodmanCredentials:
+def ensure_running(*, wait_seconds: int = 120) -> PodmanCredentials:
     """Bring the `neo4j-ki` container to a running state. Idempotent.
 
     Handles three input states:

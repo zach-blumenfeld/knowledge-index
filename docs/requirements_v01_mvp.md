@@ -162,8 +162,11 @@ $ ki configure
 No Neo4j connection found. Set one up?
 
   1) Local (neo4j w/ podman) → runs `neo4j:latest` in a local Podman container (APOC + GenAI plugins); full runbook at `references/neo4j-podman.md`
+     Best for: solo work on this laptop
   2) Aura                    → wraps `neo4j-cli aura create` (cloud — billable; creates a real instance) see https://github.com/neo4j-labs/neo4j-cli
+     Best for: sharing an index across machines or a team
   3) Existing                → prompts for URI + credentials
+     Best for: pointing at a Neo4j you already run
 
 Choice [1]:
 ```

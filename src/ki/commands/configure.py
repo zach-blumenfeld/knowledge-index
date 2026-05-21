@@ -74,11 +74,20 @@ def configure(
             " in a local Podman container (APOC + GenAI plugins)"
         )
         console.print(
+            "     [dim]Best for: solo work on this laptop[/dim]"
+        )
+        console.print(
             "  [cyan]2) Aura[/cyan]                    → wraps `neo4j-cli aura create`"
             " ([red]billable cloud resource[/red])"
         )
         console.print(
-            "  [cyan]3) Existing[/cyan]                → prompt for URI + credentials\n"
+            "     [dim]Best for: sharing an index across machines or a team[/dim]"
+        )
+        console.print(
+            "  [cyan]3) Existing[/cyan]                → prompt for URI + credentials"
+        )
+        console.print(
+            "     [dim]Best for: pointing at a Neo4j you already run[/dim]\n"
         )
         choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
 
