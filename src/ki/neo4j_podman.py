@@ -28,6 +28,22 @@ DEFAULT_USER = "neo4j"
 DEFAULT_PASSWORD = "password"
 # Quoted JSON list — Neo4j reads this env var literally.
 PLUGINS_ENV = '["apoc","genai"]'
+# JVM heap ceiling for the canonical container. Conservatively sized for a
+# personal-laptop tool — total Neo4j footprint (heap + pagecache + native
+# overhead) lands around ~2 GB so `ki` is a good citizen alongside the
+# user's other apps. Covers the documented v1 envelope (10k docs / 1 GB
+# per vault, ingest-dominated; see docs/requirements_v01_mvp.md
+# § Scalability) because the batcher's existing OOM auto-recovery
+# (halve-and-retry at floor 16) absorbs the occasional fat transaction.
+# Users hitting "batch size shrunk to N" warnings on huge vaults can
+# override via their own `podman run -e ...` or bump --batch-size.
+HEAP_MAX_SIZE = "1G"
+# Page cache holds graph-store pages used during MERGE/MATCH lookups. For
+# ingest workloads (write-dominated) the page cache barely matters; a
+# small one keeps the total memory commit honest. Neo4j's pre-flight
+# refuses to start if heap + pagecache + native > container memory, so
+# this MUST be set explicitly whenever HEAP_MAX_SIZE is set.
+PAGECACHE_SIZE = "512M"
 
 ContainerState = Literal["running", "stopped", "missing"]
 
@@ -203,6 +219,8 @@ def ensure_running(*, wait_seconds: int = 120) -> PodmanCredentials:
             "-v", f"{VOLUME_NAME}:/data",
             "-e", f"NEO4J_AUTH={DEFAULT_USER}/{DEFAULT_PASSWORD}",
             "-e", f"NEO4J_PLUGINS={PLUGINS_ENV}",
+            "-e", f"NEO4J_server_memory_heap_max__size={HEAP_MAX_SIZE}",
+            "-e", f"NEO4J_server_memory_pagecache_size={PAGECACHE_SIZE}",
             IMAGE,
         ],
         timeout=300,  # first-run image pull can be slow.

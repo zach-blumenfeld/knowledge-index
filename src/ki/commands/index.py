@@ -8,11 +8,20 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.prompt import Prompt
 
 from ..config import find_config_path, load_config
 from ..ingest.pipeline import (
     IngestOptions,
+    IngestServiceUnavailable,
     ingest_vault,
 )
 from ..vault import (
@@ -23,6 +32,133 @@ from .configure import configure as configure_flow
 
 log = logging.getLogger(__name__)
 console = Console()
+
+
+class _RichProgressReporter:
+    """Rich-backed `ProgressReporter` for interactive `ki index` runs (#53).
+
+    Three sequential tasks match the ingest phases: reading, processing
+    docs (with running added/updated/skipped counts), and a finalize spinner.
+    """
+
+    def __init__(self, console: Console) -> None:
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        )
+        self._read_task: int | None = None
+        self._read_total: int = 0
+        self._docs_task: int | None = None
+        self._finalize_task: int | None = None
+        self._counts = {"added": 0, "updated": 0, "skipped": 0}
+
+    def __enter__(self) -> _RichProgressReporter:
+        self._progress.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._progress.stop()
+
+    def reading_start(self, total: int) -> None:
+        self._read_total = total
+        self._read_task = self._progress.add_task("Reading files", total=total)
+
+    def reading_advance(self, n: int = 1) -> None:
+        if self._read_task is not None:
+            self._progress.update(self._read_task, advance=n)
+
+    def reading_done(self) -> None:
+        if self._read_task is not None:
+            self._progress.update(self._read_task, completed=self._read_total)
+
+    def docs_start(self, total: int) -> None:
+        self._docs_task = self._progress.add_task(
+            "Processing docs", total=total
+        )
+
+    def doc_processed(self, kind: str) -> None:
+        if kind in self._counts:
+            self._counts[kind] += 1
+        if self._docs_task is not None:
+            self._progress.update(
+                self._docs_task,
+                advance=1,
+                description=(
+                    f"Processing docs ("
+                    f"added {self._counts['added']}, "
+                    f"updated {self._counts['updated']}, "
+                    f"skipped {self._counts['skipped']})"
+                ),
+            )
+
+    def docs_done(self) -> None:
+        pass
+
+    def finalize_start(self) -> None:
+        self._finalize_task = self._progress.add_task(
+            "Finalizing links + aliases", total=None
+        )
+
+    def finalize_done(self) -> None:
+        if self._finalize_task is not None:
+            self._progress.update(
+                self._finalize_task, completed=1, total=1
+            )
+
+
+def _render_service_unavailable(
+    exc: IngestServiceUnavailable, *, batch_size: int
+) -> None:
+    """Render a Profile.source-aware recovery hint block for an ingest crash.
+
+    #54 Fix 3. `local-podman` profiles get the canonical `neo4j-ki` container
+    commands and a pointer to `references/neo4j-podman.md` *Recovery*; other
+    profiles get generic heap/batch/split guidance since we don't know their
+    container shape.
+    """
+    console.print(
+        f"[red]✗[/red] Neo4j connection lost after "
+        f"[bold]{exc.docs_processed}[/bold] / {exc.docs_total} docs.",
+    )
+    console.print(
+        "[dim]The database stopped responding mid-ingest — most often this "
+        "means Neo4j ran out of memory.[/dim]\n"
+    )
+    if exc.profile_source == "local-podman":
+        console.print("[bold]Diagnose the container:[/bold]")
+        console.print("  [cyan]podman ps -a --filter name=neo4j-ki[/cyan]")
+        console.print("  [cyan]podman logs --tail 80 neo4j-ki[/cyan]\n")
+        console.print("[bold]If the container stopped, restart it:[/bold]")
+        console.print("  [cyan]podman start neo4j-ki[/cyan]")
+        console.print(
+            "  [cyan]podman exec neo4j-ki cypher-shell -u neo4j -p password "
+            "'RETURN 1'[/cyan]  (wait until this returns)\n"
+        )
+        console.print(
+            "[bold]Then retry the index.[/bold] Full recovery flow + heap "
+            "tuning notes live in [cyan]references/neo4j-podman.md[/cyan] "
+            "(Recovery — graph went away)."
+        )
+    else:
+        console.print("[bold]Likely fixes:[/bold]")
+        console.print(
+            f"  • Lower [cyan]--batch-size[/cyan] (currently {batch_size}); "
+            "try half."
+        )
+        console.print(
+            "  • Increase the Neo4j JVM heap (e.g. "
+            "[cyan]NEO4J_server_memory_heap_max__size=4G[/cyan] for "
+            "Docker/Podman setups)."
+        )
+        console.print(
+            "  • Split the vault into smaller subsets across multiple "
+            "[cyan]ki index[/cyan] runs."
+        )
 
 
 def cmd_index(
@@ -87,6 +223,13 @@ def cmd_index(
         if prompted:
             effective_description = prompted
 
+    # TTY-only progress reporter (#53). Non-interactive runs (CI, redirected
+    # stdout) get no bar — keeps logs clean.
+    use_progress = sys.stdout.isatty()
+    reporter: _RichProgressReporter | None = (
+        _RichProgressReporter(console) if use_progress else None
+    )
+
     opts = IngestOptions(
         profile=prof,
         batch_size=batch_size,
@@ -95,14 +238,22 @@ def cmd_index(
         description=effective_description,
         force_description=force_description,
         chunk_size=chunk_size,
+        progress=reporter,
     )
     try:
-        result = ingest_vault(path, opts)
+        if reporter is not None:
+            with reporter:
+                result = ingest_vault(path, opts)
+        else:
+            result = ingest_vault(path, opts)
     except VaultDescriptionExists as exc:
         raise click.ClickException(
             f"vault at {path} already has a description set "
             f"(\"{exc.existing[:60]}...\"). Pass --force-description to overwrite."
         ) from exc
+    except IngestServiceUnavailable as exc:
+        _render_service_unavailable(exc, batch_size=batch_size)
+        raise click.ClickException("Neo4j connection lost mid-ingest") from exc
 
     # Output summary.
     if result.vault_created:

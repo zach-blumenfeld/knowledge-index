@@ -15,14 +15,33 @@ forcing a rigid schema onto the user's metadata.
 from __future__ import annotations
 
 import json
+import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
 import frontmatter as _frontmatter
+import yaml
+
+log = logging.getLogger(__name__)
 
 ALIAS_KEYS = ("aliases", "alias")
 CREATED_KEYS = ("created", "date", "createdAt")
+
+# ASCII control characters that PyYAML refuses to read. Everything in
+# 0x00–0x1F and 0x7F except the three whitespace chars YAML actually allows
+# (`\t`, `\n`, `\r`). Real-world dataset exports occasionally embed these in
+# string values; sanitizing them is almost never lossy.
+_YAML_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
+
+# Strips the leading YAML frontmatter block (`---\n...\n---\n`) — used in
+# the final fallback when even sanitized YAML won't parse, so the broken
+# block doesn't end up indexed as body content.
+_FRONTMATTER_BLOCK_RE = re.compile(
+    r"\A---[^\S\r\n]*\r?\n.*?\r?\n---[^\S\r\n]*\r?\n",
+    re.DOTALL,
+)
 
 
 @dataclass
@@ -66,9 +85,40 @@ def _json_default(o: Any) -> Any:
     return str(o)
 
 
-def parse_frontmatter(text: str) -> FrontmatterFields:
-    """Parse YAML frontmatter from a markdown string and split it into fields."""
-    post = _frontmatter.loads(text)
+def _empty_fields(text: str) -> FrontmatterFields:
+    """Return empty fields with the leading YAML block stripped from the body."""
+    body = _FRONTMATTER_BLOCK_RE.sub("", text, count=1)
+    return FrontmatterFields(
+        aliases=[],
+        frontmatter_created_at=None,
+        frontmatter_json=None,
+        body=body,
+    )
+
+
+def parse_frontmatter(
+    text: str, *, filename: str | None = None
+) -> FrontmatterFields:
+    """Parse YAML frontmatter from a markdown string and split it into fields.
+
+    Forgiving on malformed input: ASCII control chars are stripped on first
+    PyYAML failure; if that still won't parse, log a warning and treat the
+    document as having no frontmatter (body is still indexed).
+    """
+    try:
+        post = _frontmatter.loads(text)
+    except yaml.YAMLError:
+        # First retry: strip ASCII control chars that PyYAML refuses to read.
+        sanitized = _YAML_CONTROL_CHARS.sub("", text)
+        try:
+            post = _frontmatter.loads(sanitized)
+        except yaml.YAMLError as exc:
+            log.warning(
+                "malformed frontmatter in %s; ignoring it (%s)",
+                filename or "<unknown>",
+                exc.__class__.__name__,
+            )
+            return _empty_fields(text)
     meta: dict[str, Any] = dict(post.metadata or {})
 
     aliases: list[str] = []

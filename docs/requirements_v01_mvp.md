@@ -233,6 +233,19 @@ Documents, sections, and edges all use the standard `UNWIND` pattern — driver-
 - Re-index of an **unchanged** vault: **< 5 seconds** (fileHash skip makes this near-instant).
 - Initial index of a **10k-document vault**: **< 5 minutes** on a developer laptop against local Neo4j (Podman container per `references/neo4j-podman.md`).
 
+### Neo4j heap sizing
+
+The canonical Local-Podman container ships with **`heap_max__size=1G` + `pagecache_size=512M`** — total Neo4j footprint ~2 GB, sized so `ki` is a good citizen alongside the user's other apps on a personal laptop. The batcher's OOM auto-recovery (halve-and-retry at floor 16) absorbs the occasional fat transaction, so 1 GB heap covers most of the v1 envelope without tuning. If you're running Neo4j elsewhere (Aura, an existing Docker container, a remote instance) or hitting "batch size shrunk to N" warnings frequently, use this as the rough sizing guide:
+
+| Vault size                    | Recommended JVM heap (max)              | Recommended page cache |
+|-------------------------------|------------------------------------------|------------------------|
+| up to ~5k docs / ~500 MB      | 1 GB *(canonical default)*               | 512 MB                 |
+| ~5k–10k docs / ~500 MB–1 GB   | 2 GB *(bump if shrink warnings appear)*  | 512 MB – 1 GB          |
+
+Always set heap and page cache **together** — Neo4j's pre-flight refuses to start if `heap + pagecache + native overhead > container memory`. Setting only heap leaves the page cache to auto-tune, which can blow the budget on a constrained Podman VM and crash-loop the container.
+
+On macOS, the Podman machine's RAM is the outer constraint: `podman machine init --memory 4096` (4 GB) leaves enough headroom for the canonical ~2 GB Neo4j commit plus container overhead. See `references/neo4j-podman.md` *Preflight* and *Resizing the Podman machine*.
+
 ### Levers (in order of impact)
 
 1. **`Document.fileHash` (SHA-256) skip on unchanged files.** Most re-indexes touch <1% of files; everything else short-circuits before any Cypher runs. This is the biggest single win and is already in the schema.
