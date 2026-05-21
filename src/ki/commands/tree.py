@@ -56,6 +56,18 @@ def cmd_tree(
     with driver_for(prof) as driver, driver.session() as session:
         rows = _collect_rows(session, root_uri, depth, full=full)
 
+    if not rows:
+        if root_uri is None:
+            click.echo(
+                "(no vaults indexed yet — run `ki index <path>` to create one)"
+            )
+        else:
+            click.echo(
+                f"(no node found at `{root_uri}` — try `ki tree` (no --at) "
+                "to list all vaults, or `ki vault list`)"
+            )
+        return 0
+
     click.echo(_format_rows(rows, full=full))
     return 0
 
