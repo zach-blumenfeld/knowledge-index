@@ -68,6 +68,10 @@ class _RichProgressReporter:
         self._read_total = total
         self._read_task = self._progress.add_task("Reading files", total=total)
 
+    def reading_advance(self, n: int = 1) -> None:
+        if self._read_task is not None:
+            self._progress.update(self._read_task, advance=n)
+
     def reading_done(self) -> None:
         if self._read_task is not None:
             self._progress.update(self._read_task, completed=self._read_total)

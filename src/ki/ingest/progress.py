@@ -14,12 +14,14 @@ class ProgressReporter(Protocol):
     """Phase-boundary hooks consumed by `ingest_vault`.
 
     Three phases match the actual ingest shape:
-      1. Reading files (concurrent read).
+      1. Reading files (interleaved with phase 2 since #54 Fix 1 streams the
+         reads in batches; `reading_advance` ticks as bytes arrive).
       2. Processing docs (parse + per-doc Neo4j write; the dominant phase).
       3. Finalizing (LINKS_TO + stub/external doc materialization + aliases).
     """
 
     def reading_start(self, total: int) -> None: ...
+    def reading_advance(self, n: int = 1) -> None: ...
     def reading_done(self) -> None: ...
     def docs_start(self, total: int) -> None: ...
     def doc_processed(self, kind: str) -> None: ...  # "added" | "updated" | "skipped"
@@ -32,6 +34,9 @@ class NullProgressReporter:
     """No-op reporter; used when no UI is attached (tests, non-TTY)."""
 
     def reading_start(self, total: int) -> None:
+        pass
+
+    def reading_advance(self, n: int = 1) -> None:
         pass
 
     def reading_done(self) -> None:

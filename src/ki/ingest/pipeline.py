@@ -8,7 +8,9 @@ Order of operations per ingest run:
 
   1. Discover .md files under the vault root (skipping hidden / ignored dirs).
   2. Size-guard the file list; oversize files are reported, not parsed.
-  3. Read all (filtered) file bytes concurrently (bounded by `concurrency`).
+  3. Stream file bytes concurrently in batches (bounded by `concurrency`),
+     yielding one (path, bytes) at a time so peak RSS is bounded by
+     batch * file_size, not by vault size (#54 Fix 1).
   4. Open a single Neo4j session.
      a. Apply schema (constraints + fulltext index).
      b. Run the per-vault upsert (User, Vault, USES_VAULT, vault LOADED).
@@ -50,6 +52,7 @@ import asyncio
 import logging
 import re
 import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -95,6 +98,12 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CONCURRENCY = 16
 DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+# Files per streamed read batch (#54 Fix 1). Batches bound peak Python RSS to
+# `READ_BATCH_SIZE * avg_file_size` instead of the whole vault, while keeping
+# enough work per asyncio.run call that file-I/O concurrency is amortized.
+# 64 × ~60 KB avg ≈ 4 MB resident per batch — three orders of magnitude under
+# the vault-size envelope (1 GB).
+READ_BATCH_SIZE = 64
 
 
 @dataclass
@@ -128,10 +137,39 @@ async def _read_all(paths: list[Path], concurrency: int) -> list[tuple[Path, byt
     return await asyncio.gather(*[_read_one(p, sem) for p in paths])
 
 
-def _read_files_concurrent(paths: list[Path], concurrency: int) -> list[tuple[Path, bytes]]:
+def _stream_file_bytes(
+    paths: list[Path],
+    concurrency: int,
+    batch_size: int = READ_BATCH_SIZE,
+    on_batch_read: Callable[[int], None] | None = None,
+) -> Iterator[tuple[Path, bytes]]:
+    """Yield `(path, bytes)` one file at a time, reading in batches.
+
+    Within a batch, opens are bounded by `concurrency` (asyncio semaphore).
+    The generator only holds one batch's worth of bytes in memory at a time,
+    plus whatever the consumer is currently processing — peak Python RSS is
+    `O(batch_size * avg_file_size)` instead of `O(vault_size)` (#54 Fix 1).
+
+    `on_batch_read(n)` is invoked once per batch with the number of files
+    just read — lets the caller tick a "reading" progress bar as bytes
+    arrive rather than once at the end.
+
+    This is the symmetric counterpart to the per-doc write loop: both sides
+    process one file/doc at a time end-to-end, so the documented "process
+    one document at a time" lever (`docs/requirements_v01_mvp.md`
+    § Scalability lever 4) now holds on the read side too.
+    """
     if not paths:
-        return []
-    return asyncio.run(_read_all(paths, concurrency))
+        return
+    for start in range(0, len(paths), batch_size):
+        batch = paths[start : start + batch_size]
+        batch_bytes = asyncio.run(_read_all(batch, concurrency))
+        if on_batch_read is not None:
+            on_batch_read(len(batch_bytes))
+        yield from batch_bytes
+        # batch_bytes goes out of scope at the next loop iteration; each
+        # consumed tuple's bytes object is then collectable as soon as the
+        # consumer's iteration variable rebinds. Peak RSS stays bounded.
 
 
 # --- Resolver ---------------------------------------------------------------
@@ -422,11 +460,15 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             p,
         )
 
-    # 2. Concurrent reads. Bytes held in memory; the trade-off is one
-    # pass of vault size — acceptable at v1 envelopes (1 GB).
+    # 2. Streaming concurrent reads (#54 Fix 1). `files_stream` is a generator
+    # — files are pulled in batches of READ_BATCH_SIZE, the consumer drains
+    # one (path, bytes) at a time, and each batch's bytes are released before
+    # the next is read. Peak Python RSS is bounded by batch * file_size, not
+    # by vault size.
     progress.reading_start(len(keep))
-    files_bytes = _read_files_concurrent(keep, opts.concurrency)
-    progress.reading_done()
+    files_stream = _stream_file_bytes(
+        keep, opts.concurrency, on_batch_read=progress.reading_advance,
+    )
 
     # `result.vault_uri` / `vault_created` are filled in after slug assignment
     # inside the session below — see step 3.
@@ -580,8 +622,8 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                 # contents haven't changed, so we stamp the new path post-loop.
                 path_refresh_rows: list[dict[str, str]] = []
 
-                progress.docs_start(len(files_bytes))
-                for path, content_bytes in files_bytes:
+                progress.docs_start(len(keep))
+                for path, content_bytes in files_stream:
                     rel_path = path.relative_to(vault_root)
                     doc_uri = document_uri(vault_uri, rel_path)
                     fh = hash_bytes(content_bytes)
@@ -642,6 +684,8 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     )
                     progress.doc_processed("added" if is_new else "updated")
 
+                # `files_stream` is drained by now; reading is complete.
+                progress.reading_done()
                 progress.docs_done()
                 progress.finalize_start()
 
