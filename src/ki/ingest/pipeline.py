@@ -82,6 +82,7 @@ from ..vault import (
 )
 from . import queries as Q
 from .batcher import DEFAULT_BATCH_SIZE, run_batched
+from .progress import NullProgressReporter, ProgressReporter
 from .provenance import (
     build_load_provenance,
     build_user_mutable,
@@ -329,6 +330,9 @@ class IngestOptions:
     # vault-nuke step (only relevant when re-indexing an existing vault).
     # See `docs/index_rm_behavior.md` *Batched DETACH DELETE*.
     chunk_size: int = 1000
+    # Progress reporter hooked at phase boundaries. CLI installs a rich-backed
+    # implementation on TTY runs; tests and non-TTY runs pass None. See #53.
+    progress: ProgressReporter | None = None
 
 
 def _split_oversize(
@@ -354,6 +358,8 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
     vault_root = Path(vault_root).resolve()
     if not vault_root.exists() or not vault_root.is_dir():
         raise ValueError(f"vault path not a directory: {vault_root}")
+
+    progress: ProgressReporter = opts.progress or NullProgressReporter()
 
     # Marker handling — slug assignment moves inside the open Neo4j session
     # because collision detection needs to query the graph. Description
@@ -387,7 +393,9 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
 
     # 2. Concurrent reads. Bytes held in memory; the trade-off is one
     # pass of vault size — acceptable at v1 envelopes (1 GB).
+    progress.reading_start(len(keep))
     files_bytes = _read_files_concurrent(keep, opts.concurrency)
+    progress.reading_done()
 
     # `result.vault_uri` / `vault_created` are filled in after slug assignment
     # inside the session below — see step 3.
@@ -540,6 +548,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             # contents haven't changed, so we stamp the new path post-loop.
             path_refresh_rows: list[dict[str, str]] = []
 
+            progress.docs_start(len(files_bytes))
             for path, content_bytes in files_bytes:
                 rel_path = path.relative_to(vault_root)
                 doc_uri = document_uri(vault_uri, rel_path)
@@ -551,6 +560,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     # machine-scoped and may have moved. The resolver is
                     # already populated from _load_resolver.
                     path_refresh_rows.append({"docUri": doc_uri, "path": str(path)})
+                    progress.doc_processed("skipped")
                     continue
 
                 is_new = existing_hashes.get(doc_uri) is None
@@ -558,6 +568,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     text = content_bytes.decode("utf-8", errors="replace")
                 except Exception:  # noqa: BLE001
                     log.warning("failed to decode %s; skipping", path)
+                    progress.doc_processed("skipped")
                     continue
 
                 parsed = parse_markdown(text, filename=path.name)
@@ -597,6 +608,10 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                         [(s.uri, s.links) for s in parsed.flat_sections if s.links],
                     )
                 )
+                progress.doc_processed("added" if is_new else "updated")
+
+            progress.docs_done()
+            progress.finalize_start()
 
             # 8. Tree HAS edges (Vault|Folder -> Folder|Document) — written
             # after the doc loop so every Document MATCH target exists. Folder
@@ -719,6 +734,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     on_shrink=on_shrink,
                 )
 
+    progress.finalize_done()
     result.batch_shrunk_to = shrink_state["size"]
     return result
 

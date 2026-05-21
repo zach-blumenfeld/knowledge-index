@@ -8,6 +8,14 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.prompt import Prompt
 
 from ..config import find_config_path, load_config
@@ -23,6 +31,79 @@ from .configure import configure as configure_flow
 
 log = logging.getLogger(__name__)
 console = Console()
+
+
+class _RichProgressReporter:
+    """Rich-backed `ProgressReporter` for interactive `ki index` runs (#53).
+
+    Three sequential tasks match the ingest phases: reading, processing
+    docs (with running added/updated/skipped counts), and a finalize spinner.
+    """
+
+    def __init__(self, console: Console) -> None:
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        )
+        self._read_task: int | None = None
+        self._read_total: int = 0
+        self._docs_task: int | None = None
+        self._finalize_task: int | None = None
+        self._counts = {"added": 0, "updated": 0, "skipped": 0}
+
+    def __enter__(self) -> _RichProgressReporter:
+        self._progress.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._progress.stop()
+
+    def reading_start(self, total: int) -> None:
+        self._read_total = total
+        self._read_task = self._progress.add_task("Reading files", total=total)
+
+    def reading_done(self) -> None:
+        if self._read_task is not None:
+            self._progress.update(self._read_task, completed=self._read_total)
+
+    def docs_start(self, total: int) -> None:
+        self._docs_task = self._progress.add_task(
+            "Processing docs", total=total
+        )
+
+    def doc_processed(self, kind: str) -> None:
+        if kind in self._counts:
+            self._counts[kind] += 1
+        if self._docs_task is not None:
+            self._progress.update(
+                self._docs_task,
+                advance=1,
+                description=(
+                    f"Processing docs ("
+                    f"added {self._counts['added']}, "
+                    f"updated {self._counts['updated']}, "
+                    f"skipped {self._counts['skipped']})"
+                ),
+            )
+
+    def docs_done(self) -> None:
+        pass
+
+    def finalize_start(self) -> None:
+        self._finalize_task = self._progress.add_task(
+            "Finalizing links + aliases", total=None
+        )
+
+    def finalize_done(self) -> None:
+        if self._finalize_task is not None:
+            self._progress.update(
+                self._finalize_task, completed=1, total=1
+            )
 
 
 def cmd_index(
@@ -87,6 +168,13 @@ def cmd_index(
         if prompted:
             effective_description = prompted
 
+    # TTY-only progress reporter (#53). Non-interactive runs (CI, redirected
+    # stdout) get no bar — keeps logs clean.
+    use_progress = sys.stdout.isatty()
+    reporter: _RichProgressReporter | None = (
+        _RichProgressReporter(console) if use_progress else None
+    )
+
     opts = IngestOptions(
         profile=prof,
         batch_size=batch_size,
@@ -95,9 +183,14 @@ def cmd_index(
         description=effective_description,
         force_description=force_description,
         chunk_size=chunk_size,
+        progress=reporter,
     )
     try:
-        result = ingest_vault(path, opts)
+        if reporter is not None:
+            with reporter:
+                result = ingest_vault(path, opts)
+        else:
+            result = ingest_vault(path, opts)
     except VaultDescriptionExists as exc:
         raise click.ClickException(
             f"vault at {path} already has a description set "

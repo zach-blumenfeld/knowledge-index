@@ -301,3 +301,62 @@ def test_document_with_no_headings_has_preamble_only():
     doc = parse_markdown(text, filename="d.md")
     assert doc.flat_sections == []
     assert "just some text" in doc.preamble
+
+
+# --- Frontmatter robustness (#53) ------------------------------------------
+
+
+def test_frontmatter_with_control_char_recovers():
+    """A stray ASCII control char (0x7F here) in a string value must not
+    abort the parse — PyYAML refuses to read it, so we sanitize and retry."""
+    text = (
+        '---\n'
+        'title: "Bones of the\x7f Milky Way"\n'
+        'aliases: ["Nessie"]\n'
+        '---\n'
+        '# Body\n'
+    )
+    fm = parse_frontmatter(text, filename="dirty.md")
+    assert fm.aliases == ["Nessie"]
+    # Sanitization strips the control char, so the surrounding text remains.
+    assert fm.frontmatter_json is not None
+    assert "Bones of the Milky Way" in fm.frontmatter_json
+    assert fm.body.startswith("# Body")
+
+
+def test_frontmatter_completely_broken_falls_back_cleanly(caplog):
+    """Syntactically broken YAML (unterminated quote) survives sanitization
+    too — fall through to empty fields, body excludes the `---...---` block,
+    and a warning naming the filename is logged."""
+    text = (
+        '---\n'
+        'title: "missing closing quote\n'
+        '---\n'
+        'real body line\n'
+    )
+    with caplog.at_level("WARNING"):
+        fm = parse_frontmatter(text, filename="broken.md")
+    assert fm.aliases == []
+    assert fm.frontmatter_created_at is None
+    assert fm.frontmatter_json is None
+    # The broken YAML block must not bleed into body content.
+    assert "missing closing quote" not in fm.body
+    assert "real body line" in fm.body
+    # Warning logged with the filename.
+    assert any("broken.md" in rec.message for rec in caplog.records)
+
+
+def test_frontmatter_clean_yaml_unchanged():
+    """Happy path: no sanitization, no warnings — round-trips as before."""
+    text = (
+        '---\n'
+        'title: "Clean"\n'
+        'aliases: ["A", "B"]\n'
+        '---\n'
+        'body\n'
+    )
+    fm = parse_frontmatter(text, filename="clean.md")
+    assert fm.aliases == ["A", "B"]
+    assert fm.frontmatter_json is not None
+    assert "Clean" in fm.frontmatter_json
+    assert fm.body.startswith("body")

@@ -275,7 +275,7 @@ def parse_markdown(text: str, *, filename: str) -> ParsedDocument:
     `filename` is the source basename (e.g. "ideas.md"). It's used for
     Document.name and Document.displayName per docs/data-model.md.
     """
-    fm: FrontmatterFields = parse_frontmatter(text)
+    fm: FrontmatterFields = parse_frontmatter(text, filename=filename)
 
     blocks = _split_into_blocks(fm.body)
     preamble, top_level, dfs = _build_tree(blocks)
