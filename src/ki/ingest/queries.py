@@ -191,13 +191,19 @@ SET ld += $loadProps,
 # no content / frontmatter / aliases-from-frontmatter (aliases are filled
 # from link-text via WRITE_DISPLAY_TEXT_ALIASES). The parent HAS edge is
 # written separately via WRITE_TREE_EDGES — same as md docs.
+#
+# `displayName` is `ON CREATE SET` only: first link-text encountered "wins"
+# the displayName slot; subsequent ingests preserve it. Additional link
+# texts (different anchor, second link in another section) flow to the
+# `aliases` channel via WRITE_DISPLAY_TEXT_ALIASES, which dedupes
+# client-side against the target's current displayName.
 WRITE_STUB_DOCUMENTS = """
 UNWIND $stubDocRows AS row
 MERGE (d:Document {uri: row.uri})
 ON CREATE SET d.firstLoadedAt = $now,
-              d.sourceType = 'LOCAL_FILE'
+              d.sourceType = 'LOCAL_FILE',
+              d.displayName = row.displayName
 SET d.name = row.name,
-    d.displayName = row.displayName,
     d.path = row.path,
     d.fileHash = row.fileHash,
     d.lastLoadedAt = $now
@@ -211,14 +217,16 @@ SET d.name = row.name,
 # 0.4.0 per #37 design.
 #
 # Cross-vault collapse comes for free: the same URL referenced from two
-# vaults MERGEs into one node with LINKS_TO from both.
+# vaults MERGEs into one node with LINKS_TO from both. `displayName` is
+# `ON CREATE SET` so the first vault's link-text wins the slot; later
+# vaults' link texts become aliases via WRITE_DISPLAY_TEXT_ALIASES.
 WRITE_EXTERNAL_DOCUMENTS = """
 UNWIND $externalDocRows AS row
 MERGE (d:Document {uri: row.uri})
 ON CREATE SET d.firstLoadedAt = $now,
-              d.sourceType = 'URL_LINK'
+              d.sourceType = 'URL_LINK',
+              d.displayName = row.displayName
 SET d.name = row.name,
-    d.displayName = row.displayName,
     d.lastLoadedAt = $now
 """.strip()
 

@@ -60,9 +60,9 @@ def test_external_url_creates_external_document(tmp_path, neo4j_profile, cleanup
         assert row["n"] >= 1
 
 
-def test_external_url_link_text_becomes_alias(tmp_path, neo4j_profile, cleanup_vault):
-    """Per #37 q3: the `[text]` part populates the target's `aliases` list."""
-    vault = tmp_path / "alias-url-vault"
+def test_external_url_link_text_becomes_display_name(tmp_path, neo4j_profile, cleanup_vault):
+    """First link-text encountered wins the target's `displayName` slot."""
+    vault = tmp_path / "display-url-vault"
     vault.mkdir()
     (vault / "post.md").write_text(
         "# Post\n\nSee [Aura Agent launch](https://neo4j.com/product/aura-agent/).\n"
@@ -72,10 +72,74 @@ def test_external_url_link_text_becomes_alias(tmp_path, neo4j_profile, cleanup_v
 
     with driver_for(neo4j_profile) as driver, driver.session() as session:
         row = session.run(
-            "MATCH (d:Document {uri: $u}) RETURN d.aliases AS aliases",
+            "MATCH (d:Document {uri: $u}) "
+            "RETURN d.displayName AS dn, d.aliases AS aliases",
             u="https://neo4j.com/product/aura-agent/",
         ).single()
-    assert "Aura Agent launch" in (row["aliases"] or [])
+    assert row["dn"] == "Aura Agent launch"
+    # Single link text; nothing additional in aliases (the display-text
+    # normalizer drops entries equal to displayName).
+    assert "Aura Agent launch" not in (row["aliases"] or [])
+
+
+def test_extra_link_text_flows_to_aliases(tmp_path, neo4j_profile, cleanup_vault):
+    """When the same URL is linked twice with different texts in one ingest,
+    the first text wins displayName and the second becomes an alias."""
+    vault = tmp_path / "two-anchors-vault"
+    vault.mkdir()
+    (vault / "post.md").write_text(
+        "# Post\n\n"
+        "See [Launch blog](https://neo4j.com/blog/x).\n\n"
+        "## Also\n\n"
+        "And [Aura announcement](https://neo4j.com/blog/x).\n"
+    )
+    res = _run_ingest(vault, neo4j_profile)
+    cleanup_vault.append(res.vault_uri)
+
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        row = session.run(
+            "MATCH (d:Document {uri: $u}) "
+            "RETURN d.displayName AS dn, d.aliases AS aliases",
+            u="https://neo4j.com/blog/x",
+        ).single()
+    # Whichever was processed first becomes displayName; the other → aliases.
+    assert row["dn"] in ("Launch blog", "Aura announcement")
+    other = (
+        "Aura announcement" if row["dn"] == "Launch blog" else "Launch blog"
+    )
+    assert other in (row["aliases"] or [])
+
+
+def test_displayname_preserved_across_vaults(
+    tmp_path, neo4j_profile, cleanup_vault,
+):
+    """Once an external Document has a displayName, a later vault linking the
+    same URL with different text becomes an alias — doesn't overwrite."""
+    url = "https://example.com/preserved-name"
+
+    # Vault A: first to introduce the URL, with link text "Original Name".
+    a = tmp_path / "vault-a"
+    a.mkdir()
+    (a / "n.md").write_text(f"# N\n\n[Original Name]({url}).\n")
+    res_a = _run_ingest(a, neo4j_profile)
+    cleanup_vault.append(res_a.vault_uri)
+
+    # Vault B: same URL, different link text.
+    b = tmp_path / "vault-b"
+    b.mkdir()
+    (b / "n.md").write_text(f"# N\n\n[Alternate Phrasing]({url}).\n")
+    res_b = _run_ingest(b, neo4j_profile)
+    cleanup_vault.append(res_b.vault_uri)
+
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        row = session.run(
+            "MATCH (d:Document {uri: $u}) "
+            "RETURN d.displayName AS dn, d.aliases AS aliases",
+            u=url,
+        ).single()
+    # Vault A's name is sticky (ON CREATE SET); Vault B's text → aliases.
+    assert row["dn"] == "Original Name"
+    assert "Alternate Phrasing" in (row["aliases"] or [])
 
 
 def test_cross_vault_external_url_collapses_to_one_node(
@@ -126,15 +190,18 @@ def test_internal_non_md_creates_stub_document(tmp_path, neo4j_profile, cleanup_
         row = session.run(
             "MATCH (d:Document {uri: $u}) "
             "RETURN d.sourceType AS st, d.path AS p, d.fileHash AS fh, "
-            "d.name AS name, d.aliases AS aliases",
+            "d.name AS name, d.displayName AS dn",
             u=stub_uri,
         ).single()
         assert row is not None, "stub Document not created"
         assert row["st"] == "LOCAL_FILE"
         assert row["p"].endswith("q3-deck.pptx")
         assert row["fh"] is not None and len(row["fh"]) == 64  # sha256 hex
+        # name stays the on-disk filename for machine-readable identity; the
+        # link text wins displayName (so `ki tree` shows "Q3 deck" instead of
+        # the bare filename).
         assert row["name"] == "q3-deck.pptx"
-        assert "Q3 deck" in (row["aliases"] or [])
+        assert row["dn"] == "Q3 deck"
 
         # HAS chain: Vault -> presentations Folder -> Document.
         row = session.run(
@@ -225,13 +292,13 @@ def test_vault_escaping_internal_path_becomes_external(
     with driver_for(neo4j_profile) as driver, driver.session() as session:
         row = session.run(
             "MATCH (d:Document {uri: $u}) "
-            "RETURN d.sourceType AS st, d.path AS p, d.aliases AS aliases",
+            "RETURN d.sourceType AS st, d.path AS p, d.displayName AS dn",
             u=expected_uri,
         ).single()
         assert row is not None, f"external file:// Document not created at {expected_uri}"
         assert row["st"] == "URL_LINK"
         assert row["p"] is None
-        assert "External" in (row["aliases"] or [])
+        assert row["dn"] == "External"
 
 
 # ---- Re-index removes stale LINKS_TO but keeps shared stub/external -------

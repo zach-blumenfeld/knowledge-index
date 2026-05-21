@@ -227,9 +227,14 @@ def _left_string(r: Row) -> str:
     if r.label == "Folder":
         return f"{indent}{r.name}/"
     if r.label == "Document":
-        if r.displayName and r.displayName != r.name:
-            return f'{indent}{r.name}  "{r.displayName}"'
-        return f"{indent}{r.name}"
+        # `displayName` is the right column to render for every kind of
+        # Document. For internal md docs `name == displayName == filename`
+        # (per #28) so this is unchanged from the historical rendering. For
+        # internal non-md stubs and external URLs (#37) `displayName` carries
+        # the link-text label set on first ingest, which is far more useful
+        # than the raw filename / URL — and the URI column already shows the
+        # load-bearing identifier next to it.
+        return f"{indent}{r.displayName or r.name}"
     if r.label == "Section":
         return f"{indent}{r.displayName or r.name}"
     # Vault.
@@ -239,16 +244,13 @@ def _left_string(r: Row) -> str:
 def _links_to_hint(r: Row) -> str:
     """Short human-readable hint for a LINKS_TO target.
 
-    Strips the `vault://<uuid>/` prefix so the target reads as a relative
-    path with optional `#fragment`. Falls back to the full URI when the
-    prefix isn't present.
+    The target's `displayName` — heading text for Section targets, filename
+    for Document targets, link-text label for #37 external / stub targets.
+    The full target URI lives in the URI column on the same row, so the
+    hint doesn't need to repeat any of it. Falls back to "links_to" when
+    displayName is somehow unset.
     """
-    uri = r.uri
-    if uri.startswith("vault://"):
-        rest = uri[len("vault://") :]
-        _, _, after = rest.partition("/")
-        return after or uri
-    return uri
+    return r.displayName or "links_to"
 
 
 def _uri_display(r: Row) -> str:

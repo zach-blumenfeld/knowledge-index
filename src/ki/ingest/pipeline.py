@@ -1040,7 +1040,11 @@ def _resolve_non_md_link(
         stub_docs[target_uri] = {
             "uri": target_uri,
             "name": resolved.name,
-            "displayName": resolved.name,
+            # First link-text encountered becomes displayName so `ki tree`
+            # shows "Q3 deck" instead of the bare "q3-deck.pptx". Subsequent
+            # link texts (if any) fall through to aliases via the
+            # WRITE_DISPLAY_TEXT_ALIASES step, deduplicated against this.
+            "displayName": display_text or resolved.name,
             "path": str(resolved),
             "fileHash": file_hash,
         }
@@ -1056,13 +1060,17 @@ def _record_external(
 ) -> None:
     """Idempotently record an external Document MERGE row.
 
-    `display_text` is NOT pushed into a `row.aliases` field — aliases flow
-    via the `display_texts` dict and the WRITE_DISPLAY_TEXT_ALIASES step.
+    First link-text encountered becomes the Document's `displayName` so
+    `ki tree` / `ki search` show "Launch blog" instead of a raw URL.
+    Subsequent link texts (different anchor on a re-link, or a second
+    section linking the same URL with different text) flow to `aliases`
+    via the WRITE_DISPLAY_TEXT_ALIASES step — deduplicated against the
+    displayName client-side.
     """
     if uri in external_docs:
         return
     external_docs[uri] = {
         "uri": uri,
         "name": name,
-        "displayName": name,
+        "displayName": display_text or name,
     }
