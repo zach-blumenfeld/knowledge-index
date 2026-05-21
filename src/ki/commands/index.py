@@ -21,6 +21,7 @@ from rich.prompt import Prompt
 from ..config import find_config_path, load_config
 from ..ingest.pipeline import (
     IngestOptions,
+    IngestServiceUnavailable,
     ingest_vault,
 )
 from ..vault import (
@@ -104,6 +105,56 @@ class _RichProgressReporter:
             self._progress.update(
                 self._finalize_task, completed=1, total=1
             )
+
+
+def _render_service_unavailable(
+    exc: IngestServiceUnavailable, *, batch_size: int
+) -> None:
+    """Render a Profile.source-aware recovery hint block for an ingest crash.
+
+    #54 Fix 3. `local-podman` profiles get the canonical `neo4j-ki` container
+    commands and a pointer to `references/neo4j-podman.md` *Recovery*; other
+    profiles get generic heap/batch/split guidance since we don't know their
+    container shape.
+    """
+    console.print(
+        f"[red]✗[/red] Neo4j connection lost after "
+        f"[bold]{exc.docs_processed}[/bold] / {exc.docs_total} docs.",
+    )
+    console.print(
+        "[dim]The database stopped responding mid-ingest — most often this "
+        "means Neo4j ran out of memory.[/dim]\n"
+    )
+    if exc.profile_source == "local-podman":
+        console.print("[bold]Diagnose the container:[/bold]")
+        console.print("  [cyan]podman ps -a --filter name=neo4j-ki[/cyan]")
+        console.print("  [cyan]podman logs --tail 80 neo4j-ki[/cyan]\n")
+        console.print("[bold]If the container stopped, restart it:[/bold]")
+        console.print("  [cyan]podman start neo4j-ki[/cyan]")
+        console.print(
+            "  [cyan]podman exec neo4j-ki cypher-shell -u neo4j -p password "
+            "'RETURN 1'[/cyan]  (wait until this returns)\n"
+        )
+        console.print(
+            "[bold]Then retry the index.[/bold] Full recovery flow + heap "
+            "tuning notes live in [cyan]references/neo4j-podman.md[/cyan] "
+            "(Recovery — graph went away)."
+        )
+    else:
+        console.print("[bold]Likely fixes:[/bold]")
+        console.print(
+            f"  • Lower [cyan]--batch-size[/cyan] (currently {batch_size}); "
+            "try half."
+        )
+        console.print(
+            "  • Increase the Neo4j JVM heap (e.g. "
+            "[cyan]NEO4J_server_memory_heap_max__size=4G[/cyan] for "
+            "Docker/Podman setups)."
+        )
+        console.print(
+            "  • Split the vault into smaller subsets across multiple "
+            "[cyan]ki index[/cyan] runs."
+        )
 
 
 def cmd_index(
@@ -196,6 +247,9 @@ def cmd_index(
             f"vault at {path} already has a description set "
             f"(\"{exc.existing[:60]}...\"). Pass --force-description to overwrite."
         ) from exc
+    except IngestServiceUnavailable as exc:
+        _render_service_unavailable(exc, batch_size=batch_size)
+        raise click.ClickException("Neo4j connection lost mid-ingest") from exc
 
     # Output summary.
     if result.vault_created:
