@@ -13,6 +13,14 @@ line, up to the next `## [` heading. Keep version sections under that
 exact pattern. Editorial prose is fine; just don't change the heading.
 -->
 
+## [0.4.1] — 2026-05-21
+
+### Fixed
+
+- **Friendly errors when no vaults / no search index exist** ([#57](https://github.com/zach-blumenfeld/knowledge-index/issues/57)). After `ki nuke` (or before any `ki index` on a fresh Neo4j) the two read-side verbs failed in user-hostile ways:
+  - `ki search "..."` raised a raw `neo4j.exceptions.GqlError` ("There is no such fulltext schema index: `content_search`") — violating AGENTS.md principle #2. Now exits with `Error: no search index found — run \`ki index <vault>\` first to build it.`
+  - `ki tree` printed `(no results)` on an empty graph. Now distinguishes "no vaults indexed yet — run \`ki index <path>\` to create one" (no `--at`) from "no node found at \`<uri>\`" (with `--at`).
+
 ## [0.4.0] — 2026-05-21
 
 ### Added
