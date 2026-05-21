@@ -1,12 +1,14 @@
 """Integration-test plumbing.
 
-Strategy:
-  1. If `neo4j-local` is installed, start an ephemeral instance and use its
-     credentials. Stop on teardown.
-  2. Otherwise, fall back to KI_TEST_NEO4J_URI / KI_TEST_NEO4J_USER /
-     KI_TEST_NEO4J_PASSWORD env vars so a local Docker Neo4j (or any reachable
-     instance) can be used in CI / dev.
-  3. Else skip the whole integration suite.
+The suite needs a reachable Neo4j. To run it, point at any Neo4j you have
+(local Podman per `references/neo4j-podman.md`, Aura, anything Bolt-reachable):
+
+    export KI_TEST_NEO4J_URI=bolt://localhost:7687
+    export KI_TEST_NEO4J_USER=neo4j
+    export KI_TEST_NEO4J_PASSWORD=password
+    uv run pytest tests/ -v
+
+Without those env vars the integration tests are skipped (unit tests still run).
 """
 
 from __future__ import annotations
@@ -19,13 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from ki import neo4j_local
 from ki.config import Profile
 from ki.neo4j_client import driver_for
-
-
-def _has_neo4j_local() -> bool:
-    return neo4j_local.is_installed()
 
 
 def _has_env_creds() -> bool:
@@ -50,49 +47,25 @@ def neo4j_profile() -> Iterator[Profile]:
 
     Skips if no Neo4j is reachable.
     """
-    profile: Profile | None = None
-    started_local = False
-
-    if _has_neo4j_local():
-        try:
-            neo4j_local.start(ephemeral=True)
-            started_local = True
-            creds = neo4j_local.credentials()
-            profile = Profile(
-                name="ki-test", uri=creds.uri, user=creds.user,
-                password=creds.password, source="neo4j-local",
-            )
-        except neo4j_local.Neo4jLocalError as exc:
-            pytest.skip(f"neo4j-local could not start: {exc}")
-    elif _has_env_creds():
-        profile = Profile(
-            name="ki-test",
-            uri=os.environ["KI_TEST_NEO4J_URI"],
-            user=os.environ["KI_TEST_NEO4J_USER"],
-            password=os.environ["KI_TEST_NEO4J_PASSWORD"],
-            source="existing",
-        )
-    else:
+    if not _has_env_creds():
         pytest.skip(
-            "integration tests need either `neo4j-local` installed or "
-            "KI_TEST_NEO4J_URI/USER/PASSWORD env vars set"
+            "integration tests need KI_TEST_NEO4J_URI / KI_TEST_NEO4J_USER / "
+            "KI_TEST_NEO4J_PASSWORD env vars set. To bring up a local Neo4j, "
+            "see references/neo4j-podman.md."
         )
+
+    profile = Profile(
+        name="ki-test",
+        uri=os.environ["KI_TEST_NEO4J_URI"],
+        user=os.environ["KI_TEST_NEO4J_USER"],
+        password=os.environ["KI_TEST_NEO4J_PASSWORD"],
+        source="existing",
+    )
 
     if not _can_reach_neo4j(profile):
-        if started_local:
-            try:
-                neo4j_local.stop()
-            except Exception:  # noqa: BLE001
-                pass
         pytest.skip(f"could not reach Neo4j at {profile.uri}")
 
     yield profile
-
-    if started_local:
-        try:
-            neo4j_local.stop()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 @pytest.fixture
@@ -114,13 +87,13 @@ def cleanup_vault(neo4j_profile: Profile) -> Iterator[list[str]]:
     yield to_clean
     if not to_clean:
         return
-    from ki.ingest import queries as Q  # local import; pulls Cypher
+    from ki.ingest.remove import remove_vault  # local import; pulls Cypher
 
     with driver_for(neo4j_profile) as driver:
         with driver.session() as session:
             for vault_uri in to_clean:
                 try:
-                    session.run(Q.DELETE_VAULT, vaultUri=vault_uri).consume()
+                    remove_vault(session, vault_uri)
                 except Exception:  # noqa: BLE001
                     pass
 

@@ -8,21 +8,32 @@ Order of operations per ingest run:
 
   1. Discover .md files under the vault root (skipping hidden / ignored dirs).
   2. Size-guard the file list; oversize files are reported, not parsed.
-  3. Read all (filtered) file bytes concurrently (bounded by `concurrency`).
+  3. Stream file bytes concurrently in batches (bounded by `concurrency`),
+     yielding one (path, bytes) at a time so peak RSS is bounded by
+     batch * file_size, not by vault size (#54 Fix 1).
   4. Open a single Neo4j session.
      a. Apply schema (constraints + fulltext index).
      b. Run the per-vault upsert (User, Vault, USES_VAULT, vault LOADED).
-     c. Fetch existing Document.fileHash for fileHash-skip.
-     d. Build a wikilink resolver from existing docs in this vault.
+     c. Compute the :Folder layer from `keep` (one entry per distinct
+        directory containing an indexed doc) and write Folder nodes.
+        The HAS edges that wire the tree together are written later.
+     d. Fetch existing Document.fileHash for fileHash-skip.
+     e. Build a wikilink resolver from existing docs in this vault
+        (walks `[:HAS*]` so nested docs are included).
   5. For each changed/new doc:
      - Parse markdown → ParsedDocument.
      - Assign URIs + Rule-1 content.
      - Build doc/section/has-section/next-section/doc-loaded row batches.
-     - Write them in order. Release.
+     - Write them in order (nodes only — Vault|Folder -> Document HAS
+       edges live in the per-vault tree-edge write below). Release.
      - Update the resolver with this doc's name/aliases.
      - Stash links for the post-pass.
-  6. Resolve wikilinks/markdown-links against the resolver; emit LINKS_TO.
-  7. Aggregate piped-wikilink display texts per target URI, normalize, and
+  6. Write the tree HAS edges in one batch (Vault->Folder, Folder->Folder,
+     Vault->Document for root docs, Folder->Document for nested docs).
+     Single-parent invariant: each Folder / Document has exactly one
+     incoming HAS edge.
+  7. Resolve wikilinks/markdown-links against the resolver; emit LINKS_TO.
+  8. Aggregate piped-wikilink display texts per target URI, normalize, and
      union into the target's `aliases` (docs/ingest-cypher.md §4.3 step 7).
 
 Scalability levers (docs/requirements_v01_mvp.md):
@@ -41,11 +52,13 @@ import asyncio
 import logging
 import re
 import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import aiofiles
+from neo4j.exceptions import ClientError, ServiceUnavailable
 
 from ..config import Profile
 from ..neo4j_client import driver_for, ensure_schema
@@ -59,31 +72,45 @@ from ..parser.markdown import (
     parse_markdown,
 )
 from ..vault import (
+    VaultDescriptionExists,
+    compute_base_slug,
     document_uri,
+    find_next_vault_slug,
+    folder_uri,
     iter_markdown_files,
-    read_or_create_vault_id,
+    read_vault_marker,
     section_uri,
     slugify_segment,
+    write_vault_marker,
 )
 from . import queries as Q
 from .batcher import DEFAULT_BATCH_SIZE, run_batched
+from .progress import NullProgressReporter, ProgressReporter
 from .provenance import (
     build_load_provenance,
     build_user_mutable,
     detect_user_id,
     now_utc,
 )
+from .remove import remove_vault
 
 log = logging.getLogger(__name__)
 
 DEFAULT_CONCURRENCY = 16
 DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+# Files per streamed read batch (#54 Fix 1). Batches bound peak Python RSS to
+# `READ_BATCH_SIZE * avg_file_size` instead of the whole vault, while keeping
+# enough work per asyncio.run call that file-I/O concurrency is amortized.
+# 64 × ~60 KB avg ≈ 4 MB resident per batch — three orders of magnitude under
+# the vault-size envelope (1 GB).
+READ_BATCH_SIZE = 64
 
 
 @dataclass
 class IngestResult:
     vault_uri: str
     vault_created: bool
+    vault_description_set: bool = False  # True iff .ki/vault.yaml had a non-empty description
     docs_total: int = 0
     docs_added: int = 0
     docs_updated: int = 0
@@ -91,6 +118,7 @@ class IngestResult:
     docs_skipped_oversize: int = 0
     sections_written: int = 0
     links_written: int = 0
+    folders_total: int = 0  # distinct :Folder nodes touched by this ingest
     oversize_files: list[Path] = field(default_factory=list)
     batch_shrunk_to: int | None = None  # set if we hit an OOM retry
 
@@ -109,10 +137,39 @@ async def _read_all(paths: list[Path], concurrency: int) -> list[tuple[Path, byt
     return await asyncio.gather(*[_read_one(p, sem) for p in paths])
 
 
-def _read_files_concurrent(paths: list[Path], concurrency: int) -> list[tuple[Path, bytes]]:
+def _stream_file_bytes(
+    paths: list[Path],
+    concurrency: int,
+    batch_size: int = READ_BATCH_SIZE,
+    on_batch_read: Callable[[int], None] | None = None,
+) -> Iterator[tuple[Path, bytes]]:
+    """Yield `(path, bytes)` one file at a time, reading in batches.
+
+    Within a batch, opens are bounded by `concurrency` (asyncio semaphore).
+    The generator only holds one batch's worth of bytes in memory at a time,
+    plus whatever the consumer is currently processing — peak Python RSS is
+    `O(batch_size * avg_file_size)` instead of `O(vault_size)` (#54 Fix 1).
+
+    `on_batch_read(n)` is invoked once per batch with the number of files
+    just read — lets the caller tick a "reading" progress bar as bytes
+    arrive rather than once at the end.
+
+    This is the symmetric counterpart to the per-doc write loop: both sides
+    process one file/doc at a time end-to-end, so the documented "process
+    one document at a time" lever (`docs/requirements_v01_mvp.md`
+    § Scalability lever 4) now holds on the read side too.
+    """
     if not paths:
-        return []
-    return asyncio.run(_read_all(paths, concurrency))
+        return
+    for start in range(0, len(paths), batch_size):
+        batch = paths[start : start + batch_size]
+        batch_bytes = asyncio.run(_read_all(batch, concurrency))
+        if on_batch_read is not None:
+            on_batch_read(len(batch_bytes))
+        yield from batch_bytes
+        # batch_bytes goes out of scope at the next loop iteration; each
+        # consumed tuple's bytes object is then collectable as soon as the
+        # consumer's iteration variable rebinds. Peak RSS stays bounded.
 
 
 # --- Resolver ---------------------------------------------------------------
@@ -180,13 +237,14 @@ def _slugify_section_path(s: str) -> str:
 # --- Row builders -----------------------------------------------------------
 
 
-def _document_row(doc: ParsedDocument, doc_uri: str) -> dict[str, Any]:
+def _document_row(doc: ParsedDocument, doc_uri: str, file_path: str) -> dict[str, Any]:
     create_only: dict[str, Any] = {}
     if doc.frontmatter_created_at is not None:
         create_only["frontmatterCreatedAt"] = doc.frontmatter_created_at
     props: dict[str, Any] = {
         "name": doc.name,
         "displayName": doc.display_name,
+        "path": file_path,
         "aliases": doc.aliases,
         "fileHash": doc.file_hash,
         "content": document_content_from(doc),
@@ -197,7 +255,7 @@ def _document_row(doc: ParsedDocument, doc_uri: str) -> dict[str, Any]:
     return {"uri": doc_uri, "createOnly": create_only, "props": props}
 
 
-def _section_row(sec) -> dict[str, Any]:
+def _section_row(sec, file_path: str) -> dict[str, Any]:
     return {
         "uri": sec.uri,
         "props": {
@@ -205,6 +263,7 @@ def _section_row(sec) -> dict[str, Any]:
             "displayName": sec.heading_text,
             "headingLevel": sec.heading_level,
             "content": sec.content,
+            "path": file_path,
         },
     }
 
@@ -226,6 +285,68 @@ def _next_section_rows(doc: ParsedDocument) -> list[dict[str, str]]:
     return rows
 
 
+def _build_folder_and_tree_rows(
+    vault_uri: str,
+    vault_root: Path,
+    doc_paths: list[Path],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Build :Folder upsert rows + Vault|Folder -[:HAS]-> Folder|Document edges.
+
+    Walks each document's directory chain from vault root downward and
+    materialises a :Folder for every distinct intermediate directory plus one
+    HAS edge per parent → child relationship. Empty directories (no indexed
+    docs under them) never appear in the result. Each Folder and Document
+    gets exactly one incoming HAS edge — the single-parent invariant.
+
+    Returns (folder_rows, tree_edge_rows):
+      folder_rows    — [{ uri, props: { name, displayName, path } }, ...]
+                       `path` is the absolute POSIX directory path on the
+                       ingesting machine (machine-scoped, like Vault.path).
+      tree_edge_rows — [{ parentUri, childUri }, ...] covering all four valid
+                       endpoint shapes (Vault→Folder, Vault→Document,
+                       Folder→Folder, Folder→Document).
+    """
+    folders: dict[str, dict[str, Any]] = {}
+    tree_edges: list[dict[str, str]] = []
+
+    for p in doc_paths:
+        rel_parts = p.relative_to(vault_root).parts
+        dir_parts = rel_parts[:-1]  # exclude the filename
+        doc_uri_str = document_uri(vault_uri, p.relative_to(vault_root))
+
+        if not dir_parts:
+            # Root-level document: Vault -[:HAS]-> Document.
+            tree_edges.append({"parentUri": vault_uri, "childUri": doc_uri_str})
+            continue
+
+        # Walk the folder chain from root downward; materialise each level the
+        # first time we see it. parent_uri tracks the immediate parent for the
+        # next level down so we emit a single HAS edge per child.
+        parent_uri = vault_uri
+        for depth in range(len(dir_parts)):
+            segments = dir_parts[: depth + 1]
+            f_uri = folder_uri(vault_uri, segments)
+            if f_uri not in folders:
+                # Compute the folder's absolute path on the ingesting machine
+                # by joining vault_root with the on-disk directory parts.
+                folder_abs_path = vault_root.joinpath(*dir_parts[: depth + 1])
+                folders[f_uri] = {
+                    "uri": f_uri,
+                    "props": {
+                        "name": slugify_segment(dir_parts[depth]),
+                        "displayName": dir_parts[depth],
+                        "path": str(folder_abs_path),
+                    },
+                }
+                tree_edges.append({"parentUri": parent_uri, "childUri": f_uri})
+            parent_uri = f_uri
+
+        # Document's parent is the deepest folder.
+        tree_edges.append({"parentUri": parent_uri, "childUri": doc_uri_str})
+
+    return list(folders.values()), tree_edges
+
+
 # --- Pipeline orchestration ------------------------------------------------
 
 
@@ -237,6 +358,50 @@ class IngestOptions:
     concurrency: int = DEFAULT_CONCURRENCY
     max_file_size: int = DEFAULT_MAX_FILE_SIZE
     agent_name: str | None = None
+    # User-supplied description to write into `.ki/vault.yaml`. None = no
+    # change (carry forward whatever's already in the marker, if anything).
+    description: str | None = None
+    # When `description` is set and the marker already has a non-empty
+    # description, refuse unless `force_description` is True.
+    force_description: bool = False
+    # Rows per batched DETACH DELETE transaction during the pre-ingest
+    # vault-nuke step (only relevant when re-indexing an existing vault).
+    # See `docs/index_rm_behavior.md` *Batched DETACH DELETE*.
+    chunk_size: int = 1000
+    # Progress reporter hooked at phase boundaries. CLI installs a rich-backed
+    # implementation on TTY runs; tests and non-TTY runs pass None. See #53.
+    progress: ProgressReporter | None = None
+
+
+class IngestServiceUnavailable(RuntimeError):
+    """Raised when the Neo4j connection drops mid-ingest (#54 Fix 3).
+
+    Wraps the upstream `neo4j.exceptions.ServiceUnavailable` with run-state
+    context so the CLI can emit useful recovery hints without exposing the
+    raw bolt traceback:
+
+      - `docs_processed`  — how far the run got (added + updated + skipped).
+      - `docs_total`      — total docs in scope for this run.
+      - `profile_source`  — `"local-podman" | "aura" | "existing"`; picks
+                            which recovery hint set to render.
+      - `__cause__`       — the original `ServiceUnavailable` (set via
+                            `raise ... from exc`), so verbose / debug
+                            surfaces can still get to the underlying error.
+    """
+
+    def __init__(
+        self,
+        *,
+        docs_processed: int,
+        docs_total: int,
+        profile_source: str,
+    ) -> None:
+        super().__init__(
+            f"Neo4j connection lost after {docs_processed}/{docs_total} docs"
+        )
+        self.docs_processed = docs_processed
+        self.docs_total = docs_total
+        self.profile_source = profile_source
 
 
 def _split_oversize(
@@ -263,7 +428,22 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
     if not vault_root.exists() or not vault_root.is_dir():
         raise ValueError(f"vault path not a directory: {vault_root}")
 
-    vault_uri, vault_created = read_or_create_vault_id(vault_root)
+    progress: ProgressReporter = opts.progress or NullProgressReporter()
+
+    # Marker handling — slug assignment moves inside the open Neo4j session
+    # because collision detection needs to query the graph. Description
+    # validation (--description vs existing) is still done up-front when
+    # possible, but force-description semantics rely on the existing marker.
+    existing_marker = read_vault_marker(vault_root)
+    existing_description = (existing_marker or {}).get("description")
+    if (
+        opts.description is not None
+        and isinstance(existing_description, str)
+        and existing_description.strip()
+        and not opts.force_description
+    ):
+        raise VaultDescriptionExists(existing_description.strip())
+
     user_id = opts.user_id or detect_user_id()
     user_mutable = build_user_mutable()
     load_provenance = build_load_provenance(agent_name=opts.agent_name)
@@ -280,11 +460,19 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             p,
         )
 
-    # 2. Concurrent reads. Bytes held in memory; the trade-off is one
-    # pass of vault size — acceptable at v1 envelopes (1 GB).
-    files_bytes = _read_files_concurrent(keep, opts.concurrency)
+    # 2. Streaming concurrent reads (#54 Fix 1). `files_stream` is a generator
+    # — files are pulled in batches of READ_BATCH_SIZE, the consumer drains
+    # one (path, bytes) at a time, and each batch's bytes are released before
+    # the next is read. Peak Python RSS is bounded by batch * file_size, not
+    # by vault size.
+    progress.reading_start(len(keep))
+    files_stream = _stream_file_bytes(
+        keep, opts.concurrency, on_batch_read=progress.reading_advance,
+    )
 
-    result = IngestResult(vault_uri=vault_uri, vault_created=vault_created)
+    # `result.vault_uri` / `vault_created` are filled in after slug assignment
+    # inside the session below — see step 3.
+    result = IngestResult(vault_uri="", vault_created=False)
     result.docs_total = len(keep)
     result.docs_skipped_oversize = len(oversize)
     result.oversize_files = oversize
@@ -301,144 +489,341 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             )
         shrink_state["size"] = new_size
 
-    with driver_for(opts.profile) as driver:
-        with driver.session() as session:
-            ensure_schema(session)
+    try:
+        with driver_for(opts.profile) as driver:
+            with driver.session() as session:
+                ensure_schema(session)
 
-            # 3. Per-vault write.
-            session.run(
-                Q.PER_VAULT_WRITE,
-                userId=user_id,
-                userMutable=user_mutable,
-                vaultUri=vault_uri,
-                vaultMutable={
+                # 3a. Slug assignment. If `.ki/vault.yaml` already exists, honor
+                # its `uri:` field unconditionally — that's how a synced vault
+                # keeps the same Vault.uri across machines. Otherwise compute the
+                # base slug from the directory basename and find the next
+                # unclaimed `{base, base-1, base-2, ...}` in the graph.
+                #
+                # Concurrency: two clients racing on a fresh vault could both
+                # compute the same `base-N`. The Vault.uri uniqueness constraint
+                # catches that — the loser retries with a refreshed
+                # `find_next_vault_slug` once. Two retries handles realistic
+                # contention; if it still fails, surface the error.
+                if existing_marker:
+                    vault_uri = str(existing_marker["uri"]).strip()
+                    vault_created = False
+                else:
+                    base = compute_base_slug(vault_root)
+                    vault_uri = ""
+                    vault_created = False
+                    for attempt in range(2):
+                        candidate = find_next_vault_slug(session, base)
+                        try:
+                            session.run(
+                                "CREATE (v:Vault {uri: $uri}) SET v.firstSeenAt = $now",
+                                uri=candidate, now=now,
+                            ).consume()
+                            vault_uri = candidate
+                            vault_created = True
+                            break
+                        except ClientError:
+                            if attempt == 1:
+                                raise
+                            log.warning(
+                                "vault slug %r collided mid-write; retrying once",
+                                candidate,
+                            )
+
+                # 3a.5 — vault-level sync. Per `docs/index_rm_behavior.md`, an
+                # existing vault is fully removed before re-ingest so stale docs /
+                # sections / folders / wikilinks don't linger. Fresh vaults
+                # (no marker existed before) skip this step — there's nothing to
+                # remove. Operates on `vault_uri` which is now settled.
+                #
+                # `remove_vault` is a no-op for vault URIs the graph doesn't know
+                # about, so it's safe to call even when the marker existed but
+                # the Neo4j was reset out-of-band.
+                if existing_marker:
+                    remove_vault(session, vault_uri, chunk_size=opts.chunk_size)
+
+                # 3b. Finalize the marker now that the URI is settled.
+                # Description precedence: user-supplied (--description) > existing
+                # in the marker > none. force_description was already validated
+                # against existing_description above.
+                final_description: str | None
+                if opts.description is not None:
+                    final_description = opts.description
+                elif isinstance(existing_description, str) and existing_description.strip():
+                    final_description = existing_description
+                else:
+                    final_description = None
+                write_vault_marker(
+                    vault_root, uri=vault_uri, description=final_description,
+                )
+                result.vault_uri = vault_uri
+                result.vault_created = vault_created
+                result.vault_description_set = bool(
+                    final_description and final_description.strip()
+                )
+
+                # 3c. Per-vault write (User/Vault mutables + USES_VAULT + LOADED).
+                vault_mutable: dict[str, Any] = {
                     "name": vault_root.name,
                     "displayName": vault_root.name,
                     "path": vault_root.as_posix(),
                     "isObsidianVault": (vault_root / ".obsidian").exists(),
-                },
-                vaultLoadId=load_id,
-                loadProvenance=load_provenance,
-                now=now,
-            ).consume()
+                }
+                if final_description is not None:
+                    vault_mutable["description"] = final_description
+                session.run(
+                    Q.PER_VAULT_WRITE,
+                    userId=user_id,
+                    userMutable=user_mutable,
+                    vaultUri=vault_uri,
+                    vaultMutable=vault_mutable,
+                    vaultLoadId=load_id,
+                    loadProvenance=load_provenance,
+                    now=now,
+                ).consume()
 
-            # 4. Existing doc hashes for fileHash-skip.
-            doc_uris = [document_uri(vault_uri, p.relative_to(vault_root)) for p in keep]
-            existing_hashes = _fetch_existing_hashes(session, doc_uris)
-
-            # 5. Existing-vault resolver.
-            resolver = _load_resolver(session, vault_uri)
-
-            # 6. Per-document loop.
-            pending_links: list[tuple[str, list[ParsedLink], list[tuple[str, list[ParsedLink]]]]] = []
-            doc_uris_loaded_this_run: list[str] = []
-
-            for path, content_bytes in files_bytes:
-                rel_path = path.relative_to(vault_root)
-                doc_uri = document_uri(vault_uri, rel_path)
-                fh = hash_bytes(content_bytes)
-                if existing_hashes.get(doc_uri) == fh:
-                    result.docs_skipped_unchanged += 1
-                    # Even though we skip writes, we'd still want this doc in the
-                    # resolver — but it's already in there from _load_resolver.
-                    continue
-
-                is_new = existing_hashes.get(doc_uri) is None
-                try:
-                    text = content_bytes.decode("utf-8", errors="replace")
-                except Exception:  # noqa: BLE001
-                    log.warning("failed to decode %s; skipping", path)
-                    continue
-
-                parsed = parse_markdown(text, filename=path.name)
-                parsed.file_hash = fh
-                # Display name override: prefer the first non-empty H1 if present.
-                if parsed.flat_sections and parsed.flat_sections[0].heading_level == 1:
-                    parsed.display_name = parsed.flat_sections[0].heading_text
-
-                # URIs + Rule-1 content.
-                assign_uris_and_content(
-                    parsed,
-                    document_uri=doc_uri,
-                    section_uri_fn=lambda hp, _d=doc_uri: section_uri(_d, hp),
+                # 4. Build the folder layer up-front from the kept doc paths and
+                # write the Folder nodes now. The HAS edges that wire the tree
+                # together (Vault|Folder -> Folder|Document) are written *after*
+                # the per-doc loop in step 8, so Document nodes exist as MATCH
+                # targets.
+                folder_rows, tree_edge_rows = _build_folder_and_tree_rows(
+                    vault_uri, vault_root, keep
                 )
+                result.folders_total = len(folder_rows)
+                if folder_rows:
+                    run_batched(
+                        session,
+                        Q.WRITE_FOLDERS,
+                        "folderRows",
+                        folder_rows,
+                        batch_size=opts.batch_size,
+                        extra_params={"now": now},
+                        on_shrink=on_shrink,
+                    )
 
-                # Build per-doc batches and write.
-                _write_one_document(
-                    session,
-                    parsed=parsed,
-                    doc_uri=doc_uri,
-                    vault_uri=vault_uri,
-                    batch_size=opts.batch_size,
-                    on_shrink=on_shrink,
-                )
+                # 5. Existing doc hashes for fileHash-skip.
+                doc_uris = [document_uri(vault_uri, p.relative_to(vault_root)) for p in keep]
+                existing_hashes = _fetch_existing_hashes(session, doc_uris)
 
-                doc_uris_loaded_this_run.append(doc_uri)
-                if is_new:
-                    result.docs_added += 1
-                else:
-                    result.docs_updated += 1
-                result.sections_written += len(parsed.flat_sections)
+                # 6. Existing-vault resolver.
+                resolver = _load_resolver(session, vault_uri)
 
-                # Update resolver + stash links.
-                resolver.add(parsed.name, parsed.aliases, doc_uri)
-                pending_links.append(
-                    (
-                        doc_uri,
-                        parsed.document_links,
-                        [(s.uri, s.links) for s in parsed.flat_sections if s.links],
+                # 7. Per-document loop.
+                #
+                # `pending_links` carries the source-doc on-disk path alongside the
+                # parsed links so the post-pass (step 10) can filesystem-resolve
+                # `[text](./deck.pptx)` style non-md links relative to the source
+                # doc's directory.
+                pending_links: list[tuple[str, Path, list[ParsedLink], list[tuple[str, list[ParsedLink]]]]] = []
+                doc_uris_loaded_this_run: list[str] = []
+                # Path-only refresh rows for fileHash-skipped docs. Machine-scoped
+                # `path` may have shifted (vault moved across mounts) even when
+                # contents haven't changed, so we stamp the new path post-loop.
+                path_refresh_rows: list[dict[str, str]] = []
+
+                progress.docs_start(len(keep))
+                for path, content_bytes in files_stream:
+                    rel_path = path.relative_to(vault_root)
+                    doc_uri = document_uri(vault_uri, rel_path)
+                    fh = hash_bytes(content_bytes)
+                    if existing_hashes.get(doc_uri) == fh:
+                        result.docs_skipped_unchanged += 1
+                        # Even though we skip the heavy writes, the doc's `path`
+                        # property must still be refreshed because it's
+                        # machine-scoped and may have moved. The resolver is
+                        # already populated from _load_resolver.
+                        path_refresh_rows.append({"docUri": doc_uri, "path": str(path)})
+                        progress.doc_processed("skipped")
+                        continue
+
+                    is_new = existing_hashes.get(doc_uri) is None
+                    try:
+                        text = content_bytes.decode("utf-8", errors="replace")
+                    except Exception:  # noqa: BLE001
+                        log.warning("failed to decode %s; skipping", path)
+                        progress.doc_processed("skipped")
+                        continue
+
+                    parsed = parse_markdown(text, filename=path.name)
+                    parsed.file_hash = fh
+                    # URIs + Rule-1 content.
+                    assign_uris_and_content(
+                        parsed,
+                        document_uri=doc_uri,
+                        section_uri_fn=lambda hp, _d=doc_uri: section_uri(_d, hp),
+                    )
+
+                    # Build per-doc batches and write.
+                    _write_one_document(
+                        session,
+                        parsed=parsed,
+                        doc_uri=doc_uri,
+                        vault_uri=vault_uri,
+                        file_path=str(path),
+                        batch_size=opts.batch_size,
+                        on_shrink=on_shrink,
+                    )
+
+                    doc_uris_loaded_this_run.append(doc_uri)
+                    if is_new:
+                        result.docs_added += 1
+                    else:
+                        result.docs_updated += 1
+                    result.sections_written += len(parsed.flat_sections)
+
+                    # Update resolver + stash links.
+                    resolver.add(parsed.name, parsed.aliases, doc_uri)
+                    pending_links.append(
+                        (
+                            doc_uri,
+                            path,
+                            parsed.document_links,
+                            [(s.uri, s.links) for s in parsed.flat_sections if s.links],
+                        )
+                    )
+                    progress.doc_processed("added" if is_new else "updated")
+
+                # `files_stream` is drained by now; reading is complete.
+                progress.reading_done()
+                progress.docs_done()
+                progress.finalize_start()
+
+                # 8. Tree HAS edges (Vault|Folder -> Folder|Document) — written
+                # after the doc loop so every Document MATCH target exists. Folder
+                # nodes were already written in step 4.
+                if tree_edge_rows:
+                    run_batched(
+                        session,
+                        Q.WRITE_TREE_EDGES,
+                        "treeEdgeRows",
+                        tree_edge_rows,
+                        batch_size=opts.batch_size,
+                        on_shrink=on_shrink,
+                    )
+
+                # 8b. Path-only refresh for fileHash-skipped docs. Their content
+                # didn't change so the heavy writes were skipped, but `path` is
+                # machine-scoped and may have moved across mounts — stamp it.
+                # Updates Section.path too (every Section under each refreshed
+                # Document, since Section.path mirrors Document.path).
+                if path_refresh_rows:
+                    run_batched(
+                        session,
+                        Q.REFRESH_DOC_AND_SECTION_PATHS,
+                        "pathRefreshRows",
+                        path_refresh_rows,
+                        batch_size=opts.batch_size,
+                        on_shrink=on_shrink,
+                    )
+
+                # 9. Per-doc LOADED provenance — all in one batched call.
+                if doc_uris_loaded_this_run:
+                    doc_load_rows = [{"docUri": u} for u in doc_uris_loaded_this_run]
+                    run_batched(
+                        session,
+                        Q.WRITE_DOC_LOADED,
+                        "docLoadRows",
+                        doc_load_rows,
+                        batch_size=opts.batch_size,
+                        extra_params={
+                            "userId": user_id,
+                            "loadId": load_id,
+                            "loadProps": load_provenance,
+                            "now": now,
+                        },
+                        on_shrink=on_shrink,
+                    )
+
+                # 10. Resolve links (#37: wikilinks, md links, stub non-md files,
+                # external URLs). Returns LINKS_TO row batch + stub/external doc
+                # MERGE batches + per-target display-text aggregation for the
+                # aliases step.
+                link_rows, stub_doc_rows, external_doc_rows, display_texts_per_target = (
+                    _build_links_to_rows(
+                        pending_links, resolver, vault_uri=vault_uri, vault_root=vault_root,
                     )
                 )
 
-            # 7. Per-doc LOADED provenance — all in one batched call.
-            if doc_uris_loaded_this_run:
-                doc_load_rows = [{"docUri": u} for u in doc_uris_loaded_this_run]
-                run_batched(
-                    session,
-                    Q.WRITE_DOC_LOADED,
-                    "docLoadRows",
-                    doc_load_rows,
-                    batch_size=opts.batch_size,
-                    extra_params={
-                        "userId": user_id,
-                        "loadId": load_id,
-                        "loadProps": load_provenance,
-                        "now": now,
-                    },
-                    on_shrink=on_shrink,
-                )
+                # 10a. Stub :Document upserts (internal non-md files). Their parent
+                # Folders may not have been materialized in step 4 (which only saw
+                # `.md` paths), so re-run `_build_folder_and_tree_rows` against the
+                # stub paths and write any new Folders + tree edges. Idempotent —
+                # already-materialized folders MERGE-no-op.
+                if stub_doc_rows:
+                    stub_paths = [Path(r["path"]) for r in stub_doc_rows]
+                    stub_folder_rows, stub_tree_edges = _build_folder_and_tree_rows(
+                        vault_uri, vault_root, stub_paths,
+                    )
+                    if stub_folder_rows:
+                        run_batched(
+                            session, Q.WRITE_FOLDERS, "folderRows", stub_folder_rows,
+                            batch_size=opts.batch_size,
+                            extra_params={"now": now}, on_shrink=on_shrink,
+                        )
+                    run_batched(
+                        session, Q.WRITE_STUB_DOCUMENTS, "stubDocRows", stub_doc_rows,
+                        batch_size=opts.batch_size,
+                        extra_params={"now": now}, on_shrink=on_shrink,
+                    )
+                    if stub_tree_edges:
+                        run_batched(
+                            session, Q.WRITE_TREE_EDGES, "treeEdgeRows", stub_tree_edges,
+                            batch_size=opts.batch_size, on_shrink=on_shrink,
+                        )
 
-            # 8. Resolve wikilinks and write LINKS_TO.
-            link_rows, display_texts_per_target = _build_links_to_rows(
-                pending_links, resolver
-            )
-            written = run_batched(
-                session,
-                Q.WRITE_LINKS_TO,
-                "linksToRows",
-                link_rows,
-                batch_size=opts.batch_size,
-                on_shrink=on_shrink,
-            )
-            result.links_written = written
+                # 10b. External :Document upserts (URLs and out-of-vault file
+                # paths). No HAS edge — they live outside the containment tree.
+                if external_doc_rows:
+                    run_batched(
+                        session, Q.WRITE_EXTERNAL_DOCUMENTS, "externalDocRows",
+                        external_doc_rows,
+                        batch_size=opts.batch_size,
+                        extra_params={"now": now}, on_shrink=on_shrink,
+                    )
 
-            # 9. Wikilink display-text → target aliases (docs/ingest-cypher.md
-            # §4.3 step 7). Runs after LINKS_TO so we can read the target's
-            # current displayName + aliases for normalization, then union the
-            # derived aliases without clobbering frontmatter.
-            alias_rows = _build_display_text_alias_rows(
-                session, display_texts_per_target
-            )
-            if alias_rows:
-                run_batched(
+                # 10c. LINKS_TO edges.
+                written = run_batched(
                     session,
-                    Q.WRITE_DISPLAY_TEXT_ALIASES,
-                    "aliasRows",
-                    alias_rows,
+                    Q.WRITE_LINKS_TO,
+                    "linksToRows",
+                    link_rows,
                     batch_size=opts.batch_size,
                     on_shrink=on_shrink,
                 )
+                result.links_written = written
 
+                # 11. Display-text → target aliases (docs/ingest-cypher.md
+                # §4.3 step 7). Runs after LINKS_TO so we can read the target's
+                # current displayName + aliases for normalization, then union the
+                # derived aliases without clobbering frontmatter.
+                alias_rows = _build_display_text_alias_rows(
+                    session, display_texts_per_target
+                )
+                if alias_rows:
+                    run_batched(
+                        session,
+                        Q.WRITE_DISPLAY_TEXT_ALIASES,
+                        "aliasRows",
+                        alias_rows,
+                        batch_size=opts.batch_size,
+                        on_shrink=on_shrink,
+                    )
+    except ServiceUnavailable as exc:
+        # Translate the raw bolt-driver failure into a typed exception the CLI
+        # can render with profile-aware recovery hints (#54 Fix 3). docs_processed
+        # is "any doc the loop touched" — added + updated + skipped-unchanged.
+        raise IngestServiceUnavailable(
+            docs_processed=(
+                result.docs_added
+                + result.docs_updated
+                + result.docs_skipped_unchanged
+            ),
+            docs_total=result.docs_total,
+            profile_source=opts.profile.source,
+        ) from exc
+
+    progress.finalize_done()
     result.batch_shrunk_to = shrink_state["size"]
     return result
 
@@ -449,10 +834,11 @@ def _write_one_document(
     parsed: ParsedDocument,
     doc_uri: str,
     vault_uri: str,
+    file_path: str,
     batch_size: int,
     on_shrink: Any,
 ) -> None:
-    doc_row = _document_row(parsed, doc_uri)
+    doc_row = _document_row(parsed, doc_uri, file_path)
     run_batched(
         session,
         Q.WRITE_DOCUMENTS,
@@ -463,7 +849,7 @@ def _write_one_document(
         on_shrink=on_shrink,
     )
 
-    section_rows = [_section_row(s) for s in parsed.flat_sections]
+    section_rows = [_section_row(s, file_path) for s in parsed.flat_sections]
     if section_rows:
         run_batched(
             session,
@@ -475,10 +861,10 @@ def _write_one_document(
             on_shrink=on_shrink,
         )
 
-        # HAS_SECTION
+        # Section tree HAS edges.
         run_batched(
             session,
-            Q.WRITE_HAS_SECTION,
+            Q.WRITE_SECTION_EDGES,
             "hasSectionRows",
             _has_section_rows(parsed, doc_uri),
             batch_size=batch_size,
@@ -519,9 +905,11 @@ def _fetch_existing_hashes(session: Any, doc_uris: list[str]) -> dict[str, str]:
 
 
 def _load_resolver(session: Any, vault_uri: str) -> WikilinkResolver:
+    # Walks `[:HAS*]` so docs nested under :Folder nodes are included alongside
+    # root-level docs (which sit directly under the :Vault).
     res = session.run(
         """
-        MATCH (v:Vault {uri: $vaultUri})-[:HAS_DOCUMENT]->(d:Document)
+        MATCH (v:Vault {uri: $vaultUri})-[:HAS*]->(d:Document)
         RETURN d.uri AS uri, d.name AS name, d.aliases AS aliases
         """,
         vaultUri=vault_uri,
@@ -535,27 +923,55 @@ def _load_resolver(session: Any, vault_uri: str) -> WikilinkResolver:
 
 
 def _build_links_to_rows(
-    pending: list[tuple[str, list, list[tuple[str, list]]]],
+    pending: list[tuple[str, Path, list, list[tuple[str, list]]]],
     resolver: WikilinkResolver,
-) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
-    """Resolve LINKS_TO edges and collect per-target wikilink display texts.
+    *,
+    vault_uri: str,
+    vault_root: Path,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, list[str]],
+]:
+    """Resolve LINKS_TO edges, including #37's stub + external Document kinds.
 
-    Returns (link_rows, display_texts_per_target). Display texts are
-    aggregated independently of the LINKS_TO dedup `seen` set — even if we
-    skip writing a duplicate edge, the display text on that occurrence is
-    still relevant for the target's alias list (see docs/ingest-cypher.md
-    §4.3 step 7).
+    Returns (link_rows, stub_doc_rows, external_doc_rows, display_texts).
+
+    `stub_doc_rows` are the internal non-md Document MERGEs (each has `uri`,
+    `name`, `displayName`, `path`, `fileHash`). `external_doc_rows` are
+    external Document MERGEs (each has `uri`, `name`, `displayName` only —
+    no path, no fileHash).
+
+    Display texts are aggregated for the post-pass aliases step (same as
+    pre-#37 behavior for wikilinks). Per #37 leans: stub + external link
+    texts also feed aliases; md_link texts do NOT (to preserve existing
+    behavior for plain `[click here](./foo.md)`-style links).
     """
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     display_texts: dict[str, list[str]] = {}
-    for doc_uri, doc_links, section_links in pending:
+    stub_docs: dict[str, dict[str, Any]] = {}
+    external_docs: dict[str, dict[str, Any]] = {}
+
+    for doc_uri, source_path, doc_links, section_links in pending:
+        source_dir = source_path.parent
         for link in doc_links:
-            _process_link(doc_uri, link, resolver, seen, rows, display_texts)
+            _process_link(
+                doc_uri, source_dir, link, resolver,
+                vault_uri=vault_uri, vault_root=vault_root,
+                seen=seen, rows=rows, display_texts=display_texts,
+                stub_docs=stub_docs, external_docs=external_docs,
+            )
         for sec_uri, links in section_links:
             for link in links:
-                _process_link(sec_uri, link, resolver, seen, rows, display_texts)
-    return rows, display_texts
+                _process_link(
+                    sec_uri, source_dir, link, resolver,
+                    vault_uri=vault_uri, vault_root=vault_root,
+                    seen=seen, rows=rows, display_texts=display_texts,
+                    stub_docs=stub_docs, external_docs=external_docs,
+                )
+    return rows, list(stub_docs.values()), list(external_docs.values()), display_texts
 
 
 def _build_display_text_alias_rows(
@@ -607,22 +1023,54 @@ def _build_display_text_alias_rows(
 
 def _process_link(
     src_uri: str,
+    source_dir: Path,
     link: ParsedLink,
     resolver: WikilinkResolver,
+    *,
+    vault_uri: str,
+    vault_root: Path,
     seen: set[tuple[str, str]],
     rows: list[dict[str, Any]],
     display_texts: dict[str, list[str]],
+    stub_docs: dict[str, dict[str, Any]],
+    external_docs: dict[str, dict[str, Any]],
 ) -> None:
-    target = resolver.resolve(link.target)
+    """Resolve a link to a target URI and emit a LINKS_TO row.
+
+    Routes by `link.kind` per #37:
+      wikilink / md_link → resolver path (existing behavior)
+      non_md_file        → filesystem-resolve against source_dir; if inside
+                           vault and exists, MERGE a stub Document; if
+                           outside vault, treat as external file://...
+      external_url       → MERGE an external Document keyed by the URL
+    """
+    target: str | None
+    if link.kind in ("wikilink", "md_link"):
+        target = resolver.resolve(link.target)
+    elif link.kind == "non_md_file":
+        target = _resolve_non_md_link(
+            link.target, source_dir, vault_uri, vault_root,
+            link.display_text, stub_docs, external_docs,
+        )
+    elif link.kind == "external_url":
+        target = link.target
+        _record_external(target, link.display_text, external_docs, name=link.target)
+    else:
+        return
+
     if target is None:
         return
     if target == src_uri:
         return  # self-link: skip
-    # Aggregate display texts independent of LINKS_TO edge dedup — multiple
-    # wikilinks from the same source to the same target should still all
-    # contribute to the target's alias frequency count.
-    if link.wikilink and link.display_text:
+
+    # Aggregate display texts for the aliases step. For wikilinks this
+    # mirrors pre-#37 behavior. For stub / external links the link text
+    # populates the target's aliases (per #37 q3 lean). md_link is
+    # intentionally excluded — its `[text]` is usually descriptive prose
+    # ("click here", "the spec"), not a vault-wide alias.
+    if link.display_text and link.kind != "md_link":
         display_texts.setdefault(target, []).append(link.display_text)
+
     key = (src_uri, target)
     if key in seen:
         return
@@ -635,3 +1083,99 @@ def _process_link(
             "embed": link.embed,
         }
     )
+
+
+def _resolve_non_md_link(
+    target: str,
+    source_dir: Path,
+    vault_uri: str,
+    vault_root: Path,
+    display_text: str | None,
+    stub_docs: dict[str, dict[str, Any]],
+    external_docs: dict[str, dict[str, Any]],
+) -> str | None:
+    """Resolve a non-md path link to a Document URI; create stub/external rows.
+
+    Returns the target URI, or None to skip (missing file in-vault).
+    """
+    # Strip optional fragment / query from the path before filesystem lookup.
+    path_part = target.split("#", 1)[0].split("?", 1)[0]
+    if not path_part:
+        return None
+
+    # Resolve relative to source_dir for relative paths; honor absolute paths.
+    try:
+        if path_part.startswith("/"):
+            resolved = Path(path_part).resolve()
+        else:
+            resolved = (source_dir / path_part).resolve()
+    except OSError:
+        log.warning("could not resolve link target %r from %s; skipping", target, source_dir)
+        return None
+
+    # Check vault membership. Outside vault → treat as external file:// URI
+    # (per #37 design — vault-escaping internal links land in the external
+    # Document space, not the broken-link space).
+    try:
+        rel = resolved.relative_to(vault_root)
+    except ValueError:
+        external_uri = f"file://{resolved.as_posix()}"
+        _record_external(
+            external_uri, display_text, external_docs, name=resolved.name,
+        )
+        return external_uri
+
+    # Inside the vault. Check the file exists on disk; warn + skip if not
+    # (the surrounding section content still has the markdown text — recovery
+    # via fulltext search is possible if the link comes back later).
+    if not resolved.exists() or not resolved.is_file():
+        log.warning(
+            "link target does not exist on disk: %s (referenced from %s); skipping",
+            resolved, source_dir,
+        )
+        return None
+
+    target_uri = document_uri(vault_uri, rel.as_posix())
+    if target_uri not in stub_docs:
+        try:
+            file_hash = hash_bytes(resolved.read_bytes())
+        except OSError:
+            log.warning("could not read %s for fileHash; skipping link", resolved)
+            return None
+        stub_docs[target_uri] = {
+            "uri": target_uri,
+            "name": resolved.name,
+            # First link-text encountered becomes displayName so `ki tree`
+            # shows "Q3 deck" instead of the bare "q3-deck.pptx". Subsequent
+            # link texts (if any) fall through to aliases via the
+            # WRITE_DISPLAY_TEXT_ALIASES step, deduplicated against this.
+            "displayName": display_text or resolved.name,
+            "path": str(resolved),
+            "fileHash": file_hash,
+        }
+    return target_uri
+
+
+def _record_external(
+    uri: str,
+    display_text: str | None,
+    external_docs: dict[str, dict[str, Any]],
+    *,
+    name: str,
+) -> None:
+    """Idempotently record an external Document MERGE row.
+
+    First link-text encountered becomes the Document's `displayName` so
+    `ki tree` / `ki search` show "Launch blog" instead of a raw URL.
+    Subsequent link texts (different anchor on a re-link, or a second
+    section linking the same URL with different text) flow to `aliases`
+    via the WRITE_DISPLAY_TEXT_ALIASES step — deduplicated against the
+    displayName client-side.
+    """
+    if uri in external_docs:
+        return
+    external_docs[uri] = {
+        "uri": uri,
+        "name": name,
+        "displayName": display_text or name,
+    }

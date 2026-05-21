@@ -28,17 +28,23 @@ CREATE CONSTRAINT section_uri_unique IF NOT EXISTS
   FOR (s:Section) REQUIRE s.uri IS UNIQUE
 """.strip()
 
-FULLTEXT_INDEX = """
-CREATE FULLTEXT INDEX doc_section_search IF NOT EXISTS
-  FOR (n:Document|Section) ON EACH [n.displayName, n.content, n.aliases]
+CONSTRAINT_FOLDER = """
+CREATE CONSTRAINT folder_uri_unique IF NOT EXISTS
+  FOR (f:Folder) REQUIRE f.uri IS UNIQUE
+""".strip()
+
+CONTENT_SEARCH_INDEX = """
+CREATE FULLTEXT INDEX content_search IF NOT EXISTS
+  FOR (n:Document|Section|Vault) ON EACH [n.displayName, n.content, n.aliases, n.description]
 """.strip()
 
 SCHEMA_STATEMENTS = (
     CONSTRAINT_USER,
     CONSTRAINT_VAULT,
+    CONSTRAINT_FOLDER,
     CONSTRAINT_DOCUMENT,
     CONSTRAINT_SECTION,
-    FULLTEXT_INDEX,
+    CONTENT_SEARCH_INDEX,
 )
 
 
@@ -62,7 +68,7 @@ SET lv += $loadProvenance,
 """.strip()
 
 
-# 4.3 step 1 — Documents.
+# 4.3 step 1 — Documents (node upsert only; parent HAS edge lives in step 1c).
 WRITE_DOCUMENTS = """
 UNWIND $documentRows AS row
 MERGE (d:Document {uri: row.uri})
@@ -70,9 +76,41 @@ ON CREATE SET d += row.createOnly,
               d.firstLoadedAt = $now
 SET d += row.props,
     d.lastLoadedAt = $now
-WITH d
-MATCH (v:Vault {uri: $vaultUri})
-MERGE (v)-[:HAS_DOCUMENT]->(d)
+""".strip()
+
+
+# 4.3 step 1b — Folders (node upsert only).
+# $folderRows: list of { uri, props } where
+#   props = { name, displayName, path }
+# `path` updates on every ingest (machine-scoped, last-write-wins) so the
+# always-run `SET f += row.props` is load-bearing — not folded into ON CREATE.
+WRITE_FOLDERS = """
+UNWIND $folderRows AS row
+MERGE (f:Folder {uri: row.uri})
+ON CREATE SET f.firstSeenAt = $now
+SET f += row.props,
+    f.lastSeenAt = $now
+""".strip()
+
+
+# 4.3 step 1c — folder/document tree HAS edges.
+# Single edge type for all containment in the vault/folder/document layer.
+# Covers all four valid endpoint shapes in a single UNWIND:
+#   Vault   -[:HAS]-> Folder      (top-level folder)
+#   Vault   -[:HAS]-> Document    (root-level document, no enclosing folder)
+#   Folder  -[:HAS]-> Folder      (nested subdirectory)
+#   Folder  -[:HAS]-> Document    (document under that folder)
+# Each child gets exactly one incoming HAS edge — the writer picks the
+# immediate parent (Vault for root-level children, the containing Folder
+# otherwise) and emits one row per child.
+# $treeEdgeRows: list of { parentUri, childUri }
+WRITE_TREE_EDGES = """
+UNWIND $treeEdgeRows AS row
+MATCH (parent {uri: row.parentUri})
+WHERE parent:Vault OR parent:Folder
+MATCH (child {uri: row.childUri})
+WHERE child:Folder OR child:Document
+MERGE (parent)-[:HAS]->(child)
 """.strip()
 
 
@@ -86,13 +124,36 @@ SET s += row.props,
 """.strip()
 
 
-# 4.3 step 3 — HAS_SECTION.
-WRITE_HAS_SECTION = """
+# Path-only refresh for documents skipped via fileHash match.
+#
+# When a document's bytes are unchanged across ingests, the writer skips the
+# normal WRITE_DOCUMENTS / WRITE_SECTIONS pass — but `Document.path` and
+# `Section.path` are machine-scoped and may have shifted (vault moved from
+# one mount to another). This pass stamps the new path on the skipped
+# document and propagates to every Section under it.
+#
+# $pathRefreshRows: list of { docUri, path }
+REFRESH_DOC_AND_SECTION_PATHS = """
+UNWIND $pathRefreshRows AS row
+MATCH (d:Document {uri: row.docUri})
+SET d.path = row.path
+WITH d, row
+OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
+SET s.path = row.path
+""".strip()
+
+
+# 4.3 step 3 — section-tree HAS edges (Document|Section → Section).
+# Same `:HAS` relationship type as the vault/folder/document tree (step 1c
+# in docs/ingest-cypher.md); kept in its own step here because section
+# trees are constructed per-document alongside section node writes, while
+# folder trees are constructed per-vault.
+WRITE_SECTION_EDGES = """
 UNWIND $hasSectionRows AS row
 MATCH (parent {uri: row.parentUri})
 WHERE parent:Document OR parent:Section
 MATCH (child:Section {uri: row.childUri})
-MERGE (parent)-[:HAS_SECTION]->(child)
+MERGE (parent)-[:HAS]->(child)
 """.strip()
 
 
@@ -121,6 +182,52 @@ MATCH (d:Document {uri: row.docUri})
 MERGE (u)-[ld:LOADED {loadId: $loadId}]->(d)
 SET ld += $loadProps,
     ld.loadedAt = $now
+""".strip()
+
+
+# 4.3 step 5.5 — stub :Document upsert for internal non-md files (e.g.
+# `[Slides](./deck.pptx)`). Same node-property shape as the main Document
+# (name, displayName, path, fileHash) but with sourceType = LOCAL_FILE and
+# no content / frontmatter / aliases-from-frontmatter (aliases are filled
+# from link-text via WRITE_DISPLAY_TEXT_ALIASES). The parent HAS edge is
+# written separately via WRITE_TREE_EDGES — same as md docs.
+#
+# `displayName` is `ON CREATE SET` only: first link-text encountered "wins"
+# the displayName slot; subsequent ingests preserve it. Additional link
+# texts (different anchor, second link in another section) flow to the
+# `aliases` channel via WRITE_DISPLAY_TEXT_ALIASES, which dedupes
+# client-side against the target's current displayName.
+WRITE_STUB_DOCUMENTS = """
+UNWIND $stubDocRows AS row
+MERGE (d:Document {uri: row.uri})
+ON CREATE SET d.firstLoadedAt = $now,
+              d.sourceType = 'LOCAL_FILE',
+              d.displayName = row.displayName
+SET d.name = row.name,
+    d.path = row.path,
+    d.fileHash = row.fileHash,
+    d.lastLoadedAt = $now
+""".strip()
+
+
+# 4.3 step 5.6 — external :Document upsert for URLs and vault-escaping file
+# paths captured by markdown links. No `path` (it's external), no fileHash,
+# no HAS edge to any vault. sourceType = URL_LINK. The URI is the URL string
+# (or `file://...` for out-of-vault file paths) as-is — no normalization in
+# 0.4.0 per #37 design.
+#
+# Cross-vault collapse comes for free: the same URL referenced from two
+# vaults MERGEs into one node with LINKS_TO from both. `displayName` is
+# `ON CREATE SET` so the first vault's link-text wins the slot; later
+# vaults' link texts become aliases via WRITE_DISPLAY_TEXT_ALIASES.
+WRITE_EXTERNAL_DOCUMENTS = """
+UNWIND $externalDocRows AS row
+MERGE (d:Document {uri: row.uri})
+ON CREATE SET d.firstLoadedAt = $now,
+              d.sourceType = 'URL_LINK',
+              d.displayName = row.displayName
+SET d.name = row.name,
+    d.lastLoadedAt = $now
 """.strip()
 
 
@@ -153,58 +260,97 @@ SET n.aliases = existing + toAdd
 """.strip()
 
 
-# --- Removal queries (used by `ki rm`). Not in ingest-cypher.md but follow the
-# same single-uri MERGE-key model. `DETACH DELETE` removes incident
-# relationships (HAS_SECTION, HAS_DOCUMENT, LOADED, LINKS_TO, NEXT_SECTION)
-# along with their endpoints, per docs/requirements_v01_mvp.md *Removal*.
+# --- Vault-level removal queries. See `docs/index_rm_behavior.md` for the
+# full design (vault-level sync model, three-step removal routine, batched
+# DETACH DELETE rationale).
 #
-# Re-stitching NEXT_SECTION across removals is unnecessary for whole-doc
-# deletion: NEXT_SECTION threads sections *within a single document* (see
-# docs/data-model.md), so removing one doc's sections leaves other docs'
-# chains untouched.
-DELETE_DOCUMENT_AND_SECTIONS = """
-MATCH (d:Document {uri: $docUri})
-OPTIONAL MATCH (d)-[:HAS_SECTION*]->(s:Section)
-WITH d, collect(DISTINCT s) AS secs
-FOREACH (s IN secs | DETACH DELETE s)
-DETACH DELETE d
-""".strip()
+# Step counts and the "remove" vocabulary throughout match the behavior doc.
 
-# Delete an entire subtree of a vault by URI prefix (e.g. removing a folder).
-# Uses STARTS WITH so we match all documents whose uri is `<vaultId>/<subpath>/...`.
-DELETE_SUBTREE = """
-MATCH (d:Document)
-WHERE d.uri STARTS WITH $uriPrefix
-OPTIONAL MATCH (d)-[:HAS_SECTION*]->(s:Section)
-WITH collect(DISTINCT d) AS docs, collect(DISTINCT s) AS secs
-FOREACH (s IN secs | DETACH DELETE s)
-FOREACH (d IN docs | DETACH DELETE d)
-""".strip()
-
-COUNT_SUBTREE = """
-MATCH (d:Document)
-WHERE d.uri STARTS WITH $uriPrefix
-RETURN count(d) AS doc_count
-""".strip()
-
+# Pre-removal count, surfaced in confirmation prompts.
 COUNT_VAULT = """
 MATCH (v:Vault {uri: $vaultUri})
-OPTIONAL MATCH (v)-[:HAS_DOCUMENT]->(d:Document)
-OPTIONAL MATCH (d)-[:HAS_SECTION*]->(s:Section)
+OPTIONAL MATCH (v)-[:HAS*]->(d:Document)
+OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
 RETURN v.displayName AS display_name,
        count(DISTINCT d) AS doc_count,
        count(DISTINCT s) AS section_count
 """.strip()
 
-DELETE_VAULT = """
-MATCH (v:Vault {uri: $vaultUri})
-OPTIONAL MATCH (v)-[:HAS_DOCUMENT]->(d:Document)
-OPTIONAL MATCH (d)-[:HAS_SECTION*]->(s:Section)
-WITH v, collect(DISTINCT d) AS docs, collect(DISTINCT s) AS secs
-FOREACH (s IN secs | DETACH DELETE s)
-FOREACH (d IN docs | DETACH DELETE d)
-DETACH DELETE v
+
+# Step 1 — snapshot the URIs of LINKS_TO targets that sit OUTSIDE the vault
+# being removed. These are the only external nodes whose degree could
+# plausibly drop to zero as a result of the upcoming removal, so they're
+# the only ones step 3 needs to recheck.
+#
+# The URI-prefix-match (`STARTS WITH $vaultUri + '/'`) leverages the slug
+# being a strict prefix of every Folder/Document/Section URI under the vault.
+COLLECT_EXTERNAL_LINKS_TARGETS = """
+MATCH (src)-[:LINKS_TO]->(tgt)
+WHERE (src.uri = $vaultUri OR src.uri STARTS WITH $vaultUri + '/')
+  AND NOT (tgt.uri = $vaultUri OR tgt.uri STARTS WITH $vaultUri + '/')
+RETURN DISTINCT tgt.uri AS uri
 """.strip()
+
+
+# Step 2 — batched DETACH DELETE of the vault subtree. The `$chunkSize`
+# placeholder is substituted client-side because `CALL ... IN TRANSACTIONS
+# OF n ROWS` rejects Cypher parameters in the `n` position (same trick as
+# B.3 / B.12 quantified-path quantifiers). See `run_remove_vault_subtree`.
+#
+# Note: this MUST be run from an *implicit* transaction (driver-level
+# `session.run`), not inside `session.execute_write` — `CALL IN TRANSACTIONS`
+# explicitly forbids nesting in a managed transaction.
+REMOVE_VAULT_SUBTREE_BATCHED = """
+MATCH (n) WHERE n.uri = $vaultUri OR n.uri STARTS WITH $vaultUri + '/'
+CALL (n) {
+  DETACH DELETE n
+} IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# Step 3 — orphan GC scoped to the snapshot from step 1. Same chunk-size
+# substitution rule. The `WHERE NOT (n)--()` clause is the degree-zero
+# check (no incident edges remain after step 2 finished).
+REMOVE_ORPHAN_TARGETS_BATCHED = """
+UNWIND $candidateUris AS u
+MATCH (n {uri: u})
+WHERE NOT (n)--()
+CALL (n) {
+  DETACH DELETE n
+} IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# `ki nuke` — enumerate every vault's URI and machine-scoped path so the
+# caller can clean `.ki/vault.yaml` markers from disk after the graph wipe.
+LIST_ALL_VAULTS = """
+MATCH (v:Vault)
+RETURN v.uri AS uri, v.path AS path
+ORDER BY v.uri
+""".strip()
+
+
+# `ki nuke` — batched DETACH DELETE of every node in the graph. Same
+# chunk-size substitution rule. Run before dropping schema.
+REMOVE_ALL_NODES_BATCHED = """
+MATCH (n)
+CALL (n) {
+  DETACH DELETE n
+} IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# `ki nuke` — drop ki-owned constraints and indexes. Each is `IF EXISTS`-
+# guarded so the call is idempotent (an already-nuked graph runs cleanly).
+# Names match `SCHEMA_STATEMENTS` above; keep these two lists in lock-step.
+DROP_SCHEMA_STATEMENTS = (
+    "DROP CONSTRAINT user_id_unique IF EXISTS",
+    "DROP CONSTRAINT vault_uri_unique IF EXISTS",
+    "DROP CONSTRAINT folder_uri_unique IF EXISTS",
+    "DROP CONSTRAINT document_uri_unique IF EXISTS",
+    "DROP CONSTRAINT section_uri_unique IF EXISTS",
+    "DROP INDEX content_search IF EXISTS",
+)
 
 
 # Lookup helpers.
@@ -218,4 +364,18 @@ MATCH (v:Vault {uri: $vaultUri})
 RETURN v.displayName AS displayName,
        v.path AS path,
        v.name AS name
+""".strip()
+
+
+# `ki vault list` — list every indexed vault with its user-authored description.
+# Ordered most-recently-ingested first so the active vault floats to the top.
+VAULT_LIST = """
+MATCH (v:Vault)
+RETURN v.uri AS uri,
+       v.name AS name,
+       v.displayName AS displayName,
+       v.path AS path,
+       v.description AS description,
+       v.lastSeenAt AS lastSeenAt
+ORDER BY v.lastSeenAt DESC, v.displayName
 """.strip()

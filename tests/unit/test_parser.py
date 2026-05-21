@@ -165,6 +165,100 @@ def test_section_target_wikilink_carries_display_text():
     assert wl[0].display_text == "Anakin"
 
 
+# ---- #37: external URLs + internal non-md file links ---------------------
+
+
+def test_external_url_link_captured_as_external():
+    text = "# Top\n\nsee [Launch blog](https://neo4j.com/blog/agentic-ai/).\n"
+    doc = parse_markdown(text, filename="d.md")
+    [link] = [link for link in doc.sections[0].links if link.kind == "external_url"]
+    assert link.target == "https://neo4j.com/blog/agentic-ai/"
+    assert link.display_text == "Launch blog"
+    assert link.wikilink is False
+    assert link.embed is False
+
+
+def test_mailto_and_obsidian_schemes_are_external():
+    """Any URI scheme — not just https — flags external_url per #37 q4."""
+    text = (
+        "# Top\n\n"
+        "email [me](mailto:me@example.com), open [in obsidian]"
+        "(obsidian://open?vault=blogs&file=foo).\n"
+    )
+    doc = parse_markdown(text, filename="d.md")
+    kinds = {link.kind for link in doc.sections[0].links}
+    assert "external_url" in kinds
+    externals = {link.target for link in doc.sections[0].links if link.kind == "external_url"}
+    assert "mailto:me@example.com" in externals
+    assert "obsidian://open?vault=blogs&file=foo" in externals
+
+
+def test_internal_non_md_link_captured_as_stub_kind():
+    text = "# Top\n\nsee [Slides](./presentations/q3-deck.pptx) for the data.\n"
+    doc = parse_markdown(text, filename="d.md")
+    [link] = [
+        link for link in doc.sections[0].links if link.kind == "non_md_file"
+    ]
+    assert link.target == "./presentations/q3-deck.pptx"
+    assert link.display_text == "Slides"
+
+
+def test_md_link_kind_is_md_link():
+    """`[text](./foo.md)` is still classified as md_link (resolver path)."""
+    text = "# Top\n\nsee [Foo](./foo.md).\n"
+    doc = parse_markdown(text, filename="d.md")
+    [link] = [link for link in doc.sections[0].links if not link.wikilink]
+    assert link.kind == "md_link"
+    assert link.target == "./foo.md"
+
+
+def test_url_decode_only_applies_to_file_paths():
+    """File paths get URL-decoded so they resolve on disk; URLs stay verbatim.
+
+    Per #37 q1 (no URL normalization in v1), we don't decode URLs because
+    that would silently fold `?foo=a%20b` and `?foo=a b` into the same node.
+    """
+    text = (
+        "# Top\n\n"
+        "[Deck](./my%20deck.pptx) and "
+        "[URL](https://foo.com/a%20b).\n"
+    )
+    doc = parse_markdown(text, filename="d.md")
+    links = doc.sections[0].links
+    file_link = next(link for link in links if link.kind == "non_md_file")
+    url_link = next(link for link in links if link.kind == "external_url")
+    assert file_link.target == "./my deck.pptx"  # decoded
+    assert url_link.target == "https://foo.com/a%20b"  # verbatim
+
+
+def test_pure_fragment_link_skipped():
+    """`[click](#anchor)` is a same-doc anchor — skipped (lives in section content)."""
+    text = "# Top\n\nsee [the next section](#background) below.\n"
+    doc = parse_markdown(text, filename="d.md")
+    # Only the wikilink set (empty here) — no #-only links surface.
+    md_links = [link for link in doc.sections[0].links if not link.wikilink]
+    assert md_links == []
+
+
+def test_image_embeds_not_treated_as_markdown_links():
+    """`![alt](image.png)` is an image, not a link — must not be captured."""
+    text = "# Top\n\n![Diagram](./arch.png)\n\nand [Slides](./deck.pptx).\n"
+    doc = parse_markdown(text, filename="d.md")
+    md_kind_links = [link for link in doc.sections[0].links if not link.wikilink]
+    # Only `./deck.pptx`, not `./arch.png`.
+    targets = {link.target for link in md_kind_links}
+    assert "./deck.pptx" in targets
+    assert "./arch.png" not in targets
+
+
+def test_link_with_fragment_keeps_fragment_in_target_for_md():
+    """`[click](./foo.md#bar)` keeps the fragment so the resolver can split it."""
+    text = "# Top\n\nsee [Bar](./foo.md#bar) here.\n"
+    doc = parse_markdown(text, filename="d.md")
+    [link] = [link for link in doc.sections[0].links if link.kind == "md_link"]
+    assert link.target == "./foo.md#bar"
+
+
 def test_content_construction_shallow_with_pointers():
     """Rule 1: Section.content = body + uri: lines for direct children."""
     text = (
@@ -207,3 +301,62 @@ def test_document_with_no_headings_has_preamble_only():
     doc = parse_markdown(text, filename="d.md")
     assert doc.flat_sections == []
     assert "just some text" in doc.preamble
+
+
+# --- Frontmatter robustness (#53) ------------------------------------------
+
+
+def test_frontmatter_with_control_char_recovers():
+    """A stray ASCII control char (0x7F here) in a string value must not
+    abort the parse — PyYAML refuses to read it, so we sanitize and retry."""
+    text = (
+        '---\n'
+        'title: "Bones of the\x7f Milky Way"\n'
+        'aliases: ["Nessie"]\n'
+        '---\n'
+        '# Body\n'
+    )
+    fm = parse_frontmatter(text, filename="dirty.md")
+    assert fm.aliases == ["Nessie"]
+    # Sanitization strips the control char, so the surrounding text remains.
+    assert fm.frontmatter_json is not None
+    assert "Bones of the Milky Way" in fm.frontmatter_json
+    assert fm.body.startswith("# Body")
+
+
+def test_frontmatter_completely_broken_falls_back_cleanly(caplog):
+    """Syntactically broken YAML (unterminated quote) survives sanitization
+    too — fall through to empty fields, body excludes the `---...---` block,
+    and a warning naming the filename is logged."""
+    text = (
+        '---\n'
+        'title: "missing closing quote\n'
+        '---\n'
+        'real body line\n'
+    )
+    with caplog.at_level("WARNING"):
+        fm = parse_frontmatter(text, filename="broken.md")
+    assert fm.aliases == []
+    assert fm.frontmatter_created_at is None
+    assert fm.frontmatter_json is None
+    # The broken YAML block must not bleed into body content.
+    assert "missing closing quote" not in fm.body
+    assert "real body line" in fm.body
+    # Warning logged with the filename.
+    assert any("broken.md" in rec.message for rec in caplog.records)
+
+
+def test_frontmatter_clean_yaml_unchanged():
+    """Happy path: no sanitization, no warnings — round-trips as before."""
+    text = (
+        '---\n'
+        'title: "Clean"\n'
+        'aliases: ["A", "B"]\n'
+        '---\n'
+        'body\n'
+    )
+    fm = parse_frontmatter(text, filename="clean.md")
+    assert fm.aliases == ["A", "B"]
+    assert fm.frontmatter_json is not None
+    assert "Clean" in fm.frontmatter_json
+    assert fm.body.startswith("body")

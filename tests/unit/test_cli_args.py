@@ -12,7 +12,7 @@ def test_help_lists_all_commands():
     runner = CliRunner()
     res = runner.invoke(main, ["--help"])
     assert res.exit_code == 0
-    for cmd in ("configure", "index", "search", "rm", "init"):
+    for cmd in ("configure", "index", "search", "rm", "init", "vault"):
         assert cmd in res.output
 
 
@@ -32,27 +32,76 @@ def test_index_help_lists_flags():
     runner = CliRunner()
     res = runner.invoke(main, ["index", "--help"])
     assert res.exit_code == 0
-    for flag in ("--profile", "--batch-size", "--max-file-size", "--concurrency"):
+    for flag in (
+        "--profile",
+        "--batch-size",
+        "--max-file-size",
+        "--concurrency",
+        "--description",
+        "--force-description",
+    ):
         assert flag in res.output
 
 
-def test_search_help_lists_type_choices():
+def test_index_force_description_requires_description(tmp_path):
+    """`--force-description` without `--description` is nonsensical and must error."""
+    runner = CliRunner()
+    res = runner.invoke(
+        main, ["index", "--force-description", str(tmp_path)]
+    )
+    assert res.exit_code != 0
+    assert "--force-description requires --description" in res.output
+
+
+def test_search_help_lists_types_flag_and_valid_values():
     runner = CliRunner()
     res = runner.invoke(main, ["search", "--help"])
     assert res.exit_code == 0
-    assert "section" in res.output
-    assert "document" in res.output
-    assert "neighbors" in res.output
+    # New 0.4.0 surface: --types (plural) replaces --type. Default = all three.
+    assert "--types" in res.output
+    for choice in ("section", "document", "vault"):
+        assert choice in res.output
+    # `neighbors` was dropped in 0.4.0 — see #33 / #35.
+    assert "neighbors" not in res.output
+
+
+def test_vault_group_help_lists_subcommands():
+    runner = CliRunner()
+    res = runner.invoke(main, ["vault", "--help"])
+    assert res.exit_code == 0
+    assert "list" in res.output
+
+
+def test_vault_list_help_works():
+    runner = CliRunner()
+    res = runner.invoke(main, ["vault", "list", "--help"])
+    assert res.exit_code == 0
+    for flag in ("--profile", "--json"):
+        assert flag in res.output
 
 
 def test_rm_help_lists_safety_flags():
+    """`ki rm` is vault-only in 0.4.0 — see docs/index_rm_behavior.md.
+
+    Removed flag: `--vault` (the command is vault-only now; flag is redundant).
+    """
     runner = CliRunner()
     res = runner.invoke(main, ["rm", "--help"])
     assert res.exit_code == 0
-    for flag in ("--vault", "--dry-run", "--yes", "--keep-marker"):
+    for flag in ("--dry-run", "--yes", "--keep-marker", "--chunk-size"):
         assert flag in res.output
     # NEVER expose --purge per the requirements.
     assert "--purge" not in res.output
+    # `--vault` no longer exists — vault is the only mode.
+    assert "--vault" not in res.output
+
+
+def test_nuke_help_lists_safety_flags():
+    runner = CliRunner()
+    res = runner.invoke(main, ["nuke", "--help"])
+    assert res.exit_code == 0
+    for flag in ("--dry-run", "--yes", "--keep-marker", "--chunk-size"):
+        assert flag in res.output
 
 
 def test_init_help_works():

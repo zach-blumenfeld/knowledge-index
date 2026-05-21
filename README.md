@@ -9,7 +9,7 @@ install `ki`, wire into Claude Code, ask Claude what's in your notes:
 
 ```bash
 uv tool install knowledge-index
-ki configure                       # one-time: pick Aura or an existing Neo4j (see *Roadmap* below for the local option)
+ki configure                       # one-time: pick Local (Podman), Aura, or an Existing Neo4j — see `references/neo4j-podman.md` for the Local path
 ki skill install claude-code       # drops the routing rules into ~/.claude/skills/ki/SKILL.md
 ```
 
@@ -45,8 +45,8 @@ Then in Claude Code:
   ki (Knowledge Index) — the main retrieval project
   - retrieval-queries.md — 10 retrieval queries (B.1–B.10) ported from the old Wikipedia-graph queries to the new
   User–Vault–Document–Section schema
-  - requirements.md + ingest-cypher.md — schema, constraints, and the doc_section_search fulltext index over Document|Section on
-  displayName + content + aliases
+  - requirements.md + ingest-cypher.md — schema, constraints, and the content_search fulltext index over Document|Section|Vault on
+  displayName + content + aliases + description
   - Key design call: fulltext is the v1 retrieval substrate; vector/embeddings deferred. Wikilink aliases ("JFK" / "John F Kennedy")
   indexed so alternates hit the same doc.
   - Validated approach: what-worked.md notes that section-level retrieval beat whole-document retrieval when dogfooded against the
@@ -72,7 +72,8 @@ Coding agents can shell out to `ki` directly. `ki skill install` drops the bundl
 uv tool install knowledge-index            # if `uv` isn't installed: curl -LsSf https://astral.sh/uv/install.sh | sh
 ki --version
 
-# 2. One-time Neo4j connection (see *Roadmap* for the local option).
+# 2. One-time Neo4j connection. Three paths: Local (Podman — see references/neo4j-podman.md),
+#    Aura (billable cloud), or Existing (point at a Neo4j you already run).
 ki configure
 
 # 3. Install the skill into every detected agent — or pick one explicitly.
@@ -114,13 +115,18 @@ ki index ~/Documents/my-vault                  # sync the folder into the graph 
 
 ki search "retrieval"                          # default: section content (B.2)
 ki search "graph" --type document --k 5        # document title  (B.1)
+ki search "graphs" --type vault --k 5          # cross-vault routing by description (B.11)
 ki search "" --type neighbors --doc-uri <uri>  # 1-hop link neighbourhood (B.3)
+
+ki vault list                                  # show every indexed vault with its description
 
 ki rm ~/Documents/my-vault/notes/old.md        # remove a doc from the index (file untouched)
 ki rm ~/Documents/my-vault --vault             # remove a whole vault (typed confirmation)
 ```
 
-All commands: `ki configure | index | search | rm | init | skill`. Run any with `--help` for flags. `KI_PROFILE=work ki index ./vault` overrides the profile per-invocation. Run `uvx knowledge-index --help` first if you'd rather not install globally.
+All commands: `ki configure | index | search | vault | rm | init | skill`. Run any with `--help` for flags. `KI_PROFILE=work ki index ./vault` overrides the profile per-invocation. Run `uvx knowledge-index --help` first if you'd rather not install globally.
+
+Per-vault routing is driven by `<vault>/.ki/vault.yaml`. `ki` writes the `uri:` UUID on first ingest; add an optional `description:` to give agents a short routing hint about what this vault is for. Quickest way to set it: `ki index <vault> --description "..."` (or wait for the interactive prompt on the very first `ki index`). The description flows into `Vault.description` on each ingest and powers `ki search --type vault`.
 
 ### From a chat app (Claude, ChatGPT, Gemini, Copilot — web / desktop)
 
@@ -130,23 +136,29 @@ Not yet supported. Required MCP server.  On Roadmap
 
 `ki` v0.1 is intentionally scoped. The items below are not bugs — they're explicit deferrals you should know about before betting on it.
 
-### Local Neo4j wrapper not ready yet — use Aura or an existing instance
+### Local Neo4j via Podman — the recommended quick-start
 
-`ki configure` offers three paths: **Local** (wraps `neo4j-local`), **Aura** (wraps `neo4j-cli aura create`), **Existing** (point at a URI you already have). The **Local** path depends on the `neo4j-local` binary, which isn't published yet, so today the practical choices are:
+`ki configure` offers three paths: **Local** (Podman), **Aura** (billable cloud), **Existing** (point at a URI you already have).
 
-- **Aura** — `neo4j-cli aura create` provisions a real billable cloud instance. `ki configure → Aura` walks you through it. See [neo4j-labs/neo4j-cli](https://github.com/neo4j-labs/neo4j-cli).
-- **Existing** — any Neo4j you can reach over Bolt works. A common local-dev setup is Docker:
-  ```bash
-  docker run --rm -d --name neo4j-ki -p 7474:7474 -p 7687:7687 \
-    -e NEO4J_AUTH=neo4j/password neo4j:5
-  # then in `ki configure`, pick option 3 (Existing) and use bolt://localhost:7687 / neo4j / password
-  ```
+**Local** runs `neo4j:latest` in a Podman container with the APOC + GenAI plugins enabled, a named volume for persistence, and `--restart unless-stopped`. The full agent-followable runbook — preflight, bring-up, recovery for the three failure modes (container stopped / removed / volume wiped), and teardown — lives in [`references/neo4j-podman.md`](references/neo4j-podman.md). `ki configure → Local` shells out to that path automatically; if you'd rather read what it does first, the runbook is the source of truth.
 
-The Local option will light up automatically once `neo4j-local` lands.
+Prerequisite: `podman` on PATH. On macOS:
+
+```bash
+brew install podman
+podman machine init
+podman machine start
+```
+
+On Linux: `apt install podman` / `dnf install podman` / etc. (no `machine` step needed.)
+
+**Aura** — `neo4j-cli aura create` provisions a real billable cloud instance. `ki configure → Aura` walks you through it. See [neo4j-labs/neo4j-cli](https://github.com/neo4j-labs/neo4j-cli).
+
+**Existing** — any Neo4j you can reach over Bolt works. Pick this if you already run Neo4j via Docker, a managed service, or anything else; `ki configure → Existing` just prompts for URI + credentials.
 
 ### No vector search yet — fulltext only
 
-`ki search` runs against the `doc_section_search` fulltext index over `Document|Section.{displayName, content, aliases}`. There are no vector indexes or embeddings in the graph yet; hybrid (fulltext + vector) is on the v2 list. The `genai` plugin is already loaded in `neo4j-local` for the upgrade path, so when this lands existing vaults won't need to be re-ingested.
+`ki search` runs against the `content_search` fulltext index over `Document|Section|Vault.{displayName, content, aliases, description}`. There are no vector indexes or embeddings in the graph yet; hybrid (fulltext + vector) is on the v2 list. The `genai` plugin is already enabled in the Podman setup (see `references/neo4j-podman.md`) for the upgrade path, so when this lands existing vaults won't need to be re-ingested.
 
 Of the ten queries defined in [`docs/retrieval-queries.md`](docs/retrieval-queries.md), three are wired into the CLI today; the rest exist as Cypher but aren't reachable through `ki search` yet:
 
