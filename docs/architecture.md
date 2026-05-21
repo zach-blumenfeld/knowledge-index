@@ -56,10 +56,12 @@ The schema is normative in `docs/data-model.md`; this is the picture.
 | `User`     | (internal `id`, not in URIs)                                   | `displayName`, `email`, `*SeenAt` timestamps                       |
 | `Vault`    | human-readable slug (`my-notes`, collision: `-1` / `-2`)       | `name`, `displayName`, `path`, `isObsidianVault`, `description`    |
 | `Folder`   | `<vault-slug>/<folder-path>`                                   | `name`, `displayName`, `path`                                      |
-| `Document` | `<vault-slug>/<file-path-within-vault>`                        | `displayName`, `path`, `aliases`, `fileHash`, frontmatter, content |
+| `Document` | `<vault-slug>/<file-path-within-vault>` (internal `.md`) <br> `<vault-slug>/<file-path-within-vault>` (internal non-md stub — PDF, deck, image; `sourceType=LOCAL_FILE`) <br> `https://...` or `file:///...` (external; `sourceType=URL_LINK`) | `displayName`, `path`, `aliases`, `fileHash`, frontmatter, content |
 | `Section`  | `<doc-uri>#<h1-slug>/<h2-slug>/...`                            | `displayName`, `headingLevel`, `content`, `aliases`                |
 
 URIs encode containment as paths — trimming the last segment yields the parent, so the agent can derive ancestor URIs without a "go up" query.
+
+**Three Document kinds** (since PR #50 / #37 landed): every `[text](href)` link in a markdown file now creates a `:Document` node. Internal `.md` targets resolve to the existing in-vault Document; internal non-md files (PDFs, decks, images) become stub Documents inside the containment tree; external URLs become Documents *outside* the containment tree (the `HAS` single-parent invariant applies to vault-belonging nodes only). Same URL referenced from multiple vaults collapses to one Document via `MERGE` on `uri`. See `docs/link_capture.md` for the full matrix and edge cases.
 
 **Edges:**
 
@@ -84,10 +86,10 @@ URIs encode containment as paths — trimming the last segment yields the parent
 2. **Read concurrently.** `aiofiles`-backed, bounded by a concurrency knob. Read-side is the only place parallelism happens — writes are serialized.
 3. **Open one write session.** Single Neo4j session for the whole vault ingest. Concurrent writers would deadlock on shared `MERGE` targets at v1 scales.
 4. **Per-vault upsert.** `ensure_schema`, then MERGE the `User`, `Vault`, `USES_VAULT`, `LOADED` triple.
-5. **Materialize the folder layer.** Walk the discovered doc paths, MERGE `Folder` nodes + `HAS` edges so the containment tree exists before docs land.
-6. **Fetch existing `fileHash`es** for this vault. Documents whose SHA-256 matches what's already in the graph are skipped (path refresh only). This is the idempotency lever — re-indexing a vault is cheap.
-7. **Parse + write each changed doc.** `markdown-it-py` produces tokens with source-line spans, which the section-tree builder uses to slice body text per heading cleanly. Per-doc writes batch via `UNWIND $rows AS row` — Document, Section, `HAS`, `HAS_SECTION`, `NEXT_SECTION`, `LOADED`.
-8. **LINKS_TO post-pass.** Wikilinks and markdown links are resolved against the (now fully-materialized) vault, then written as `LINKS_TO` edges in one batch. Display text from piped wikilinks (`[[Doc|alias]]`) is folded into the target's `aliases` so fulltext queries hit alternates the vault never explicitly spells out.
+5. **Vault-level sync (nuke-then-rebuild).** If `.ki/vault.yaml` already existed before this run (i.e. it's a re-index, not a fresh vault), `remove_vault` is called against the existing `Vault.uri`: every Document / Section / Folder / `LINKS_TO` / `LOADED` edge for this vault is `DETACH DELETE`d in batched chunks. Fresh vaults skip this step. This is the v0.4.0 sync model — there's no per-doc diff; re-index is always a full rebuild. See `docs/index_rm_behavior.md` for the rationale.
+6. **Materialize the folder layer.** Walk the discovered doc paths, MERGE `Folder` nodes + `HAS` edges so the containment tree exists before docs land.
+7. **Parse + write each doc.** `markdown-it-py` produces tokens with source-line spans, which the section-tree builder uses to slice body text per heading cleanly. Per-doc writes batch via `UNWIND $rows AS row` — Document, Section, `HAS`, `HAS_SECTION`, `NEXT_SECTION`, `LOADED`.
+8. **Link-capture post-pass.** All `[[wikilinks]]` and `[md](./link.md)`-style markdown links are resolved against the now-materialized vault and written as `LINKS_TO` edges. Two extra batches MERGE the new Document kinds: internal non-md stubs (`./deck.pptx` → stub `:Document` with `sourceType=LOCAL_FILE`, attached to its containing folder via `HAS`) and external Documents (`https://...` or vault-escaping `file://...` → Document outside the containment tree, `sourceType=URL_LINK`). Display text from piped wikilinks (`[[Doc|alias]]`) and external links (`[Launch blog](https://...)`) is folded into the target's `aliases` so fulltext queries hit alternates the vault never explicitly spells out.
 
 The `Content Construction Rules` in `docs/data-model.md` are load-bearing here: Section `content` is **only** the preamble under that heading plus `uri:` pointers to child Sections — child body text is *not* inlined. The agent reconstructs full body text on demand via `ki get --type full` (which walks `NEXT_SECTION` server-side in one Cypher call).
 
@@ -95,15 +97,12 @@ The `Content Construction Rules` in `docs/data-model.md` are load-bearing here: 
 
 `src/ki/ingest/batcher.py` is a thin loop over `UNWIND $rows AS row` writes. Default batch is 1,000 rows. On a Neo4j `TransientError` containing "out of memory", the batcher halves the batch size (floor 16), retries the failed slice once, and continues at the smaller size. The batcher emits one warning per ingest on first shrink so the user knows their Neo4j heap is the bottleneck.
 
-### `ki rm <path> [--vault] [--keep-marker]`
+### `ki rm <vault-path>` and `ki nuke`
 
-Removes nodes from the index. Source files are never touched. Three blast radii:
+Two removal verbs, no per-doc / subtree granularity (v0.4.0 vault-level sync model — see `docs/index_rm_behavior.md`):
 
-- **Single doc** — no prompt.
-- **Subtree** — prompts with a count.
-- **Whole vault** — requires `--vault` *and* typed confirmation of the vault display name.
-
-`--keep-marker` preserves `.ki/vault.yaml` so the next `ki index` rebuilds onto the same `Vault.uri` — the natural "reset this vault" idiom.
+- **`ki rm <vault-path>`** — remove a whole vault from the index. Typed confirmation of the vault display name required. Source files are never touched. Passing a file path or a subdirectory under a vault errors with a message pointing at `ki index` — re-indexing nukes-and-rebuilds, which is how stale docs get cleaned up after the user deletes files on disk.
+- **`ki nuke`** — reset the entire graph: every Vault, every Document, every Section, every edge, plus the schema constraints + fulltext index, get torn down and recreated. Typed confirmation required. Use when something has gone wrong at the schema level or when starting over.
 
 ## Two read paths
 
@@ -117,7 +116,7 @@ The default merges three fulltext queries by score:
 - **B.2** — Section content fulltext (joins back to the owning Document for ancestry).
 - **B.11** — Vault fulltext (over `name + displayName + description`, the cross-vault routing query).
 
-`--types <subset>` narrows to one or two of `{document, section, vault}`. `--k N` is a *total* cap across the merged result set (not per-type). `--json` emits a heterogeneous list with a `label` field per row.
+`--types <subset>` narrows to one or two of `{document, section, vault}`. `--k N` is a *total* cap across the merged result set (not per-type). `--json` emits a heterogeneous list with a `label` field per row. `--types document` surfaces all three Document kinds — internal markdown, internal non-md stubs (PDFs, decks), and external URLs — so a search for *"launch blog"* can return the externally-linked URL by the link text the user wrote.
 
 **Cross-type score caveat:** fulltext scores aren't strictly comparable across queries because of term-frequency normalization. Merge is a heuristic — re-run with `--types <one>` if the ranking looks off.
 
@@ -172,16 +171,11 @@ A reading order if you want to get up to speed:
 3. **`docs/requirements_v01_mvp.md`** — the full design spec. Normative on CLI shape, scalability envelopes, auto-mode rules.
 4. **`docs/data-model.md`** — the schema. Normative on node properties, edge directions, content-construction rules.
 5. **`docs/ingest-cypher.md`** + **`docs/retrieval-queries.md`** — the working Cypher. `src/ki/ingest/queries.py` and `src/ki/search/queries.py` lift from these.
-6. **`skills/ki/SKILL.md`** — the agent-as-user contract. When changing CLI shape, update this in the same PR.
-7. **`references/neo4j-podman.md`** — the Local Neo4j runbook. Source of truth for the Podman container/volume/image/plugin choices that `src/ki/neo4j_podman.py` mirrors.
+6. **`docs/index_rm_behavior.md`** + **`docs/link_capture.md`** — the v0.4.0 sync model (`ki rm` vault-only, `ki index` re-index = nuke + rebuild) and the link-capture matrix (three Document kinds). Newest specs; not in the original requirements doc.
+7. **`skills/ki/SKILL.md`** — the agent-as-user contract. When changing CLI shape, update this in the same PR.
+8. **`references/neo4j-podman.md`** — the Local Neo4j runbook. Source of truth for the Podman container/volume/image/plugin choices that `src/ki/neo4j_podman.py` mirrors.
 
-## What's in flight, what's deferred
-
-**In flight** (open PRs at time of writing):
-
-- *Capture all markdown links as `:Document` nodes* (#37 / PR #50). Broadens the link parser from `.md`-target-only to every `[text](href)`. External URLs become `:Document` nodes outside the containment tree (`sourceType=URL_LINK`); internal non-md files (PDFs, decks) become stub `:Document` nodes inside the tree. The `HAS` single-parent invariant gets an amendment: it applies to vault-belonging nodes only. Expect the data-model and parser sections of this doc to evolve when that lands.
-
-**Deferred, with the closest wired alternative noted:**
+## Deferred — what's not wired and the closest workaround
 
 - **Vector search / embeddings** — v2. Fulltext (`content_search`) is the v1 substrate. The `genai` plugin is enabled in the Podman setup so existing vaults won't need re-ingest when this lands.
 - **Backlinks** ("what links *to* this?") — #35. No wired alternative; Cypher exists in `retrieval-queries.md` for a one-shot.
