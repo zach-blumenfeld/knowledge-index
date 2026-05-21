@@ -49,14 +49,18 @@ The commands you'll actually use:
 
 ```bash
 ki configure                     # one-time per machine: writes ~/.config/ki/config.yaml
-ki index ./path/to/vault         # sync a folder into the graph (idempotent; auto-creates the vault marker)
+ki index ./path/to/vault         # sync a folder into the graph (re-index = full nuke + re-ingest)
 ki search "query" [flags]        # retrieve via fulltext
 ki tree [--at "<Label>:<uri>"]   # render the containment tree (B.12) — see "When to invoke ki tree"
 ki get "<uri>" [flags]           # fetch metadata + content at a Doc / Section URI — see "When to invoke ki get"
 ki vault list                    # show every indexed vault with its description (routing hint)
-ki rm ./path/to/file.md          # remove a document from the index (source file untouched)
-ki rm ./path/to/vault --vault    # remove a whole vault from the index (source files untouched)
+ki rm ./path/to/vault            # remove an entire vault from the index (vault-only — see below)
+ki nuke                          # reset the entire graph + schema (typed confirmation required)
 ```
+
+**Sync model — vault-level only.** ki keeps the *vault* as the only unit of sync. `ki index <vault>` adds-or-fully-refreshes a vault's content (re-index = nuke the vault's contents, then re-ingest). `ki rm <vault>` removes a whole vault. There's no document-level or subtree-level rm — that granularity isn't exposed. If a user wants stale docs cleaned up after deleting files on disk, the answer is `ki index <vault>` (it'll nuke + rebuild). See `docs/index_rm_behavior.md` for the design rationale.
+
+**Passing a file path or subdirectory to `ki rm` errors** with a message that points at `ki index` — surface that to the user verbatim, don't try a workaround.
 
 Also available: `ki init <path>` (advanced: write the vault marker without indexing), and `ki skill {list, install, remove, print}` for installing this routing-rules file into other agents (Cursor, Windsurf, etc.). See `ki skill list` for the full agent catalog.
 
@@ -79,6 +83,8 @@ Flag mechanics:
 - `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
 
 Plain-text output uses the same `T` letter convention as `ki tree`: `V`=Vault, `D`=Document, `S`=Section. The `uri` column carries the load-bearing identifier you can paste into `ki get <uri>` or `ki tree --at <uri>`.
+
+**Document results now include external URLs and internal non-md files** (#37). A markdown link like `[Launch blog](https://neo4j.com/blog/...)` creates an external `:Document` keyed by the URL itself; `[Slides](./deck.pptx)` creates an internal stub `:Document` (`sourceType=LOCAL_FILE`, no content, just metadata + fileHash). `ki search --types document` and `ki tree` surface all three Document kinds (internal md, internal non-md stub, external URL). `ki get <external-url>` works and returns the external Document's metadata; the URI is the URL itself — no slug prefix.
 
 **Cross-type score caveat.** Fulltext scores are not strictly comparable across queries (different term-frequency normalization per set size), so the merged ranking is a heuristic. If a query feels off, re-run with `--types <one>` to see the native ranking for that type alone.
 

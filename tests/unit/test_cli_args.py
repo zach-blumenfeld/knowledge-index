@@ -81,13 +81,27 @@ def test_vault_list_help_works():
 
 
 def test_rm_help_lists_safety_flags():
+    """`ki rm` is vault-only in 0.4.0 — see docs/index_rm_behavior.md.
+
+    Removed flag: `--vault` (the command is vault-only now; flag is redundant).
+    """
     runner = CliRunner()
     res = runner.invoke(main, ["rm", "--help"])
     assert res.exit_code == 0
-    for flag in ("--vault", "--dry-run", "--yes", "--keep-marker"):
+    for flag in ("--dry-run", "--yes", "--keep-marker", "--chunk-size"):
         assert flag in res.output
     # NEVER expose --purge per the requirements.
     assert "--purge" not in res.output
+    # `--vault` no longer exists — vault is the only mode.
+    assert "--vault" not in res.output
+
+
+def test_nuke_help_lists_safety_flags():
+    runner = CliRunner()
+    res = runner.invoke(main, ["nuke", "--help"])
+    assert res.exit_code == 0
+    for flag in ("--dry-run", "--yes", "--keep-marker", "--chunk-size"):
+        assert flag in res.output
 
 
 def test_init_help_works():

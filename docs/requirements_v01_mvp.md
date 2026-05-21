@@ -92,8 +92,8 @@ ki index ./my-vault         # syncs to Neo4j (idempotent; auto-creates .ki/vault
 ki search "..." [flags]     # fulltext across {Document,Section,Vault} (B.1+B.2+B.11); --types narrows
 ki tree [--at "<uri>"]      # render the containment hierarchy (Vault → Folder → Doc → Section) — see docs/tree-format.md
 ki get "<uri>" [flags]      # fetch metadata + content at a Doc / Section URI; --type {path,content,full}
-ki rm ./my-vault/notes/idea.md      # remove a document from the index (source file untouched)
-ki rm ./my-vault --vault            # remove an entire vault from the index (source files untouched)
+ki rm ./my-vault                    # remove an entire vault from the index (vault-only; source files untouched)
+ki nuke                             # reset the entire graph + schema (typed confirmation required)
 
 ki index ./my-vault --profile work    # explicit profile override
 KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents / cron)
@@ -115,32 +115,34 @@ KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents /
 
 A thin alias that writes `.ki/vault.yaml` *without* indexing. Useful only in narrow cases — e.g., pre-creating the marker so it's committed to git before any content exists. Not part of the quick-start; most users never run it.
 
-### Removal (`ki rm`)
+### Removal (`ki rm`, `ki nuke`)
 
-Removes nodes from the **index only**. Source files on disk are never touched — see the *Core design principle* at the top of this file. There is intentionally no `--purge` flag.
+ki keeps the **vault** as the only unit of sync. `ki rm` operates only on vault-level targets; sub-vault granularity (doc, subtree) is not exposed. The motivation and the full removal-routine spec live in **`docs/index_rm_behavior.md`** — read that for the design.
 
 ```bash
-ki rm ./my-vault/notes/idea.md      # single document — fine, low blast radius, no prompt
-ki rm ./my-vault/notes/              # subtree — prompts: "remove 23 documents? [y/N]"
-ki rm ./my-vault --vault             # whole vault — requires --vault flag AND typed
-                                     #   confirmation ("type the vault display-name to confirm")
-ki rm 7f3c-vault-uuid --vault        # remove by Vault.uri when the path isn't handy
+ki rm ./my-vault                       # remove a whole vault by path (typed confirmation required)
+ki rm my-vault-slug                    # same, by Vault.uri slug
+ki rm <target> --dry-run               # show what would be removed; touch nothing
+ki rm <target> --yes                   # skip the typed-display-name confirm
+ki rm <target> --keep-marker           # remove vault data but keep .ki/vault.yaml
+                                       #   (next `ki index` rebuilds onto the same Vault.uri)
+ki rm <target> --chunk-size N          # rows per batched-remove transaction (default 1000)
 
-ki rm <path> --dry-run               # show what would be removed; touch nothing
-ki rm <path> --yes                   # skip prompts (scripts / agent auto-mode)
-ki rm <vault> --vault --keep-marker  # remove vault data but keep .ki/vault.yaml;
-                                     #   next `ki index` rebuilds onto the same Vault.uri
-                                     #   (clean reset idiom)
+ki nuke                                # reset the entire graph + drop ki-owned schema
+ki nuke --keep-marker                  # same, but keep every .ki/vault.yaml on disk
+ki nuke --dry-run / --yes / --chunk-size N
 ```
+
+**Sub-vault `ki rm` is rejected with a clear error** pointing the user at `ki index <vault>` — that's the only way to sync content at file granularity (a full re-index nukes + re-ingests the vault).
 
 **Defaults driven by safety and reversibility:**
 
-- **Source files are never touched.** `ki rm` removes nodes from Neo4j; that's all. If the user wants files gone, they use `rm`. (See *Core design principle*.)
-- **Blast radius scales confirmation.** Single doc = no prompt. Subtree = prompt with count. Whole vault = require `--vault` *and* typed confirmation.
-- **Marker stays unless told otherwise.** Removing a vault removes its `.ki/vault.yaml` by default (full removal). `--keep-marker` preserves it so the next `ki index` rebuilds onto the same `Vault.uri` — the natural "reset this vault" idiom. Note: this also preserves any user-authored description in the file.
-- **`LOADED` provenance edges are deleted with their endpoints** via `DETACH DELETE`. Provenance is moot once the entity is gone; if anyone needs ingest history, it's reconstructable from logs.
+- **Source files are never touched.** `ki rm` / `ki nuke` remove nodes from Neo4j; that's all. If the user wants files gone, they use `rm`. (See *Core design principle*.)
+- **Vault removal requires typed display-name confirmation**; `ki nuke` requires typed `"nuke"` confirmation. Both bypass with `--yes`.
+- **Marker stays unless `--keep-marker=False`.** `ki rm` removes `.ki/vault.yaml` by default; `ki nuke` removes every known marker by default. Pass `--keep-marker` to preserve so the next `ki index` rebuilds onto the same `Vault.uri` — the "reset this vault" idiom.
+- **`LOADED` provenance edges are removed with their endpoints** via `DETACH DELETE`. Provenance is moot once the entity is gone; if anyone needs ingest history, it's reconstructable from logs.
 
-**Agent auto-mode handling:** single-doc and subtree `rm` are auto-fine (reversible by re-running `ki index`). Whole-vault `rm` requires explicit user consent every time, regardless of harness permission, because it destroys the graph for that vault. See *Agent auto-mode behavior* for the full partition.
+**Agent auto-mode handling:** `ki rm` (whole vault) and `ki nuke` require explicit user consent every time, regardless of harness permission, because they destroy graph state. See *Agent auto-mode behavior* for the full partition.
 
 ## Configuration & Neo4j setup
 

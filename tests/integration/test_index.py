@@ -105,24 +105,35 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
             assert "content_search" in {row["name"] for row in indexes}
 
 
-def test_reindex_unchanged_is_noop(vault_dir, neo4j_profile, cleanup_vault):
+def test_reindex_is_full_rebuild(vault_dir, neo4j_profile, cleanup_vault):
+    """Per `docs/index_rm_behavior.md`, re-indexing an existing vault nukes
+    the vault contents first, then re-ingests everything. Every doc is
+    counted as "added" on the second pass — the incremental fileHash-skip
+    optimization no longer fires because there's nothing to skip-against.
+    """
     expected_files = _vault_md_count(vault_dir)
     first = _run_ingest(vault_dir, neo4j_profile, batch_size=64)
     cleanup_vault.append(first.vault_uri)
 
     second = _run_ingest(vault_dir, neo4j_profile, batch_size=64)
-    assert second.docs_added == 0
+    assert second.docs_added == expected_files
     assert second.docs_updated == 0
-    assert second.docs_skipped_unchanged == expected_files
+    assert second.docs_skipped_unchanged == 0
+    # Same vault URI — marker is honored on the re-ingest path.
+    assert second.vault_uri == first.vault_uri
 
 
-def test_reindex_after_edit_updates_only_that_doc(vault_dir, neo4j_profile, cleanup_vault):
+def test_reindex_picks_up_disk_changes(vault_dir, neo4j_profile, cleanup_vault):
+    """Vault-level sync: disk changes (edits, new files) land on re-index.
+
+    Tests the round-trip: index → edit → re-index → graph reflects edit.
+    Previously this asserted the fileHash-skip-everything-except-N
+    semantics; now it asserts the simpler vault-level-sync invariant.
+    """
     expected_files = _vault_md_count(vault_dir)
     first = _run_ingest(vault_dir, neo4j_profile, batch_size=64)
     cleanup_vault.append(first.vault_uri)
 
-    # Edit one file. The generated fixture always carries this one (see
-    # scripts/gen_test_vault.py / Big Idea); falls through to any .md otherwise.
     target = vault_dir / "Notes" / "My Projects" / "big-idea.md"
     if not target.exists():
         target = next(vault_dir.rglob("*.md"))
@@ -130,12 +141,42 @@ def test_reindex_after_edit_updates_only_that_doc(vault_dir, neo4j_profile, clea
     target.write_text(target.read_text() + "\n## NEW Section\n\nfresh content.\n")
 
     second = _run_ingest(vault_dir, neo4j_profile, batch_size=64)
-    assert second.docs_added == 0
-    assert second.docs_updated == 1
-    assert second.docs_skipped_unchanged == expected_files - 1
-
+    # Vault-level sync: every doc is "added" on re-index. The edit is visible.
+    assert second.docs_added == expected_files
     after_sections = _count_sections_for_doc(neo4j_profile, first.vault_uri, target.name)
     assert after_sections >= before_sections + 1
+
+
+def test_reindex_drops_stale_docs(tmp_path, neo4j_profile, cleanup_vault):
+    """A file removed from disk between ingests vanishes from the graph.
+
+    This is the core motivation for vault-level sync (closes #3) — the
+    fileHash-skip incremental model couldn't detect stale docs without an
+    extra pass; vault-level sync handles it for free via pre-ingest nuke.
+    """
+    vault = tmp_path / "stale-drop-vault"
+    vault.mkdir()
+    (vault / "keep.md").write_text("# Keep\n\nbody.\n")
+    (vault / "stale.md").write_text("# Stale\n\nbody.\n")
+
+    first = _run_ingest(vault, neo4j_profile, batch_size=64)
+    cleanup_vault.append(first.vault_uri)
+    assert first.docs_added == 2
+
+    # Remove one file on disk.
+    (vault / "stale.md").unlink()
+
+    second = _run_ingest(vault, neo4j_profile, batch_size=64)
+    assert second.docs_added == 1  # only `keep.md`
+
+    # The stale doc is gone from the graph.
+    with driver_for(neo4j_profile) as driver, driver.session() as session:
+        row = session.run(
+            "MATCH (d:Document) WHERE d.uri STARTS WITH $u + '/' RETURN d.name AS name",
+            u=first.vault_uri,
+        ).data()
+        names = {r["name"] for r in row}
+    assert names == {"keep.md"}
 
 
 def _count_sections_for_doc(neo4j_profile, vault_uri, doc_name):
@@ -487,7 +528,13 @@ def test_folder_layer_nasty_structure(tmp_path, neo4j_profile, cleanup_vault):
 
 
 def test_folder_layer_reindex_is_idempotent(tmp_path, neo4j_profile, cleanup_vault):
-    """A second ingest with no filesystem changes must not duplicate folders/edges."""
+    """A second ingest with no filesystem changes lands in the same graph shape.
+
+    With vault-level sync (docs/index_rm_behavior.md), re-index nukes and
+    re-creates everything — so we assert the *post-state* is identical
+    (same folder count, no duplicates) rather than the "doc was skipped"
+    counters that the old fileHash-skip model surfaced.
+    """
     fresh = tmp_path / "idempotent-vault"
     fresh.mkdir()
     _build_nasty_vault(fresh)
@@ -497,10 +544,9 @@ def test_folder_layer_reindex_is_idempotent(tmp_path, neo4j_profile, cleanup_vau
     assert first.folders_total == 10
 
     second = _run_ingest(fresh, neo4j_profile, batch_size=64)
-    assert second.folders_total == 10  # same count — MERGE is idempotent
-    assert second.docs_added == 0
-    assert second.docs_updated == 0
-    assert second.docs_skipped_unchanged == 11
+    assert second.folders_total == 10  # same count post-rebuild
+    # Re-index is a full rebuild now: every doc is re-added.
+    assert second.docs_added == 11
 
     v = first.vault_uri
     with driver_for(neo4j_profile) as driver:
@@ -568,13 +614,14 @@ def test_folder_layer_wikilink_resolver_finds_nested_docs(tmp_path, neo4j_profil
     first = _run_ingest(fresh, neo4j_profile, batch_size=64)
     cleanup_vault.append(first.vault_uri)
 
-    # Re-ingest with a clean fileHash so the resolver loads via the graph
-    # (it would otherwise also work from in-memory state during the first run).
+    # Re-ingest with edited content so the resolver re-runs against a fresh
+    # graph state (vault-level sync nukes + re-ingests every time).
     (fresh / "index.md").write_text(
         "# Index\n\nSee [[target]] and [[Other]] for details.\n"
     )
     second = _run_ingest(fresh, neo4j_profile, batch_size=64)
-    assert second.docs_updated == 1
+    # Vault-level sync: every doc is re-added on re-index.
+    assert second.docs_added == 3
 
     v = first.vault_uri
     with driver_for(neo4j_profile) as driver:
@@ -600,7 +647,6 @@ def test_folder_layer_wikilink_resolver_finds_nested_docs(tmp_path, neo4j_profil
 
 def test_folder_layer_rm_vault_clears_folders_too(tmp_path, neo4j_profile):
     """`ki rm --vault` deletes the Folder nodes alongside Documents and Sections."""
-    from ki.ingest import queries as Q
 
     fresh = tmp_path / "rm-folders-vault"
     fresh.mkdir()
@@ -610,7 +656,8 @@ def test_folder_layer_rm_vault_clears_folders_too(tmp_path, neo4j_profile):
 
     with driver_for(neo4j_profile) as driver:
         with driver.session() as session:
-            session.run(Q.DELETE_VAULT, vaultUri=v).consume()
+            from ki.ingest.remove import remove_vault
+            remove_vault(session, v)
 
             # Vault is gone.
             row = session.run("MATCH (v:Vault {uri: $u}) RETURN v", u=v).single()

@@ -2,11 +2,12 @@
 
 User-visible commands:
   ki configure              one-time Neo4j connection setup
-  ki index <path>           sync a folder of markdown into the graph
+  ki index <path>           sync a folder of markdown into the graph (re-index = full nuke + re-ingest)
   ki search <query>         fulltext across {Document,Section,Vault} (B.1 / B.2 / B.11)
   ki tree                   render the containment tree (B.12)
   ki get <uri> ...          fetch metadata + content for a Document / Section URI
-  ki rm <path>              remove a doc / subtree / vault from the index
+  ki rm <vault>             remove an entire vault from the index (vault-only — see docs/index_rm_behavior.md)
+  ki nuke                   reset the entire graph and drop all schema (typed confirmation required)
   ki vault list             list every indexed vault with its description
   ki init <path>            (advanced) write `.ki/vault.yaml` without indexing
 """
@@ -24,6 +25,7 @@ from .commands.configure import configure as configure_flow
 from .commands.get import cmd_get
 from .commands.index import cmd_index
 from .commands.init import cmd_init
+from .commands.nuke import cmd_nuke
 from .commands.rm import cmd_rm
 from .commands.search import cmd_search
 from .commands.skill import cmd_install as cmd_skill_install
@@ -90,6 +92,12 @@ def configure_cmd(profile_name: str | None, yes_flag: bool, set_default: bool) -
     "--force-description", "force_description", is_flag=True, default=False,
     help="Allow --description to overwrite an existing description.",
 )
+@click.option(
+    "--chunk-size", "chunk_size", type=int, default=1000,
+    help="Rows per batched-remove transaction during the pre-ingest vault nuke "
+         "(default 1000). Only matters when re-indexing an existing vault. "
+         "Lower it (e.g. 200) if you see Neo4j OOM during removal.",
+)
 def index_cmd(
     path: Path,
     profile: str | None,
@@ -99,6 +107,7 @@ def index_cmd(
     yes_flag: bool,
     description: str | None,
     force_description: bool,
+    chunk_size: int,
 ) -> None:
     sys.exit(
         cmd_index(
@@ -110,6 +119,7 @@ def index_cmd(
             yes=yes_flag,
             description=description,
             force_description=force_description,
+            chunk_size=chunk_size,
         )
     )
 
@@ -207,35 +217,79 @@ def get_cmd(
     )
 
 
-@main.command("rm", help="Remove a document / subtree / vault from the index.")
+@main.command(
+    "rm",
+    help="Remove an entire vault from the index. Source files untouched. "
+         "Sub-vault granularity is not supported — see `docs/index_rm_behavior.md`.",
+)
 @click.argument("target")
 @click.option("--profile", default=None)
-@click.option(
-    "--vault", "vault_flag", is_flag=True, default=False,
-    help="Remove an entire vault. Requires typed display-name confirmation.",
-)
 @click.option("--dry-run", is_flag=True, default=False, help="Report only; no Neo4j writes.")
-@click.option("--yes", "yes_flag", is_flag=True, default=False, help="Skip prompts.")
+@click.option("--yes", "yes_flag", is_flag=True, default=False, help="Skip the typed-confirmation prompt.")
 @click.option(
     "--keep-marker", is_flag=True, default=False,
-    help="(--vault) keep .ki/vault.yaml so the next `ki index` rebuilds the same Vault.uri.",
+    help="Keep .ki/vault.yaml on disk so the next `ki index` rebuilds onto the same Vault.uri.",
+)
+@click.option(
+    "--chunk-size", "chunk_size", type=int, default=1000,
+    help="Rows per batched-remove transaction (default 1000). "
+         "Lower it (e.g. 200) if you see Neo4j OOM during removal; "
+         "raise it on small graphs to cut transaction overhead.",
 )
 def rm_cmd(
     target: str,
     profile: str | None,
-    vault_flag: bool,
     dry_run: bool,
     yes_flag: bool,
     keep_marker: bool,
+    chunk_size: int,
 ) -> None:
     sys.exit(
         cmd_rm(
             target,
             profile=profile,
-            vault_flag=vault_flag,
             dry_run=dry_run,
             yes=yes_flag,
             keep_marker=keep_marker,
+            chunk_size=chunk_size,
+        )
+    )
+
+
+@main.command(
+    "nuke",
+    help="Reset the entire ki graph: remove every vault, drop all indexes and "
+         "constraints, and remove every .ki/vault.yaml ki knows about. "
+         "Typed confirmation required. Source files untouched.",
+)
+@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+@click.option("--dry-run", is_flag=True, default=False, help="Report only; no changes.")
+@click.option("--yes", "yes_flag", is_flag=True, default=False, help="Skip the typed-confirmation prompt.")
+@click.option(
+    "--keep-marker", is_flag=True, default=False,
+    help="Keep .ki/vault.yaml on disk for every vault so the next `ki index` "
+         "rebuilds onto the same Vault.uri.",
+)
+@click.option(
+    "--chunk-size", "chunk_size", type=int, default=1000,
+    help="Rows per batched-remove transaction (default 1000). "
+         "Lower it (e.g. 200) if you see Neo4j OOM during removal; "
+         "raise it on small graphs to cut transaction overhead.",
+)
+def nuke_cmd(
+    profile: str | None,
+    dry_run: bool,
+    yes_flag: bool,
+    keep_marker: bool,
+    chunk_size: int,
+) -> None:
+    sys.exit(
+        cmd_nuke(
+            profile=profile,
+            dry_run=dry_run,
+            yes=yes_flag,
+            keep_marker=keep_marker,
+            chunk_size=chunk_size,
         )
     )
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -40,20 +41,41 @@ from .frontmatter import FrontmatterFields, parse_frontmatter
 # aliases list (see docs/ingest-cypher.md §4.3 step 7).
 _EMBED_RE = re.compile(r"!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]")
 _WIKILINK_RE = re.compile(r"(?<!\!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]")
-# Markdown link to an .md file (relative or absolute). Captures href.
-_MD_LINK_RE = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)\s]+\.md(?:#[^)]*)?)\)")
+# Markdown links — broadened in 0.4.0 (#37) to capture every `[text](href)`,
+# not just `.md` targets. The pipeline classifies each by `kind` and routes
+# accordingly: `.md` paths through the existing wikilink resolver, non-md
+# paths to a filesystem-resolution path that may create stub :Document
+# nodes, and URL-scheme links to external :Document nodes (no HAS edge).
+# Captures the link text too (group 1) so it can populate the stub/external
+# target's aliases per data-model.md alias rules.
+_MD_LINK_RE = re.compile(r"(?<!\!)\[([^\]]*)\]\(([^)\s]+)\)")
+# A "scheme" is any RFC-3986-ish URI scheme — `https`, `http`, `mailto`,
+# `obsidian`, etc. We don't enumerate; any leading `letter [letter|digit|+|-|.]*:`
+# qualifies. (Windows drive paths like `C:/...` also match but are vanishingly
+# rare in a Unix-first markdown tool; ignored.)
+_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+\-.]*:", re.IGNORECASE)
 
 
 @dataclass
 class ParsedLink:
-    target: str  # raw target text (wikilink name or markdown href)
+    target: str  # raw target text (wikilink name or markdown href, URL-decoded)
     wikilink: bool
     embed: bool
-    # Display text after the pipe in a wikilink (`[[Target|Display]]`).
-    # `None` for unpiped wikilinks, embeds-without-pipe, and markdown links.
-    # Routed to the *target's* `aliases` at ingest — see docs/ingest-cypher.md
-    # §4.3 step 7.
+    # Display text after the pipe in a wikilink (`[[Target|Display]]`) OR the
+    # `[text]` part of a markdown link (`[text](href)`). Routed to the
+    # *target's* `aliases` at ingest — see docs/ingest-cypher.md §4.3 step 7.
+    # `None` for un-piped wikilinks / embeds, and for markdown links with empty
+    # text.
     display_text: str | None = None
+    # Link classification — drives ingest-time routing per #37:
+    #   "wikilink"     — `[[name]]` or `[[name|display]]` (also covers embeds)
+    #   "md_link"      — `[text](path.md)` → wikilink resolver path
+    #   "non_md_file"  — `[text](path.ext)` non-md extension → filesystem-resolve
+    #                    to a stub :Document (or external file://... if it
+    #                    escapes the vault)
+    #   "external_url" — `[text](https://...)`, `mailto:`, `obsidian://`, any
+    #                    scheme → external :Document keyed by the URI as-is
+    kind: str = "wikilink"
 
 
 @dataclass
@@ -179,6 +201,23 @@ def _build_tree(
     return preamble, top_level, dfs
 
 
+def _classify_link(href: str) -> str | None:
+    """Classify a markdown link href. Returns None for hrefs we drop at parse time."""
+    if not href.strip():
+        return None
+    if _SCHEME_RE.match(href):
+        return "external_url"
+    # Strip optional fragment + query for the extension test.
+    path_part = href.split("#", 1)[0].split("?", 1)[0]
+    if not path_part:
+        # Pure `#fragment` or `?query`-only link — not useful for graph LINKS_TO
+        # (same-doc anchors live in the section content already). Skip.
+        return None
+    if path_part.lower().endswith(".md"):
+        return "md_link"
+    return "non_md_file"
+
+
 def _extract_links(text: str) -> list[ParsedLink]:
     links: list[ParsedLink] = []
     for m in _EMBED_RE.finditer(text):
@@ -189,6 +228,7 @@ def _extract_links(text: str) -> list[ParsedLink]:
                 wikilink=True,
                 embed=True,
                 display_text=display.strip() if display else None,
+                kind="wikilink",
             )
         )
     for m in _WIKILINK_RE.finditer(text):
@@ -199,10 +239,33 @@ def _extract_links(text: str) -> list[ParsedLink]:
                 wikilink=True,
                 embed=False,
                 display_text=display.strip() if display else None,
+                kind="wikilink",
             )
         )
     for m in _MD_LINK_RE.finditer(text):
-        links.append(ParsedLink(target=m.group(1).strip(), wikilink=False, embed=False))
+        link_text = m.group(1).strip()
+        raw_href = m.group(2).strip()
+        kind = _classify_link(raw_href)
+        if kind is None:
+            continue
+        # URL-decode file paths so `./my%20deck.pptx` resolves on disk; keep
+        # external URLs verbatim (per #37's "no URL normalization in v1" —
+        # storing decoded form would silently fold `foo%20bar` and `foo bar`
+        # together at MERGE time, which is a normalization decision we're
+        # deferring).
+        if kind in ("md_link", "non_md_file"):
+            target = urllib.parse.unquote(raw_href)
+        else:
+            target = raw_href
+        links.append(
+            ParsedLink(
+                target=target,
+                wikilink=False,
+                embed=False,
+                display_text=link_text or None,
+                kind=kind,
+            )
+        )
     return links
 
 
