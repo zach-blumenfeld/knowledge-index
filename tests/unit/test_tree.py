@@ -143,12 +143,22 @@ def test_left_string_folder_has_trailing_slash():
     assert _left_string(r) == "  ideas/"
 
 
-def test_left_string_document_with_distinct_display_name():
+def test_left_string_document_renders_display_name():
+    """Document rows render `displayName` (matches Section's rule).
+
+    After #37 stubs / external Documents carry the link-text label in
+    `displayName` (e.g. `"Q3 deck"` for a non-md stub, `"Launch blog"`
+    for a URL). The historical `name  "displayName"` rendering — written
+    for pre-#28 H1-promoted display names — is intentionally removed; the
+    URI column carries the filename / URL alongside.
+    """
     r = Row(2, "HAS", "Document", "foo.md", "Foo Document", "vault://v/foo.md", "vault://v", None)
-    assert _left_string(r) == '    foo.md  "Foo Document"'
+    assert _left_string(r) == "    Foo Document"
 
 
 def test_left_string_document_with_matching_display_name():
+    """When `name == displayName` (the common md-doc case after #28), the
+    rendered name is just that string."""
     r = Row(2, "HAS", "Document", "foo.md", "foo.md", "vault://v/foo.md", "vault://v", None)
     assert _left_string(r) == "    foo.md"
 
@@ -159,8 +169,8 @@ def test_left_string_section_uses_display_name():
 
 
 def test_left_string_links_to_uses_arrow_prefix():
-    r = Row(4, "LINKS_TO", "Section", "tgt", "Target", "vault://v/refs/birth.md#tgt", "vault://v/d.md#x", None)
-    assert _left_string(r) == "        → refs/birth.md#tgt"
+    r = Row(4, "LINKS_TO", "Section", "refs/birth.md/tgt", "Target", "my-notes/refs/birth.md#tgt", "my-notes/d.md#x", None)
+    assert _left_string(r) == "        → Target"
 
 
 # ---- URI display rules ----------------------------------------------------
@@ -186,14 +196,40 @@ def test_uri_display_document_shows_full_uri():
 # ---- LINKS_TO hint --------------------------------------------------------
 
 
-def test_links_to_hint_strips_vault_prefix():
-    r = Row(3, "LINKS_TO", "Section", "x", "X", "vault://abc-123/refs/birth.md#x", "vault://v/d.md", None)
-    assert _links_to_hint(r) == "refs/birth.md#x"
+def test_links_to_hint_uses_display_name():
+    """The hint is the target's displayName — heading for Section, filename
+    for Document, link-text for #37 external / stub targets. The URI column
+    next to it carries the full URI, so the hint never needs to repeat it.
+    """
+    # Section target — displayName is the heading text.
+    r_section = Row(
+        3, "LINKS_TO", "Section", "refs/birth.md/x", "Early Draft",
+        "my-notes/refs/birth.md#x", "my-notes/d.md", None,
+    )
+    assert _links_to_hint(r_section) == "Early Draft"
+
+    # External URL target — displayName is the link text from `[text](url)`.
+    r_url = Row(
+        3, "LINKS_TO", "Document",
+        "https://neo4j.com/blog/agentic-ai/",
+        "Launch blog",
+        "https://neo4j.com/blog/agentic-ai/", "my-notes/d.md", None,
+    )
+    assert _links_to_hint(r_url) == "Launch blog"
+
+    # Internal Document target — displayName is the filename.
+    r_doc = Row(
+        3, "LINKS_TO", "Document", "big-idea.md", "big-idea.md",
+        "my-notes/ideas/big-idea.md", "my-notes/d.md", None,
+    )
+    assert _links_to_hint(r_doc) == "big-idea.md"
 
 
-def test_links_to_hint_falls_back_to_full_uri_when_no_vault_prefix():
-    r = Row(3, "LINKS_TO", "Section", "x", "X", "http://example.com/foo", "vault://v/d.md", None)
-    assert _links_to_hint(r) == "http://example.com/foo"
+def test_links_to_hint_falls_back_to_links_to_when_displayname_missing():
+    """Defensive fallback — surfaces a visible breadcrumb instead of silently
+    repeating the URI (which is already in the URI column on the same row)."""
+    r = Row(3, "LINKS_TO", "Document", "http://example.com/foo", "", "http://example.com/foo", "my-notes/d.md", None)
+    assert _links_to_hint(r) == "links_to"
 
 
 # ---- format / render ------------------------------------------------------

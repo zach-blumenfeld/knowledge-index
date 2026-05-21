@@ -36,7 +36,7 @@ Vault identity is carried by a `.ki/vault.yaml` marker file written into the vau
 
 #### `Folder`
 
-Subdirectories inside a vault. Auto-constructed at ingest from the on-disk path of each `:Document` — no separate input, no user-authored metadata, no `description` / `aliases` / `content`. Folders exist so agent-side navigation has a node to land on (`ki tree`, `--under <folder-uri>` scoping); they carry no semantic content of their own. **A `:Folder` is materialised only when at least one indexed `:Document` lives under that path** — empty directories never appear in the graph.
+Subdirectories inside a vault. Auto-constructed at ingest from the on-disk path of each `:Document` — no separate input, no user-authored metadata, no `description` / `aliases` / `content`. Folders exist so agent-side navigation has a node to land on (`ki tree`, `--under <folder-uri>` scoping); they carry no semantic content of their own. **A `:Folder` is materialised only when at least one indexed `:Document` (internal markdown OR internal non-md stub) lives under that path** — empty directories never appear in the graph. External Documents (URL_LINK / WIKILINK_UNRESOLVED) do not trigger folder materialization since they aren't on disk.
 
 Reversing the v1 "no `:Folder` node" stance: the v1 path-only scheme was queryable via `STARTS WITH` prefix matching but offered nothing for agents wanting to *enumerate* the hierarchy or reason about siblings. With `:Folder` the vault becomes a proper tree — every Folder, Document, and Section has exactly one incoming `:HAS` edge from its parent. Document and Section URIs are unchanged from v1, but their *parent edge* now goes through the folder chain rather than straight to the Vault (see §4.2).
 
@@ -63,6 +63,21 @@ Inherits the v2 connector spec (§3) and adds:
 | `~/my-vault/notes/projects/_index.md`     | `<vaultId>/notes/projects/_index.md`      | `<vaultId>/notes`, `<vaultId>/notes/projects`          |
 
 Folder-level metadata (Obsidian folder notes, Hugo `_index.md`, etc.) is still captured by indexing whatever Document lives at that path — the `:Folder` node itself stays intentionally property-poor.
+
+**Three Document kinds (0.4.0 / #37).** A `:Document` represents one of three real-world things, distinguished by `sourceType` and property fill — not by label. `LINKS_TO` edges stay polymorphic-free (`Document|Section → Document|Section`).
+
+| Kind                       | `sourceType`           | `uri`                              | `path`                  | `content`     | `fileHash`        | HAS-parent              |
+|----------------------------|------------------------|------------------------------------|-------------------------|---------------|-------------------|--------------------------|
+| Internal markdown          | `LOCAL_FILE`           | `<vaultId>/path/to/foo.md`         | absolute POSIX          | parsed body   | sha256 of bytes   | parent Folder (or Vault) |
+| **Internal non-md stub**   | `LOCAL_FILE`           | `<vaultId>/path/to/slides.pptx`    | absolute POSIX          | `null`        | sha256 of bytes   | parent Folder (or Vault) |
+| **External URL / file**    | `URL_LINK`             | `https://...` or `file:///...`     | `null`                  | `null`        | `null`            | **none** — outside the vault tree |
+| Unresolved wikilink target | `WIKILINK_UNRESOLVED`  | `<vaultId>/<wikilink-name>`        | `null`                  | `null`        | `null`            | parent (vault that referenced it) |
+
+Internal non-md stubs are discovered link-driven (`[Slides](./deck.pptx)`) — the file must exist on disk and live inside the vault root, or it's silently dropped (warn + skip per #37). External Documents are MERGE-keyed by the URL/URI string as-is — no normalization in 0.4.0, so `https://foo.com/bar` and `https://foo.com/bar/` are two distinct nodes (the link target's identity is whatever the user wrote in the markdown). `[Slides](../escaped-path.pptx)` whose resolved on-disk path is outside the current vault becomes an external `file:///...` Document (per #37 q6).
+
+**Stub / external `displayName` precedence.** The `[text]` from the first markdown link that introduced the stub or external Document becomes its `displayName` — so `[Launch blog](https://...)` → `displayName = "Launch blog"` (not the bare URL). This is `ON CREATE SET` only, so the first vault to link a URL "wins" the displayName slot; later vaults linking the same URL with different anchor text contribute those texts to the target's `aliases` instead (via the same WRITE_DISPLAY_TEXT_ALIASES step that wikilink display texts use). `name` always stays the on-disk filename (for stubs) or the URI string (for externals).
+
+**`firstLoadedAt` / `lastLoadedAt` semantics** vary by kind. For internal markdown and internal non-md stubs: the moment ki first saw the file on disk. For external Documents (URL_LINK / WIKILINK_UNRESOLVED): the moment ki first saw a link to that URI.
 
 | Property               | Type         | Required | Description                                                                                                                                                                                     |
 |------------------------|--------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -116,7 +131,7 @@ Inherits §3. `Section.uri` is globally unique by virtue of including `Vault.uri
 | `Document` | `Section`  | Top-level section (H1, or a higher heading that's the document's first heading). |
 | `Section`  | `Section`  | Nested heading. |
 
-Each `Folder` / `Document` / `Section` has **exactly one** incoming `HAS` edge. The Vault itself has zero — it's the root.
+Each `Folder` / `Document` / `Section` **that belongs to a vault** has exactly one incoming `HAS` edge. The Vault itself has zero — it's the root. **External `:Document` nodes** (`sourceType = URL_LINK` — URLs and out-of-vault file paths captured from markdown links per #37) are explicitly outside the containment tree: they have zero incoming `HAS` edges and are reachable only via `LINKS_TO`. Single-vault membership is preserved for everything else.
 
 **Why one relationship type instead of three (`HAS_FOLDER` / `HAS_DOCUMENT` / `HAS_SECTION`).** All three would be different *names* for the same semantic ("parent in the containment tree"). Neo4j can naturally express "any of these types" via `[:A|B|C]` alternation, but for a hierarchy where every containment edge has the same meaning, separate names add ceremony without information — the endpoint labels already carry "what kind of containment." Single-type `HAS` lets us write tree walks as `[:HAS*]` instead of `[:HAS_FOLDER|HAS_DOCUMENT|HAS_SECTION*]`, and makes the single-parent invariant trivial to state and lint. Non-containment edges (`USES_VAULT`, `LOADED`, `NEXT_SECTION`, `LINKS_TO`) keep their own types because they mean different things.
 

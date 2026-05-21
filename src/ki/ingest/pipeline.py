@@ -528,7 +528,12 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             resolver = _load_resolver(session, vault_uri)
 
             # 7. Per-document loop.
-            pending_links: list[tuple[str, list[ParsedLink], list[tuple[str, list[ParsedLink]]]]] = []
+            #
+            # `pending_links` carries the source-doc on-disk path alongside the
+            # parsed links so the post-pass (step 10) can filesystem-resolve
+            # `[text](./deck.pptx)` style non-md links relative to the source
+            # doc's directory.
+            pending_links: list[tuple[str, Path, list[ParsedLink], list[tuple[str, list[ParsedLink]]]]] = []
             doc_uris_loaded_this_run: list[str] = []
             # Path-only refresh rows for fileHash-skipped docs. Machine-scoped
             # `path` may have shifted (vault moved across mounts) even when
@@ -587,6 +592,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                 pending_links.append(
                     (
                         doc_uri,
+                        path,
                         parsed.document_links,
                         [(s.uri, s.links) for s in parsed.flat_sections if s.links],
                     )
@@ -638,10 +644,54 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     on_shrink=on_shrink,
                 )
 
-            # 10. Resolve wikilinks and write LINKS_TO.
-            link_rows, display_texts_per_target = _build_links_to_rows(
-                pending_links, resolver
+            # 10. Resolve links (#37: wikilinks, md links, stub non-md files,
+            # external URLs). Returns LINKS_TO row batch + stub/external doc
+            # MERGE batches + per-target display-text aggregation for the
+            # aliases step.
+            link_rows, stub_doc_rows, external_doc_rows, display_texts_per_target = (
+                _build_links_to_rows(
+                    pending_links, resolver, vault_uri=vault_uri, vault_root=vault_root,
+                )
             )
+
+            # 10a. Stub :Document upserts (internal non-md files). Their parent
+            # Folders may not have been materialized in step 4 (which only saw
+            # `.md` paths), so re-run `_build_folder_and_tree_rows` against the
+            # stub paths and write any new Folders + tree edges. Idempotent —
+            # already-materialized folders MERGE-no-op.
+            if stub_doc_rows:
+                stub_paths = [Path(r["path"]) for r in stub_doc_rows]
+                stub_folder_rows, stub_tree_edges = _build_folder_and_tree_rows(
+                    vault_uri, vault_root, stub_paths,
+                )
+                if stub_folder_rows:
+                    run_batched(
+                        session, Q.WRITE_FOLDERS, "folderRows", stub_folder_rows,
+                        batch_size=opts.batch_size,
+                        extra_params={"now": now}, on_shrink=on_shrink,
+                    )
+                run_batched(
+                    session, Q.WRITE_STUB_DOCUMENTS, "stubDocRows", stub_doc_rows,
+                    batch_size=opts.batch_size,
+                    extra_params={"now": now}, on_shrink=on_shrink,
+                )
+                if stub_tree_edges:
+                    run_batched(
+                        session, Q.WRITE_TREE_EDGES, "treeEdgeRows", stub_tree_edges,
+                        batch_size=opts.batch_size, on_shrink=on_shrink,
+                    )
+
+            # 10b. External :Document upserts (URLs and out-of-vault file
+            # paths). No HAS edge — they live outside the containment tree.
+            if external_doc_rows:
+                run_batched(
+                    session, Q.WRITE_EXTERNAL_DOCUMENTS, "externalDocRows",
+                    external_doc_rows,
+                    batch_size=opts.batch_size,
+                    extra_params={"now": now}, on_shrink=on_shrink,
+                )
+
+            # 10c. LINKS_TO edges.
             written = run_batched(
                 session,
                 Q.WRITE_LINKS_TO,
@@ -652,7 +702,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
             )
             result.links_written = written
 
-            # 11. Wikilink display-text → target aliases (docs/ingest-cypher.md
+            # 11. Display-text → target aliases (docs/ingest-cypher.md
             # §4.3 step 7). Runs after LINKS_TO so we can read the target's
             # current displayName + aliases for normalization, then union the
             # derived aliases without clobbering frontmatter.
@@ -768,27 +818,55 @@ def _load_resolver(session: Any, vault_uri: str) -> WikilinkResolver:
 
 
 def _build_links_to_rows(
-    pending: list[tuple[str, list, list[tuple[str, list]]]],
+    pending: list[tuple[str, Path, list, list[tuple[str, list]]]],
     resolver: WikilinkResolver,
-) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
-    """Resolve LINKS_TO edges and collect per-target wikilink display texts.
+    *,
+    vault_uri: str,
+    vault_root: Path,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, list[str]],
+]:
+    """Resolve LINKS_TO edges, including #37's stub + external Document kinds.
 
-    Returns (link_rows, display_texts_per_target). Display texts are
-    aggregated independently of the LINKS_TO dedup `seen` set — even if we
-    skip writing a duplicate edge, the display text on that occurrence is
-    still relevant for the target's alias list (see docs/ingest-cypher.md
-    §4.3 step 7).
+    Returns (link_rows, stub_doc_rows, external_doc_rows, display_texts).
+
+    `stub_doc_rows` are the internal non-md Document MERGEs (each has `uri`,
+    `name`, `displayName`, `path`, `fileHash`). `external_doc_rows` are
+    external Document MERGEs (each has `uri`, `name`, `displayName` only —
+    no path, no fileHash).
+
+    Display texts are aggregated for the post-pass aliases step (same as
+    pre-#37 behavior for wikilinks). Per #37 leans: stub + external link
+    texts also feed aliases; md_link texts do NOT (to preserve existing
+    behavior for plain `[click here](./foo.md)`-style links).
     """
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     display_texts: dict[str, list[str]] = {}
-    for doc_uri, doc_links, section_links in pending:
+    stub_docs: dict[str, dict[str, Any]] = {}
+    external_docs: dict[str, dict[str, Any]] = {}
+
+    for doc_uri, source_path, doc_links, section_links in pending:
+        source_dir = source_path.parent
         for link in doc_links:
-            _process_link(doc_uri, link, resolver, seen, rows, display_texts)
+            _process_link(
+                doc_uri, source_dir, link, resolver,
+                vault_uri=vault_uri, vault_root=vault_root,
+                seen=seen, rows=rows, display_texts=display_texts,
+                stub_docs=stub_docs, external_docs=external_docs,
+            )
         for sec_uri, links in section_links:
             for link in links:
-                _process_link(sec_uri, link, resolver, seen, rows, display_texts)
-    return rows, display_texts
+                _process_link(
+                    sec_uri, source_dir, link, resolver,
+                    vault_uri=vault_uri, vault_root=vault_root,
+                    seen=seen, rows=rows, display_texts=display_texts,
+                    stub_docs=stub_docs, external_docs=external_docs,
+                )
+    return rows, list(stub_docs.values()), list(external_docs.values()), display_texts
 
 
 def _build_display_text_alias_rows(
@@ -840,22 +918,54 @@ def _build_display_text_alias_rows(
 
 def _process_link(
     src_uri: str,
+    source_dir: Path,
     link: ParsedLink,
     resolver: WikilinkResolver,
+    *,
+    vault_uri: str,
+    vault_root: Path,
     seen: set[tuple[str, str]],
     rows: list[dict[str, Any]],
     display_texts: dict[str, list[str]],
+    stub_docs: dict[str, dict[str, Any]],
+    external_docs: dict[str, dict[str, Any]],
 ) -> None:
-    target = resolver.resolve(link.target)
+    """Resolve a link to a target URI and emit a LINKS_TO row.
+
+    Routes by `link.kind` per #37:
+      wikilink / md_link → resolver path (existing behavior)
+      non_md_file        → filesystem-resolve against source_dir; if inside
+                           vault and exists, MERGE a stub Document; if
+                           outside vault, treat as external file://...
+      external_url       → MERGE an external Document keyed by the URL
+    """
+    target: str | None
+    if link.kind in ("wikilink", "md_link"):
+        target = resolver.resolve(link.target)
+    elif link.kind == "non_md_file":
+        target = _resolve_non_md_link(
+            link.target, source_dir, vault_uri, vault_root,
+            link.display_text, stub_docs, external_docs,
+        )
+    elif link.kind == "external_url":
+        target = link.target
+        _record_external(target, link.display_text, external_docs, name=link.target)
+    else:
+        return
+
     if target is None:
         return
     if target == src_uri:
         return  # self-link: skip
-    # Aggregate display texts independent of LINKS_TO edge dedup — multiple
-    # wikilinks from the same source to the same target should still all
-    # contribute to the target's alias frequency count.
-    if link.wikilink and link.display_text:
+
+    # Aggregate display texts for the aliases step. For wikilinks this
+    # mirrors pre-#37 behavior. For stub / external links the link text
+    # populates the target's aliases (per #37 q3 lean). md_link is
+    # intentionally excluded — its `[text]` is usually descriptive prose
+    # ("click here", "the spec"), not a vault-wide alias.
+    if link.display_text and link.kind != "md_link":
         display_texts.setdefault(target, []).append(link.display_text)
+
     key = (src_uri, target)
     if key in seen:
         return
@@ -868,3 +978,99 @@ def _process_link(
             "embed": link.embed,
         }
     )
+
+
+def _resolve_non_md_link(
+    target: str,
+    source_dir: Path,
+    vault_uri: str,
+    vault_root: Path,
+    display_text: str | None,
+    stub_docs: dict[str, dict[str, Any]],
+    external_docs: dict[str, dict[str, Any]],
+) -> str | None:
+    """Resolve a non-md path link to a Document URI; create stub/external rows.
+
+    Returns the target URI, or None to skip (missing file in-vault).
+    """
+    # Strip optional fragment / query from the path before filesystem lookup.
+    path_part = target.split("#", 1)[0].split("?", 1)[0]
+    if not path_part:
+        return None
+
+    # Resolve relative to source_dir for relative paths; honor absolute paths.
+    try:
+        if path_part.startswith("/"):
+            resolved = Path(path_part).resolve()
+        else:
+            resolved = (source_dir / path_part).resolve()
+    except OSError:
+        log.warning("could not resolve link target %r from %s; skipping", target, source_dir)
+        return None
+
+    # Check vault membership. Outside vault → treat as external file:// URI
+    # (per #37 design — vault-escaping internal links land in the external
+    # Document space, not the broken-link space).
+    try:
+        rel = resolved.relative_to(vault_root)
+    except ValueError:
+        external_uri = f"file://{resolved.as_posix()}"
+        _record_external(
+            external_uri, display_text, external_docs, name=resolved.name,
+        )
+        return external_uri
+
+    # Inside the vault. Check the file exists on disk; warn + skip if not
+    # (the surrounding section content still has the markdown text — recovery
+    # via fulltext search is possible if the link comes back later).
+    if not resolved.exists() or not resolved.is_file():
+        log.warning(
+            "link target does not exist on disk: %s (referenced from %s); skipping",
+            resolved, source_dir,
+        )
+        return None
+
+    target_uri = document_uri(vault_uri, rel.as_posix())
+    if target_uri not in stub_docs:
+        try:
+            file_hash = hash_bytes(resolved.read_bytes())
+        except OSError:
+            log.warning("could not read %s for fileHash; skipping link", resolved)
+            return None
+        stub_docs[target_uri] = {
+            "uri": target_uri,
+            "name": resolved.name,
+            # First link-text encountered becomes displayName so `ki tree`
+            # shows "Q3 deck" instead of the bare "q3-deck.pptx". Subsequent
+            # link texts (if any) fall through to aliases via the
+            # WRITE_DISPLAY_TEXT_ALIASES step, deduplicated against this.
+            "displayName": display_text or resolved.name,
+            "path": str(resolved),
+            "fileHash": file_hash,
+        }
+    return target_uri
+
+
+def _record_external(
+    uri: str,
+    display_text: str | None,
+    external_docs: dict[str, dict[str, Any]],
+    *,
+    name: str,
+) -> None:
+    """Idempotently record an external Document MERGE row.
+
+    First link-text encountered becomes the Document's `displayName` so
+    `ki tree` / `ki search` show "Launch blog" instead of a raw URL.
+    Subsequent link texts (different anchor on a re-link, or a second
+    section linking the same URL with different text) flow to `aliases`
+    via the WRITE_DISPLAY_TEXT_ALIASES step — deduplicated against the
+    displayName client-side.
+    """
+    if uri in external_docs:
+        return
+    external_docs[uri] = {
+        "uri": uri,
+        "name": name,
+        "displayName": display_text or name,
+    }

@@ -45,7 +45,7 @@ Every node and every rendered edge gets one row:
 |------|----------|-----------------------------------------------------------------------|
 | `V`  | Vault    | Always the rendered root unless `--at` is specified.                  |
 | `F`  | Folder   | Trailing `/` on the name (`ideas/`) to visually mark it as a folder.  |
-| `D`  | Document | Optional `  "displayName"` suffix when display name differs from `name`. |
+| `D`  | Document | Renders `displayName` (filename for internal md docs; link-text label for #37 stubs + external URLs). |
 | `S`  | Section  | URI column shows the full section URI (no shorthand).                 |
 | `L`  | Links-to | Renders an outbound `:LINKS_TO` edge from the row's parent.           |
 
@@ -57,7 +57,7 @@ The name column carries enough information to identify the node without consulti
 |----------|---------------------------------------------------------------------------------------|
 | Vault    | `name` (the vault directory basename).                                                |
 | Folder   | `name + "/"`. Trailing slash is a visual hint, not part of the URI.                   |
-| Document | `name` alone if `displayName == name`, else `name  "displayName"` (two-space gap).     |
+| Document | `displayName`. For internal md docs that's the filename (same as `name` after #28). For #37 stubs and external URLs it's the link-text label written on first ingest — see `docs/data-model.md` *Three Document kinds*. The URI column carries the on-disk filename or URL alongside. |
 | Section  | `displayName` (the heading text, not the slug).                                       |
 | Links-to | `→ <relative-target-hint>` — see *LINKS_TO rendering* below.                          |
 
@@ -88,11 +88,11 @@ Outbound `:LINKS_TO` edges from a section render as **child rows of the source s
 
 ```
         Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
-          → refs/birth.md#early-draft ............ L   vault://abc-123/refs/birth.md#early-draft
+          → Early Draft .......................... L   my-notes/refs/birth.md#big-idea/early-draft
         Implementation ........................... S   vault://abc-123/ideas/big-idea.md#big-idea/implementation
 ```
 
-- The left-side hint is a short human-readable form of the target — typically the target's path relative to the source's vault, plus `#<section-slug>` if the target is a section. The full target URI lives in the URI column.
+- The left-side hint is the target's `displayName` — heading text for Section targets, filename for Document targets, the markdown link text (e.g. `[Launch blog](https://...)` → `Launch blog`) for #37 external / stub targets. The full URI lives in the URI column on the same row, so the hint never needs to repeat any of it. Falls back to the literal `links_to` when no displayName is recorded (defensive — should be rare; surfaces as a visible breadcrumb that the target is missing a label).
 - LINKS_TO rows never have a description sub-line (they are edges, not nodes).
 - An `L` row counts as a `:HAS` step for indent purposes (it is rendered as a child of its source) but does not extend the tree — its target node is not expanded inline. To follow a link, the agent re-invokes `ki tree --at "<Label>:<uri>"`.
 
@@ -103,7 +103,7 @@ Rendering LINKS_TO inline rather than cross-branching is a deliberate v1 simplif
 Section URIs in the URI column show the **full URI**, including the doc URI and the full heading-path fragment:
 
 ```
-    big-idea.md  "Big Idea" ...................... D   vault://abc-123/ideas/big-idea.md
+    big-idea.md .................................. D   vault://abc-123/ideas/big-idea.md
       Big Idea ................................... S   vault://abc-123/ideas/big-idea.md#big-idea
         Background ............................... S   vault://abc-123/ideas/big-idea.md#big-idea/background
         Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
@@ -126,7 +126,7 @@ The name column has a hard cap (default 48 characters, including indent). Any ro
 
 Rules:
 
-- Truncation operates on the **whole left side as one string** (indent + name + optional `"displayName"`).
+- Truncation operates on the **whole left side as one string** (indent + rendered name).
 - A truncated row drops its dotted leader (the cap is already reached) and uses a single space before the type column. The type column still lines up.
 - The URI column is **never** truncated; only the name side is.
 - `--full --no-truncate` (TBD) disables the cap entirely and lets long names extend past the type column — useful for piping to a pager, hostile to scanning.
@@ -262,10 +262,10 @@ For the rendered output:
 ```
 my-knowledge-base ............................... V   vault://abc-123
   ideas/ ......................................... F   vault://abc-123/ideas
-    big-idea.md  "Big Idea" ...................... D   vault://abc-123/ideas/big-idea.md
+    big-idea.md .................................. D   vault://abc-123/ideas/big-idea.md
       Big Idea ................................... S   vault://abc-123/ideas/big-idea.md#big-idea
         Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
-          → refs/birth.md#early-draft ............ L   vault://abc-123/refs/birth.md#early-draft
+          → Early Draft .......................... L   my-notes/refs/birth.md#big-idea/early-draft
 ```
 
 the wire rows are (in render order):
