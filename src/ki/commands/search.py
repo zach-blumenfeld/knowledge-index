@@ -20,6 +20,7 @@ import sys
 from typing import Any
 
 import click
+from neo4j.exceptions import ClientError
 from rich.console import Console
 from rich.table import Table
 
@@ -93,18 +94,25 @@ def cmd_search(
         # and capped to k again. Cross-type fulltext scores are not strictly
         # comparable (term-frequency normalization varies with set size), but
         # they're a useful single-axis ranking heuristic for surfacing top-k.
-        if "document" in types:
-            for r in run_b1(session, query, k=k):
-                r["label"] = "Document"
-                rows.append(r)
-        if "section" in types:
-            for r in run_b2(session, query, k=k):
-                r["label"] = "Section"
-                rows.append(r)
-        if "vault" in types:
-            for r in run_vault_search(session, query, k=k):
-                r["label"] = "Vault"
-                rows.append(r)
+        try:
+            if "document" in types:
+                for r in run_b1(session, query, k=k):
+                    r["label"] = "Document"
+                    rows.append(r)
+            if "section" in types:
+                for r in run_b2(session, query, k=k):
+                    r["label"] = "Section"
+                    rows.append(r)
+            if "vault" in types:
+                for r in run_vault_search(session, query, k=k):
+                    r["label"] = "Vault"
+                    rows.append(r)
+        except ClientError as exc:
+            if "no such fulltext schema index" in str(exc).lower():
+                raise click.ClickException(
+                    "no search index found — run `ki index <vault>` first to build it."
+                ) from exc
+            raise
 
     rows.sort(key=lambda r: r.get("score") or 0.0, reverse=True)
     rows = rows[:k]
