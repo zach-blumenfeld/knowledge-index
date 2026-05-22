@@ -120,9 +120,9 @@ The default merges three fulltext queries by score:
 
 **Cross-type score caveat:** fulltext scores aren't strictly comparable across queries because of term-frequency normalization. Merge is a heuristic — re-run with `--types <one>` if the ranking looks off.
 
-### `ki tree [--at "<uri>"]`
+### `ki outline ["<uri>"]`
 
-Walks the containment tree via **B.12** (`HAS` traversal, `NEXT_SECTION` sort-position for sections) plus **B.12-links** (outbound `LINKS_TO` as horizontal branches). Default renders every vault, depth 4; `--at` roots the walk at a specific vault/folder/doc/section URI. Sibling ordering is alphabetical for Folders/Documents, **reading order** for Sections (because that's what `NEXT_SECTION` encodes), alphabetical-by-target for `LINKS_TO`.
+Walks the containment tree via **B.12** (`HAS` traversal, `NEXT_SECTION` sort-position for sections) plus **B.12-links** (outbound `LINKS_TO` as horizontal branches). Default renders every vault, depth 4; the positional URI argument (or back-compat `--at`) roots the walk at a specific vault/folder/doc/section URI. Sibling ordering is alphabetical for Folders/Documents, **reading order** for Sections (because that's what `NEXT_SECTION` encodes), alphabetical-by-target for `LINKS_TO`. `ki tree` is a permanent alias.
 
 ### `ki get "<uri>"`
 
@@ -132,7 +132,7 @@ Content fetch by URI. Three `--type` modes:
 - `--type content` (default) — the node's stored `content` field per Rule 1 (preamble + child URI pointers, *not* inlined child body).
 - `--type full` — reconstructed reading-order body via **B.4** (Documents) or **B.14** (Sections). Server-side walk — one round trip even for long documents.
 
-Only accepts `:Document` and `:Section` URIs. `:Folder` and `:Vault` URIs error with a hint pointing at `ki tree` or `ki vault list`.
+Only accepts `:Document` and `:Section` URIs. `:Folder` and `:Vault` URIs error with a hint pointing at `ki outline` or `ki vault list`.
 
 ## Configuration & connection
 

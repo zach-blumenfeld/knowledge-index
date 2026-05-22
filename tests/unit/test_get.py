@@ -122,19 +122,19 @@ def test_format_sections_heading_only_no_body():
 # ---- _bad_label_message ----------------------------------------------------
 
 
-def test_bad_label_message_folder_points_at_ki_tree():
+def test_bad_label_message_folder_points_at_ki_outline():
     msg = _bad_label_message("Folder", "vault://v/projects")
     assert "Folder" in msg
     assert "vault://v/projects" in msg
-    assert "ki tree --at vault://v/projects" in msg
+    assert "ki outline vault://v/projects" in msg
 
 
-def test_bad_label_message_vault_points_at_vault_list_and_tree():
+def test_bad_label_message_vault_points_at_vault_list_and_outline():
     msg = _bad_label_message("Vault", "vault://v")
     assert "Vault" in msg
     assert "vault://v" in msg
     assert "ki vault list" in msg
-    assert "ki tree --at vault://v" in msg
+    assert "ki outline vault://v" in msg
 
 
 # ---- _render_one (plain text per-result rendering) -------------------------

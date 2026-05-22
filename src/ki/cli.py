@@ -4,7 +4,7 @@ User-visible commands:
   ki configure              one-time Neo4j connection setup
   ki index <path>           sync a folder of markdown into the graph (re-index = full nuke + re-ingest)
   ki search <query>         fulltext across {Document,Section,Vault} (B.1 / B.2 / B.11)
-  ki tree                   render the containment tree (B.12)
+  ki outline [<uri>]        render the containment tree (B.12). `ki tree` is a kept alias.
   ki get <uri> ...          fetch metadata + content for a Document / Section URI
   ki rm <vault>             remove an entire vault from the index (vault-only — see docs/index_rm_behavior.md)
   ki nuke                   reset the entire graph and drop all schema (typed confirmation required)
@@ -161,28 +161,71 @@ def search_cmd(
     )
 
 
+def _outline_options(f):
+    """Shared option/argument stack for `ki outline` and its `ki tree` alias."""
+    f = click.option(
+        "--full", "full", is_flag=True, default=False,
+        help="Show the vault description sub-line under each Vault row.",
+    )(f)
+    f = click.option(
+        "--depth", "depth", type=int, default=4,
+        help="Max HAS steps from each root (default: 4).",
+    )(f)
+    f = click.option(
+        "--at", "at_flag", default=None,
+        help="Back-compat alias for the positional URI argument. "
+             "Prefer `ki outline <uri>`.",
+    )(f)
+    f = click.option(
+        "--profile", default=None,
+        help="Profile name (overrides KI_PROFILE / default)",
+    )(f)
+    f = click.argument("uri", required=False)(f)
+    return f
+
+
+def _run_outline(
+    uri: str | None,
+    at_flag: str | None,
+    profile: str | None,
+    depth: int,
+    full: bool,
+) -> None:
+    sys.exit(cmd_tree(profile=profile, at=(uri or at_flag), depth=depth, full=full))
+
+
 @main.command(
-    "tree",
-    help="Render the containment tree of indexed vaults. "
+    "outline",
+    help="Render the containment outline of indexed vaults (Vault → Folder → "
+         "Document → Section). `ki tree` is a kept alias. "
          "See docs/tree-format.md for the rendered format.",
 )
-@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
-@click.option(
-    "--at", "at", default=None,
-    help="Start the tree at this node, in 'Label:uri' or bare-uri form "
-         "(e.g. 'Vault:vault://abc-123' or 'vault://abc-123/ideas/foo.md'). "
-         "If omitted, every indexed vault is rendered as a root.",
+@_outline_options
+def outline_cmd(
+    uri: str | None,
+    at_flag: str | None,
+    profile: str | None,
+    depth: int,
+    full: bool,
+) -> None:
+    _run_outline(uri, at_flag, profile, depth, full)
+
+
+@main.command(
+    "tree",
+    hidden=True,
+    help="Alias for `ki outline`. Kept so existing skill bundles, docs, and "
+         "muscle memory keep working.",
 )
-@click.option(
-    "--depth", "depth", type=int, default=4,
-    help="Max HAS steps from each root (default: 4).",
-)
-@click.option(
-    "--full", "full", is_flag=True, default=False,
-    help="Show the vault description sub-line under each Vault row.",
-)
-def tree_cmd(profile: str | None, at: str | None, depth: int, full: bool) -> None:
-    sys.exit(cmd_tree(profile=profile, at=at, depth=depth, full=full))
+@_outline_options
+def tree_cmd(
+    uri: str | None,
+    at_flag: str | None,
+    profile: str | None,
+    depth: int,
+    full: bool,
+) -> None:
+    _run_outline(uri, at_flag, profile, depth, full)
 
 
 @main.command(

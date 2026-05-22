@@ -108,3 +108,111 @@ def test_init_help_works():
     runner = CliRunner()
     res = runner.invoke(main, ["init", "--help"])
     assert res.exit_code == 0
+
+
+# ---- ki outline / ki tree (alias + positional URI) -----------------------
+
+
+def test_outline_appears_in_top_level_help():
+    """`ki outline` is the canonical command; `ki tree` (the v0.4.x name) is
+    a hidden alias that should NOT show up in the top-level help listing."""
+    runner = CliRunner()
+    res = runner.invoke(main, ["--help"])
+    assert res.exit_code == 0
+    assert "outline" in res.output
+    # `tree` is hidden so it doesn't show up as a separate command in the
+    # listing — keeps the surface uncluttered while still working when typed.
+    # Allow it to appear elsewhere in the help (e.g. inside `outline`'s help
+    # blurb), but not as its own bullet.
+    listed = [line for line in res.output.splitlines() if line.startswith("  tree")]
+    assert listed == []
+
+
+def test_outline_help_lists_positional_uri_and_flags():
+    runner = CliRunner()
+    res = runner.invoke(main, ["outline", "--help"])
+    assert res.exit_code == 0
+    # Positional URI argument (the new canonical shape).
+    assert "URI" in res.output or "[URI]" in res.output or "uri" in res.output.lower()
+    # Back-compat flag still present.
+    assert "--at" in res.output
+    for flag in ("--profile", "--depth", "--full"):
+        assert flag in res.output
+
+
+def test_tree_alias_still_works():
+    """`ki tree` is kept as a permanent alias for `ki outline`."""
+    runner = CliRunner()
+    res = runner.invoke(main, ["tree", "--help"])
+    assert res.exit_code == 0
+    # The alias accepts the same flags.
+    for flag in ("--at", "--depth", "--full"):
+        assert flag in res.output
+
+
+def test_outline_accepts_positional_uri_without_at_flag(monkeypatch):
+    """`ki outline <uri>` binds the positional argument and flows it
+    through to cmd_tree's `at=` parameter. We stub cmd_tree so the test
+    is a pure parser check — without the stub, Click's CliRunner runs the
+    full callback, which connects to the user's real Neo4j (or hangs
+    waiting on it)."""
+    captured: dict = {}
+
+    def fake_cmd_tree(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("ki.cli.cmd_tree", fake_cmd_tree)
+    runner = CliRunner()
+    res = runner.invoke(main, ["outline", "vault://test-uri"])
+    assert res.exit_code == 0, res.output
+    # Positional URI binds to `at` after the (uri or at_flag) fallback.
+    assert captured.get("at") == "vault://test-uri"
+
+
+def test_outline_accepts_at_flag_for_backcompat(monkeypatch):
+    captured: dict = {}
+
+    def fake_cmd_tree(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("ki.cli.cmd_tree", fake_cmd_tree)
+    runner = CliRunner()
+    res = runner.invoke(main, ["outline", "--at", "vault://test-uri"])
+    assert res.exit_code == 0, res.output
+    assert captured.get("at") == "vault://test-uri"
+
+
+def test_outline_positional_uri_wins_over_at_flag(monkeypatch):
+    """When both forms are passed, the positional URI takes precedence —
+    the `--at` flag is the fallback, not an override."""
+    captured: dict = {}
+
+    def fake_cmd_tree(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("ki.cli.cmd_tree", fake_cmd_tree)
+    runner = CliRunner()
+    res = runner.invoke(
+        main,
+        ["outline", "vault://positional", "--at", "vault://flag"],
+    )
+    assert res.exit_code == 0, res.output
+    assert captured.get("at") == "vault://positional"
+
+
+def test_tree_alias_accepts_positional_uri(monkeypatch):
+    """Positional URI works under the `ki tree` alias too."""
+    captured: dict = {}
+
+    def fake_cmd_tree(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("ki.cli.cmd_tree", fake_cmd_tree)
+    runner = CliRunner()
+    res = runner.invoke(main, ["tree", "vault://test-uri"])
+    assert res.exit_code == 0, res.output
+    assert captured.get("at") == "vault://test-uri"

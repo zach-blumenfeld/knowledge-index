@@ -151,7 +151,7 @@ def compute_base_slug(vault_root: Path) -> str:
             "alphanumeric characters to anchor a readable slug. Please "
             "rename the directory to something descriptive — e.g. "
             "'my-notes', 'work-journal', 'project-x' — so the vault has a "
-            "readable identifier in URIs and in `ki tree` / `ki search` "
+            "readable identifier in URIs and in `ki outline` / `ki search` "
             "output."
         )
     return slugify_segment(raw)

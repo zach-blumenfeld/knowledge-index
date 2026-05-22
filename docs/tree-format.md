@@ -1,16 +1,18 @@
-# Tree format for `ki tree`
+# Outline format for `ki outline`
 
-The default output of `ki tree` is a table-of-contents-style render of the vault's containment hierarchy plus its cross-references. It is intended to be readable by **both humans and agents**: the eye scans display names on the left, and an agent can pick out URIs from a stable right-most column.
+The default output of `ki outline` is a table-of-contents-style render of the vault's containment hierarchy plus its cross-references. It is intended to be readable by **both humans and agents**: the eye scans display names on the left, and an agent can pick out URIs from a stable right-most column.
 
-This document defines the format only. Flag semantics (`--at`, `--depth`) and the underlying Cypher (`B.12`) live in `docs/requirements_v01_mvp.md` and `docs/retrieval-queries.md` respectively.
+> The command was previously `ki tree`. `ki tree` is now a permanent alias for `ki outline` — same flags, same output. The format spec below uses `ki outline` throughout; replace mentally with `ki tree` if you're reading older transcripts.
 
-`ki tree` writes the rendered format to stdout. To save it to a file, pipe (`ki tree > tree.txt`) — there is no separate output-format flag.
+This document defines the format only. Flag semantics (positional `<uri>`, `--depth`, back-compat `--at`) and the underlying Cypher (`B.12`) live in `docs/requirements_v01_mvp.md` and `docs/retrieval-queries.md` respectively.
+
+`ki outline` writes the rendered format to stdout. To save it to a file, pipe (`ki outline > outline.txt`) — there is no separate output-format flag.
 
 ## Layout
 
 ### Header
 
-Every `ki tree` invocation prints a two-line header before the tree:
+Every `ki outline` invocation prints a two-line header before the tree:
 
 1. **Key line** — one-letter type codes mapped to their labels.
 2. **Column header** — `NAME`, `T`, `URI`.
@@ -43,7 +45,7 @@ Every node and every rendered edge gets one row:
 
 | Code | Label    | Notes                                                                 |
 |------|----------|-----------------------------------------------------------------------|
-| `V`  | Vault    | Always the rendered root unless `--at` is specified.                  |
+| `V`  | Vault    | Always the rendered root unless a positional URI (or `--at`) is given. |
 | `F`  | Folder   | Trailing `/` on the name (`ideas/`) to visually mark it as a folder.  |
 | `D`  | Document | Renders `displayName` (filename for internal md docs; link-text label for #37 stubs + external URLs). |
 | `S`  | Section  | URI column shows the full section URI (no shorthand).                 |
@@ -63,9 +65,9 @@ The name column carries enough information to identify the node without consulti
 
 ## URI column
 
-The URI column carries the load-bearing identifier for the row. Every row shows the **full URI** — Vault, Folder, Document, Section, and LINKS_TO target alike. Agents and humans alike are expected to copy URIs from this column verbatim and feed them straight back into `ki tree --at <uri>` or (once it lands) `ki get <uri>`.
+The URI column carries the load-bearing identifier for the row. Every row shows the **full URI** — Vault, Folder, Document, Section, and LINKS_TO target alike. Agents and humans alike are expected to copy URIs from this column verbatim and feed them straight back into `ki outline <uri>` or `ki get <uri>`.
 
-We tried a `#fragment` shorthand for sections earlier; it saved horizontal space but forced the reader to walk up the indented tree and concatenate ancestor slugs to reconstruct the real URI. Re-running `ki tree` rooted at a specific section is a common follow-up, and that flow shouldn't require any reconstruction.
+We tried a `#fragment` shorthand for sections earlier; it saved horizontal space but forced the reader to walk up the indented tree and concatenate ancestor slugs to reconstruct the real URI. Re-running `ki outline` rooted at a specific section is a common follow-up, and that flow shouldn't require any reconstruction.
 
 The URI column is **never truncated**. If a URI exceeds the terminal width, it overflows past 80 columns (or wraps, depending on the terminal). This is a deliberate trade-off: clipping URIs would defeat the entire point of the right column.
 
@@ -94,7 +96,7 @@ Outbound `:LINKS_TO` edges from a section render as **child rows of the source s
 
 - The left-side hint is the target's `displayName` — heading text for Section targets, filename for Document targets, the markdown link text (e.g. `[Launch blog](https://...)` → `Launch blog`) for #37 external / stub targets. The full URI lives in the URI column on the same row, so the hint never needs to repeat any of it. Falls back to the literal `links_to` when no displayName is recorded (defensive — should be rare; surfaces as a visible breadcrumb that the target is missing a label).
 - LINKS_TO rows never have a description sub-line (they are edges, not nodes).
-- An `L` row counts as a `:HAS` step for indent purposes (it is rendered as a child of its source) but does not extend the tree — its target node is not expanded inline. To follow a link, the agent re-invokes `ki tree --at "<Label>:<uri>"`.
+- An `L` row counts as a `:HAS` step for indent purposes (it is rendered as a child of its source) but does not extend the tree — its target node is not expanded inline. To follow a link, the agent re-invokes `ki outline "<Label>:<uri>"`.
 
 Rendering LINKS_TO inline rather than cross-branching is a deliberate v1 simplification — Rich's `Tree` does not support cross-branch references, and inline rendering preserves the column-aligned ToC feel.
 
@@ -111,7 +113,7 @@ Section URIs in the URI column show the **full URI**, including the doc URI and 
 
 The fragment for a nested heading is the **full heading path** (`<h1-slug>/<h2-slug>/...`), not just the leaf — this matches the on-disk `Section.uri` exactly. This means deeply nested sections under a long heading produce long URIs. We accept the verbosity because:
 
-1. The URI is copy-pasteable straight into `ki tree --at <uri>` and (once it lands) `ki get <uri>`.
+1. The URI is copy-pasteable straight into `ki outline <uri>` and `ki get <uri>`.
 2. The alternative — leaf-only shorthand or `#fragment` shorthand — requires the reader to walk up the indented tree and concatenate ancestor slugs to reconstruct anything. That's the most common follow-up flow, so it shouldn't cost the user a manual step.
 3. When the heading slugs are long it's typically a sign the user wrote long headings; truncating their slugs in the display would only hide the cost, not avoid it.
 
@@ -137,7 +139,7 @@ The name column width is computed once per render as `min(48, max(indent + name_
 
 ## Wire record format (B.12 → renderer)
 
-`ki tree` is built on `B.12` from `docs/retrieval-queries.md`. B.12 returns a flat row stream; the renderer assembles the tree client-side. The row schema is the contract between the two.
+`ki outline` is built on `B.12` from `docs/retrieval-queries.md`. B.12 returns a flat row stream; the renderer assembles the tree client-side. The row schema is the contract between the two.
 
 | Field         | Type                                  | Notes                                                                                                                              |
 |---------------|---------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
@@ -175,7 +177,7 @@ This partitioning is a consequence of the data model, not a renderer rule — Fo
 
 ### Multi-root (no `--at`)
 
-When `ki tree` is invoked without `--at`, there is no single root URI. The query falls back to matching **every `:Vault` in the graph** as a root, and the walk fans out from each. The wire format is unchanged — multiple rows arrive with `depth = 0, parent_uri = null`.
+When `ki outline` is invoked without a positional URI (or back-compat `--at`), there is no single root URI. The query falls back to matching **every `:Vault` in the graph** as a root, and the walk fans out from each. The wire format is unchanged — multiple rows arrive with `depth = 0, parent_uri = null`.
 
 The renderer treats the `parent_uri = null` group as the implicit "root group," sorts alphabetically by `name`, and DFS-emits each vault tree in turn. There is no separator between vaults in the rendered output — the `V` row at depth 0 is the visual boundary.
 
@@ -190,7 +192,7 @@ vault-two ........................... V   vault://def
       ...
 ```
 
-The single-root case (`--at <Label>:<uri>` given) is just the degenerate version of this: the `parent_uri = null` group has exactly one entry, and the renderer takes the same code path.
+The single-root case (a positional URI given, or back-compat `--at <Label>:<uri>`) is just the degenerate version of this: the `parent_uri = null` group has exactly one entry, and the renderer takes the same code path.
 
 Multi-user note: today there is only one user, so "all vaults" is unambiguous. When multi-user becomes real, the query will need to scope to the current user's vaults via `:USES_VAULT` — tracked as a follow-up, not blocking phase 3.
 
@@ -224,7 +226,7 @@ def build_tree(root_uri: str | None, depth: int) -> list[Row]:
     # Apply per-group sort rules.
     for parent_uri, kids in children_by_parent.items():
         if parent_uri is None:
-            # Root group: one vault per row (no --at) or one root row (with --at).
+            # Root group: one vault per row (no <uri>) or one root row (with <uri>).
             # All entries here are Vaults (or the single specified root). Sort by name.
             kids.sort(key=lambda k: k.name)
             continue
@@ -250,10 +252,10 @@ def build_tree(root_uri: str | None, depth: int) -> list[Row]:
 ```
 
 Key points:
-- The `parent_uri = None` group is the only place vaults appear when `--at` is omitted; the same path also handles the single-root case (`--at` given) without a special branch.
+- The `parent_uri = None` group is the only place vaults appear when no root URI is given; the same path also handles the single-root case (positional `<uri>` or `--at` given) without a special branch.
 - LINKS_TO rows are synthesized client-side. Their `depth` is `parent_depth + 1`; B.12-links never returns a depth because it doesn't know where its sources live in the tree.
 - Sort is applied **once per sibling group**, not as a global ORDER BY. Sibling rules vary by group composition (alphabetical for F/D, NEXT_SECTION for sections, alphabetical-by-URI for links).
-- DFS-emit walks `children_by_parent` recursively. No cycle risk for HAS (single-parent invariant); LINKS_TO is treated as a leaf in the rendered tree (we don't expand its target inline), so no cycle risk there either.
+- DFS-emit walks `children_by_parent` recursively. HAS is a single-parent tree (no cycles by construction), but the merged HAS + LINKS_TO map *can* cycle — e.g. a section that links back to an ancestor. The renderer guards with a `visited` set on URI so the walk always terminates. The L-row itself still renders (the link is visible in the outline); the renderer simply won't re-expand the target's subtree under it.
 
 ### Worked example
 
@@ -306,7 +308,7 @@ A future flag (`--full --no-truncate`, or `--describe`) may expand the descripti
 
 ### `lastSeenAt` / `firstSeenAt`
 
-The node properties exist in the graph but are **not** surfaced in `ki tree`. Reason: `ki` is an index, not a storage layer. `lastSeenAt` reflects when `ki index` last touched the node — it does **not** reflect when the user edited the source file. Surfacing it as an "updated" column would be deceptive: a vault that was just re-indexed would show every node "updated today" regardless of file mtime.
+The node properties exist in the graph but are **not** surfaced in `ki outline`. Reason: `ki` is an index, not a storage layer. `lastSeenAt` reflects when `ki index` last touched the node — it does **not** reflect when the user edited the source file. Surfacing it as an "updated" column would be deceptive: a vault that was just re-indexed would show every node "updated today" regardless of file mtime.
 
 If a future need for source-file mtime emerges, the fix is to read it from the file system at ingest and store it as a separate property (`sourceMtime`), then surface that — not to repurpose `lastSeenAt`.
 
@@ -316,8 +318,8 @@ Surfacing these inline would force every row to wrap or grow vertically, breakin
 
 ### Backlinks
 
-`ki tree` shows only **outbound** `:LINKS_TO` edges. Inbound links (backlinks) are a known gap — `ki search --type neighbors` is being removed in 0.4.0 and there is no CLI surface for B.9 yet. Tracked in #35.
+`ki outline` shows only **outbound** `:LINKS_TO` edges. Inbound links (backlinks) are a known gap — `ki search --type neighbors` is being removed in 0.4.0 and there is no CLI surface for B.9 yet. Tracked in #35.
 
 ## Open questions tracked elsewhere
 
-- Multi-user scoping for the no-`--at` case — needs a `:USES_VAULT` filter once multi-user becomes real. Not blocking phase 3.
+- Multi-user scoping for the no-root-URI case — needs a `:USES_VAULT` filter once multi-user becomes real. Not blocking phase 3.

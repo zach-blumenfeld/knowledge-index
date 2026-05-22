@@ -244,7 +244,7 @@ def test_cmd_get_rejects_folder_uri_with_helpful_error(
     err = capsys.readouterr().err
     assert rc == 1
     assert "Folder" in err
-    assert "ki tree --at" in err
+    assert "ki outline " in err
 
 
 def test_cmd_get_rejects_vault_uri_with_helpful_error(
@@ -259,7 +259,7 @@ def test_cmd_get_rejects_vault_uri_with_helpful_error(
     assert rc == 1
     assert "Vault" in err
     assert "ki vault list" in err
-    assert "ki tree --at" in err
+    assert "ki outline " in err
 
 
 def test_cmd_get_missing_uri_emits_clean_not_found(

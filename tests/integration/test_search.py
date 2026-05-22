@@ -485,7 +485,7 @@ def test_cmd_search_rows_are_score_sorted(
 def test_cmd_search_plain_text_includes_key_header(
     search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
 ):
-    """Plain-text output renders the `Key:` header line, same as `ki tree`."""
+    """Plain-text output renders the `Key:` header line, same as `ki outline`."""
     from ki.commands.search import cmd_search
 
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
