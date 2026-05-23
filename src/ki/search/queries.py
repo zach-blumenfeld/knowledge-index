@@ -128,9 +128,9 @@ def run_vault_search(session, query: str, k: int = 10) -> list[dict]:
     return [dict(r) for r in res]
 
 
-# B.12 — Containment tree (HAS walk). `ki tree`'s hierarchy producer.
+# B.12 — Containment tree (HAS walk). `ki outline`'s hierarchy producer.
 #
-# Emits the wire record format defined in docs/tree-format.md *Wire record
+# Emits the wire record format defined in docs/outline-format.md *Wire record
 # format*: {depth, inrel, label, name, displayName, uri, parent_uri,
 # sort_pos}. Sections carry sort_pos (NEXT_SECTION position in the parent
 # doc) so the renderer can order sibling sections by reading order.
@@ -181,7 +181,7 @@ RETURN depth, inrel, label, name, displayName, uri, parent_uri, sort_pos
 
 
 # B.12-links — outbound :LINKS_TO edges from a set of source URIs. Called
-# by `ki tree` after B.12 to surface horizontal LINKS_TO branches. The
+# by `ki outline` after B.12 to surface horizontal LINKS_TO branches. The
 # renderer combines these rows with B.12 hierarchy rows, sets
 # `depth = source_depth + 1` and `inrel = 'LINKS_TO'`, and sorts L
 # siblings alphabetically by target uri.

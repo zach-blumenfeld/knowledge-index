@@ -105,7 +105,7 @@ For internal `.md` Documents the displayName always equals the filename (per #28
 
 | Surface | Sees external URLs? | Sees internal non-md stubs? |
 |---|---|---|
-| `ki tree` | Yes, as `D` rows (no children — external Documents have no HAS subtree); LINKS_TO targets render with `displayName` as the left-side hint. | Yes, as `D` rows under their parent folder. |
+| `ki outline` | Yes, as `D` rows (no children — external Documents have no HAS subtree); LINKS_TO targets render with `displayName` as the left-side hint. | Yes, as `D` rows under their parent folder. |
 | `ki search --types document` | Yes — external Documents are in the `content_search` fulltext index via `displayName + aliases`. | Yes. |
 | `ki search --types section` | LINKS_TO edges affect ranking indirectly via section content (which still contains the raw markdown), but external Documents themselves are not sections. | Same. |
 | `ki get <uri>` | Yes — pass an external URL and get the Document's metadata. | Yes — pass the stub's URI. `--type full` and `--type content` are no-ops for stubs and externals since they have no `content`. |

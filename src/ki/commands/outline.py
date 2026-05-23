@@ -1,6 +1,10 @@
-"""`ki tree` — render the containment tree of indexed vaults.
+"""`ki outline` — render the containment tree of indexed vaults.
 
-See `docs/tree-format.md` for the rendered format spec, the wire record
+The CLI surface is `ki outline [<uri>]` (with `ki tree` kept as a permanent
+alias for back-compat). This module powers both — the dispatcher lives in
+`src/ki/cli.py`.
+
+See `docs/outline-format.md` for the rendered format spec, the wire record
 schema, the sibling-ordering rules, and the `--full` description sub-line.
 See `docs/retrieval-queries.md` (B.12 / B.12-links) for the underlying
 queries.
@@ -20,7 +24,7 @@ from ..search.queries import run_b12, run_b12_links
 
 @dataclass
 class Row:
-    """Wire record from B.12 / B.12-links — see docs/tree-format.md."""
+    """Wire record from B.12 / B.12-links — see docs/outline-format.md."""
 
     depth: int
     inrel: str | None  # "HAS" | "LINKS_TO" | None
@@ -38,7 +42,7 @@ NAME_COL_CAP = 48
 TYPE_LETTER = {"Vault": "V", "Folder": "F", "Document": "D", "Section": "S"}
 
 
-def cmd_tree(
+def cmd_outline(
     *,
     profile: str | None,
     at: str | None,
@@ -63,7 +67,7 @@ def cmd_tree(
             )
         else:
             click.echo(
-                f"(no node found at `{root_uri}` — try `ki tree` (no --at) "
+                f"(no node found at `{root_uri}` — try `ki outline` (no URI) "
                 "to list all vaults, or `ki vault list`)"
             )
         return 0
@@ -72,20 +76,28 @@ def cmd_tree(
     return 0
 
 
+_LABEL_PREFIXES = ("Vault:", "Folder:", "Document:", "Section:")
+
+
 def _parse_at(at: str | None) -> str | None:
-    """Extract the URI from a `--at` value.
+    """Extract the URI from a positional URI / `--at` value.
 
     Accepts both `Label:uri` (the form documented in #17) and bare `uri`.
     The label prefix is documentation only — the URI is the load-bearing
     identifier and is what the query keys off.
+
+    URI values may legitimately contain colons — external URL Documents
+    (#37) use the URL itself as the URI (e.g. `https://beltagy.net/`), and
+    `file://` URIs land here too. Only strip a prefix when it matches one
+    of the four real node labels; otherwise treat the whole value as a
+    bare URI.
     """
     if at is None:
         return None
-    if at.startswith("vault://"):
-        return at
-    if ":" in at:
-        _, _, uri = at.partition(":")
-        return uri or None
+    for prefix in _LABEL_PREFIXES:
+        if at.startswith(prefix):
+            uri = at[len(prefix):]
+            return uri or None
     return at
 
 
@@ -177,13 +189,23 @@ def _group_and_sort(rows: list[Row]) -> dict[str | None, list[Row]]:
 
 def _dfs_emit(by_parent: dict[str | None, list[Row]]) -> list[Row]:
     output: list[Row] = []
+    visited: set[str] = set()
 
     def emit(node_uri: str) -> None:
+        # Guard against LINKS_TO cycles: a section can link back to an
+        # ancestor (or any already-emitted node), which would otherwise
+        # recurse forever. HAS is a single-parent tree and doesn't cycle,
+        # but the merged HAS+LINKS_TO `by_parent` map can.
+        if node_uri in visited:
+            return
+        visited.add(node_uri)
         for child in by_parent.get(node_uri, []):
             output.append(child)
             emit(child.uri)
 
     for root in by_parent.get(None, []):
+        if root.uri in visited:
+            continue
         output.append(root)
         emit(root.uri)
     return output
@@ -269,10 +291,10 @@ def _uri_display(r: Row) -> str:
     """URI column rendering — always the full URI.
 
     Every row shows the complete URI so the user / agent can copy-paste it
-    directly into the next `ki tree --at <uri>` or `ki get <uri>`. We tried
+    directly into the next `ki outline <uri>` or `ki get <uri>`. We tried
     a `#fragment` shorthand for HAS-Section rows earlier; it saved visual
     space but forced the reader to walk up the indented hierarchy to
     reconstruct the full URI, which made the most-common follow-up (re-run
-    `ki tree` rooted at the section) annoying.
+    `ki outline` rooted at the section) annoying.
     """
     return r.uri

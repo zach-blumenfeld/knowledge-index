@@ -22,6 +22,9 @@ def two_indexed_vaults(tmp_path, neo4j_profile, monkeypatch, cleanup_vault):
     """Set up two indexed vaults + a working config so cmd_nuke can resolve a profile."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    # Clear KI_PROFILE so a developer shell with `export KI_PROFILE=...` doesn't
+    # override the temp config's default profile (see Config.get_profile).
+    monkeypatch.delenv("KI_PROFILE", raising=False)
     cfg = Config()
     cfg.add_profile(Profile(
         name="default", uri=neo4j_profile.uri,
@@ -122,6 +125,7 @@ def test_nuke_on_empty_graph_is_a_noop(tmp_path, neo4j_profile, monkeypatch):
     """`ki nuke` on a freshly-empty graph runs cleanly with --dry-run."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("KI_PROFILE", raising=False)
     cfg = Config()
     cfg.add_profile(Profile(
         name="default", uri=neo4j_profile.uri,

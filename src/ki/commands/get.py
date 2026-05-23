@@ -1,9 +1,9 @@
 """`ki get <uri> [<uri> ...]` — fetch a node's metadata and content by URI.
 
-Pairs with `ki tree` / `ki search`: those return URIs, this fetches what
+Pairs with `ki outline` / `ki search`: those return URIs, this fetches what
 the URI points to. Only `:Document` and `:Section` URIs are valid — text
 retrieval is what this command does. `:Folder` and `:Vault` URIs error
-with a hint pointing at `ki tree` / `ki vault list`.
+with a hint pointing at `ki outline` / `ki vault list`.
 
 `--type` controls how much content rides along on the metadata shell:
   path     → no content; just the shell (uri, name, displayName, path, ...)
@@ -80,13 +80,13 @@ def _bad_label_message(label: str | None, uri: str) -> str:
     if label == "Folder":
         return (
             f"ki get is for text retrieval but you passed a Folder ({uri}). "
-            f"Use 'ki tree --at {uri}' to enumerate contents recursively under folder."
+            f"Use 'ki outline {uri}' to enumerate contents recursively under folder."
         )
     if label == "Vault":
         return (
             f"ki get is for text retrieval but you passed a Vault ({uri}). "
             f"Use 'ki vault list' to see vaults "
-            f"or 'ki tree --at {uri}' to enumerate contents recursively under Vault."
+            f"or 'ki outline {uri}' to enumerate contents recursively under Vault."
         )
     return f"unsupported node label {label!r} for ki get (uri: {uri})"
 

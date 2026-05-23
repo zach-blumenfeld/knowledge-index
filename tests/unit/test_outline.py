@@ -1,8 +1,9 @@
-"""Unit tests for the `ki tree` renderer.
+"""Unit tests for the `ki outline` renderer.
 
-These cover the pure-Python functions in `ki.commands.tree`: parsing `--at`,
-grouping rows by parent_uri, applying the per-group sort rules, DFS-emitting,
-and formatting the final text output. No Neo4j involved.
+These cover the pure-Python functions in `ki.commands.outline`: parsing
+the positional URI / `--at`, grouping rows by parent_uri, applying the
+per-group sort rules, DFS-emitting, and formatting the final text
+output. No Neo4j involved.
 
 Integration tests (B.12 / B.12-links against an ephemeral Neo4j) live in
 `tests/integration/test_search.py`.
@@ -10,7 +11,7 @@ Integration tests (B.12 / B.12-links against an ephemeral Neo4j) live in
 
 from __future__ import annotations
 
-from ki.commands.tree import (
+from ki.commands.outline import (
     Row,
     _dfs_emit,
     _format_rows,
@@ -41,6 +42,41 @@ def test_parse_at_section_uri_with_label():
         _parse_at("Section:vault://abc-123/foo.md#bar")
         == "vault://abc-123/foo.md#bar"
     )
+
+
+def test_parse_at_external_url_returned_verbatim():
+    """External URL Documents (#37) use the URL itself as the URI. The
+    leading `https:` is NOT a `Label:` prefix and must not be stripped —
+    historical regression where `_parse_at` partitioned on the first
+    colon and turned `https://beltagy.net/` into `//beltagy.net/`.
+    """
+    assert _parse_at("https://beltagy.net/") == "https://beltagy.net/"
+    assert (
+        _parse_at("http://example.com/foo?x=1")
+        == "http://example.com/foo?x=1"
+    )
+    assert (
+        _parse_at("file:///Users/zach/notes/foo.md")
+        == "file:///Users/zach/notes/foo.md"
+    )
+
+
+def test_parse_at_document_label_with_external_url():
+    """`Document:https://beltagy.net/` is a legitimate Label:uri form for
+    an external URL Document — strip only the `Document:` prefix, keep
+    the full URL intact."""
+    assert (
+        _parse_at("Document:https://beltagy.net/")
+        == "https://beltagy.net/"
+    )
+
+
+def test_parse_at_unknown_prefix_treated_as_bare_uri():
+    """A `scheme:` prefix that isn't one of the four node labels is part
+    of the URI, not a Label prefix. Fail-noisy on a real lookup beats
+    silently chopping the scheme."""
+    # `obsidian://` could become a real URI in the future (#22).
+    assert _parse_at("obsidian://open?vault=foo") == "obsidian://open?vault=foo"
 
 
 # ---- group + sort ----------------------------------------------------------
@@ -133,6 +169,54 @@ def test_dfs_emit_multi_root_emits_each_in_order():
     uris = [r.uri for r in emitted]
     # alpha tree, then beta tree (alphabetical at root group).
     assert uris == ["vault://1", "vault://1/x", "vault://2", "vault://2/y"]
+
+
+def test_dfs_emit_terminates_on_links_to_cycle():
+    """Regression: `ki outline --at <folder> --depth 3` previously hit a
+    RecursionError when a section linked back to an ancestor in the same
+    subtree (issue #60). The renderer guards with a `visited` set.
+
+    Cycle setup: Folder → Doc → Section -[LINKS_TO]-> Doc (back-edge).
+    Without the guard, emit(doc) → emit(section) → emit(doc) → … indefinitely.
+    """
+    folder_uri = "vault://v/themes"
+    doc_uri = "vault://v/themes/big-idea.md"
+    section_uri = "vault://v/themes/big-idea.md#origins"
+    rows = [
+        Row(0, None, "Folder", "themes", "themes/", folder_uri, None, None),
+        Row(1, "HAS", "Document", "big-idea.md", "big-idea.md", doc_uri, folder_uri, None),
+        Row(2, "HAS", "Section", "origins", "Origins", section_uri, doc_uri, 0),
+        # LINKS_TO back-edge: the section links to its parent document.
+        # Without the cycle guard, DFS would recurse from doc → section →
+        # doc → section → … forever.
+        Row(3, "LINKS_TO", "Document", "big-idea.md", "big-idea.md", doc_uri, section_uri, None),
+    ]
+    by_parent = _group_and_sort(rows)
+    emitted = _dfs_emit(by_parent)
+    emitted_uris = [r.uri for r in emitted]
+    # Each HAS-tree node appears exactly once.
+    assert emitted_uris.count(folder_uri) == 1
+    assert emitted_uris.count(section_uri) == 1
+    # The doc appears twice: once as a HAS-child of the folder, once as a
+    # LINKS_TO target under the section. That's the correct rendering — the
+    # link is visible, but its subtree isn't re-expanded.
+    assert emitted_uris.count(doc_uri) == 2
+
+
+def test_dfs_emit_terminates_on_section_self_cycle():
+    """Even tighter cycle: a section that links to itself. The guard must
+    still emit the LINKS_TO row once and stop recursing."""
+    section_uri = "vault://v/doc.md#sec"
+    doc_uri = "vault://v/doc.md"
+    rows = [
+        Row(0, None, "Document", "doc.md", "doc.md", doc_uri, None, None),
+        Row(1, "HAS", "Section", "sec", "Sec", section_uri, doc_uri, 0),
+        Row(2, "LINKS_TO", "Section", "sec", "Sec", section_uri, section_uri, None),
+    ]
+    by_parent = _group_and_sort(rows)
+    emitted = _dfs_emit(by_parent)
+    # Section appears twice: once as HAS child, once as LINKS_TO target.
+    assert [r.uri for r in emitted].count(section_uri) == 2
 
 
 # ---- left-string composition ----------------------------------------------

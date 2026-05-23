@@ -4,7 +4,7 @@ Instructions for AI agents (Claude, Codex, Cursor, etc.) working **on** the `kno
 
 ## What this repo is
 
-`knowledge-index` (CLI: `ki`) is a personal knowledge index backed by Neo4j. It reads a local folder of markdown files and maintains a searchable knowledge graph over them. The two primitive verbs are `ki index` (sync) and `ki search` (query); navigation/management commands (`ki vault list`, `ki rm`, `ki configure`, `ki init`, and the v0.4.0 `ki tree`) sit on top of those. For the full design spec see `docs/requirements_v01_mvp.md`.
+`knowledge-index` (CLI: `ki`) is a personal knowledge index backed by Neo4j. It reads a local folder of markdown files and maintains a searchable knowledge graph over them. The two primitive verbs are `ki index` (sync) and `ki search` (query); navigation/management commands (`ki vault list`, `ki rm`, `ki configure`, `ki init`, and `ki outline` — formerly `ki tree`, which is kept as a permanent alias) sit on top of those. For the full design spec see `docs/requirements_v01_mvp.md`.
 
 ## Non-negotiable design principles
 
@@ -28,7 +28,7 @@ These constrain every change you make. If a proposed feature violates one of the
 | `src/ki/ingest/batcher.py`        | UNWIND batching + Neo4j-OOM auto-recovery (halve and retry once, continue smaller).                                                                                     |
 | `src/ki/ingest/queries.py`        | Cypher lifted verbatim from `docs/ingest-cypher.md`.                                                                                                                    |
 | `src/ki/ingest/provenance.py`     | Builds the `User` mutable bag and `LOADED` provenance bag (best-effort detection per `docs/data-model.md`).                                                             |
-| `src/ki/search/queries.py`        | B.1 (document title) / B.2 (section content) / B.3 (neighbourhood) / B.11 (vault fulltext) from `docs/retrieval-queries.md`. B.12 (containment tree) lands with `ki tree` (#17 phase 3). |
+| `src/ki/search/queries.py`        | B.1 (document title) / B.2 (section content) / B.3 (neighbourhood) / B.11 (vault fulltext) from `docs/retrieval-queries.md`. B.12 (containment tree) lands with `ki outline` (formerly `ki tree`, #17 phase 3). |
 | `src/ki/neo4j_client.py`          | Driver lifecycle, `ensure_schema`, `verify_connectivity`.                                                                                                               |
 | `src/ki/neo4j_podman.py`          | Thin wrapper around `podman` for the `ki configure → Local` path. Mirrors the canonical values (container `neo4j-ki`, volume `neo4j-ki-data`, image `neo4j:latest`, plugins APOC + GenAI) in `references/neo4j-podman.md`. |
 | `tests/unit/`                     | Pure-Python unit tests — parser, slug, vault marker, config, batcher (mocked driver), CLI parsing.                                                                      |
@@ -38,7 +38,7 @@ These constrain every change you make. If a proposed feature violates one of the
 | `docs/requirements_v01_mvp.md`            | Full design spec. Read this before making non-trivial changes — name, CLI shape, configuration model, auto-mode rules, all live here.                                   |
 | `docs/data-model.md`              | Neo4j schema: `User`, `Vault`, `Folder`, `Document`, `Section` node properties; `USES_VAULT`, `LOADED`, `HAS`, `LINKS_TO` edges. |
 | `docs/ingest-cypher.md`           | Batched `UNWIND` ingest queries (§4.3) and constraints / fulltext index (§4.4). Modify here when changing what `ki index` writes to Neo4j.                              |
-| `docs/retrieval-queries.md`       | Retrieval queries `B.1`–`B.12` (fulltext search incl. vault routing, neighbourhood, document text, windowing, backlinks, shortest path, containment-tree walk). Modify here when changing what `ki search` / `ki vault list` / `ki tree` expose. |
+| `docs/retrieval-queries.md`       | Retrieval queries `B.1`–`B.12` (fulltext search incl. vault routing, neighbourhood, document text, windowing, backlinks, shortest path, containment-tree walk). Modify here when changing what `ki search` / `ki vault list` / `ki outline` expose. |
 | `skills/ki/SKILL.md`              | Agent-as-user routing rules (TRIGGER / PREPARE / SKIP). Ships with the published tool.                                                                                  |
 | `references/neo4j-podman.md`      | Agent-followable runbook for the `ki configure → Local` path (Podman). Canonical values (container, volume, image, plugins, auth) here are the source of truth — `src/ki/neo4j_podman.py` must match. |
 | `CLAUDE.md`                       | Claude-Code-specific notes; defers to this file.                                                                                                                        |

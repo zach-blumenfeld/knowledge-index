@@ -364,6 +364,10 @@ def _write_test_config(tmp_path, neo4j_profile, monkeypatch):
         )
     )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    # Clear KI_PROFILE so a developer shell with `export KI_PROFILE=...` doesn't
+    # override the temp config's default_profile and break test isolation. See
+    # Config.get_profile's resolution order: arg → KI_PROFILE → default_profile.
+    monkeypatch.delenv("KI_PROFILE", raising=False)
 
 
 @pytest.fixture
@@ -485,7 +489,7 @@ def test_cmd_search_rows_are_score_sorted(
 def test_cmd_search_plain_text_includes_key_header(
     search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
 ):
-    """Plain-text output renders the `Key:` header line, same as `ki tree`."""
+    """Plain-text output renders the `Key:` header line, same as `ki outline`."""
     from ki.commands.search import cmd_search
 
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)

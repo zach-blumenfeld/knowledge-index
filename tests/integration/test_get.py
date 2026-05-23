@@ -160,6 +160,10 @@ def _write_test_config(tmp_path, neo4j_profile, monkeypatch):
         )
     )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    # Clear KI_PROFILE so a developer shell with `export KI_PROFILE=...` doesn't
+    # override the temp config's default_profile and break test isolation. See
+    # Config.get_profile's resolution order: arg → KI_PROFILE → default_profile.
+    monkeypatch.delenv("KI_PROFILE", raising=False)
 
 
 def test_cmd_get_content_returns_node_content(
@@ -244,7 +248,7 @@ def test_cmd_get_rejects_folder_uri_with_helpful_error(
     err = capsys.readouterr().err
     assert rc == 1
     assert "Folder" in err
-    assert "ki tree --at" in err
+    assert "ki outline " in err
 
 
 def test_cmd_get_rejects_vault_uri_with_helpful_error(
@@ -259,7 +263,7 @@ def test_cmd_get_rejects_vault_uri_with_helpful_error(
     assert rc == 1
     assert "Vault" in err
     assert "ki vault list" in err
-    assert "ki tree --at" in err
+    assert "ki outline " in err
 
 
 def test_cmd_get_missing_uri_emits_clean_not_found(

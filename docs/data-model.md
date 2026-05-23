@@ -36,7 +36,7 @@ Vault identity is carried by a `.ki/vault.yaml` marker file written into the vau
 
 #### `Folder`
 
-Subdirectories inside a vault. Auto-constructed at ingest from the on-disk path of each `:Document` — no separate input, no user-authored metadata, no `description` / `aliases` / `content`. Folders exist so agent-side navigation has a node to land on (`ki tree`, `--under <folder-uri>` scoping); they carry no semantic content of their own. **A `:Folder` is materialised only when at least one indexed `:Document` (internal markdown OR internal non-md stub) lives under that path** — empty directories never appear in the graph. External Documents (URL_LINK / WIKILINK_UNRESOLVED) do not trigger folder materialization since they aren't on disk.
+Subdirectories inside a vault. Auto-constructed at ingest from the on-disk path of each `:Document` — no separate input, no user-authored metadata, no `description` / `aliases` / `content`. Folders exist so agent-side navigation has a node to land on (`ki outline`, `--under <folder-uri>` scoping); they carry no semantic content of their own. **A `:Folder` is materialised only when at least one indexed `:Document` (internal markdown OR internal non-md stub) lives under that path** — empty directories never appear in the graph. External Documents (URL_LINK / WIKILINK_UNRESOLVED) do not trigger folder materialization since they aren't on disk.
 
 Reversing the v1 "no `:Folder` node" stance: the v1 path-only scheme was queryable via `STARTS WITH` prefix matching but offered nothing for agents wanting to *enumerate* the hierarchy or reason about siblings. With `:Folder` the vault becomes a proper tree — every Folder, Document, and Section has exactly one incoming `:HAS` edge from its parent. Document and Section URIs are unchanged from v1, but their *parent edge* now goes through the folder chain rather than straight to the Vault (see §4.2).
 
@@ -54,7 +54,7 @@ No `description`, no `aliases`, no `content`, no `fileHash`. If users want a fol
 #### `Document`
 Inherits the v2 connector spec (§3) and adds:
 
-**Path conventions.** Document URIs are unchanged from v1: slugified `<vaultId>/<file path within vault>`. The on-disk path's nested directories are *also* materialised as `:Folder` nodes (see above), so the same hierarchy is reachable both via URI prefix match (cheap subtree scan) *and* via `(:Vault|:Folder)-[:HAS*1..]->(:Document)` traversal (cheap enumeration / `ki tree`).
+**Path conventions.** Document URIs are unchanged from v1: slugified `<vaultId>/<file path within vault>`. The on-disk path's nested directories are *also* materialised as `:Folder` nodes (see above), so the same hierarchy is reachable both via URI prefix match (cheap subtree scan) *and* via `(:Vault|:Folder)-[:HAS*1..]->(:Document)` traversal (cheap enumeration / `ki outline`).
 
 | Source file                               | `Document.uri`                            | Materialised `:Folder` nodes                          |
 |-------------------------------------------|-------------------------------------------|-------------------------------------------------------|

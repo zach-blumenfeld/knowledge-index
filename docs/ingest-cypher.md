@@ -295,7 +295,7 @@ CREATE CONSTRAINT folder_uri_unique IF NOT EXISTS
 //
 // `:Folder` is deliberately **not** included — folders carry no `content`,
 // `aliases`, or `description` (see `docs/data-model.md` §Folder). They're a
-// navigation surface, not a retrieval surface. `ki tree` and `--under`
+// navigation surface, not a retrieval surface. `ki outline` and `--under`
 // scoping use graph traversal (HAS edges), not fulltext.
 // The mapper writes `content` with `uri:` child-pointer lines appended, which
 // add some junk tokens to the index; if recall suffers, switch to a sanitised

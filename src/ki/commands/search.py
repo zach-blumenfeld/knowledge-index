@@ -165,11 +165,11 @@ def _unify(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _render_table(rows: list[dict[str, Any]]) -> None:
-    """Plain-text unified table — same Key:-header style as `ki tree`."""
+    """Plain-text unified table — same Key:-header style as `ki outline`."""
     if not rows:
         console.print("[dim](no results)[/dim]")
         return
-    # Key line first (matches ki tree's convention so the type letters
+    # Key line first (matches ki outline's convention so the type letters
     # transfer between the two outputs).
     console.print("Key:  V Vault   D Document   S Section")
     console.print("")

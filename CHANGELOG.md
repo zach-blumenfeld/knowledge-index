@@ -13,6 +13,23 @@ line, up to the next `## [` heading. Keep version sections under that
 exact pattern. Editorial prose is fine; just don't change the heading.
 -->
 
+## [0.5.0] — 2026-05-22
+
+### Added
+
+- **`ki outline` command + `ki tree` permanent alias** ([#60](https://github.com/zach-blumenfeld/knowledge-index/issues/60)). `ki outline` is now the canonical name for the containment-tree renderer — the "key outline of this document" idiom reads naturally where `ki tree` (key + CS-data-structure jargon) didn't. `ki tree` is registered under the same callback as a hidden alias so existing skill bundles, blog posts, and muscle memory keep working; pass-through is bit-for-bit identical. This is the first of a small family of `ki <X>` verbs (`concepts` / `connections` / `references` on the roadmap) that all read like one coherent *"key X"* vocabulary.
+- **Positional URI on `ki outline`** ([#60](https://github.com/zach-blumenfeld/knowledge-index/issues/60)). `ki outline <uri>` is the new canonical shape, matching `ki get <uri>`. The `--at <uri>` flag survives as a back-compat fallback (positional wins when both are passed). All four forms work: `ki outline <uri>`, `ki outline --at <uri>`, `ki tree <uri>`, `ki tree --at <uri>`.
+
+### Changed
+
+- **Docs sweep to `ki outline`** ([#60](https://github.com/zach-blumenfeld/knowledge-index/issues/60)). `AGENTS.md`, `docs/`, `skills/ki/SKILL.md`, and source-file docstrings now use `ki outline` as the canonical command name, with `ki tree` mentioned as a recognized alias. `docs/tree-format.md` is renamed to `docs/outline-format.md` (the format spec itself is unchanged; the file's title and every reference is retargeted). Error messages in `ki get` similarly point at `ki outline` for Folder/Vault URI hints.
+- **Source-file renames to match the new vocabulary.** `src/ki/commands/tree.py` → `src/ki/commands/outline.py` (and the dispatcher `cmd_tree` → `cmd_outline`); `tests/unit/test_tree.py` → `tests/unit/test_outline.py`. The Click-callback names `outline_cmd` and `tree_cmd` are kept as-is — `tree_cmd` specifically names the alias's callback.
+
+### Fixed
+
+- **`ki outline --at <folder> --depth 3` no longer raises `RecursionError` on cyclic `:LINKS_TO` subgraphs** ([#60](https://github.com/zach-blumenfeld/knowledge-index/issues/60)). The DFS in `src/ki/commands/outline.py::_dfs_emit` walks the merged `HAS + LINKS_TO` child map; a section that links back to an ancestor doc (or any already-emitted node) produces a cycle in that map, which would recurse forever without a guard. Now uses a `visited: set[str]` so the walk always terminates. The `L`-row still renders so the link is visible; the renderer just won't re-expand the target's subtree under it.
+- **`_parse_at` no longer truncates external URL Documents.** Pre-0.5.0 the code partitioned on the first colon to strip a `Label:uri` prefix — which silently ate the URL scheme on external URL Documents, turning `https://beltagy.net/` into `//beltagy.net/` and breaking `ki outline <url>` for any URL-keyed `:Document`. Now matches only the four real node-label prefixes (`Vault:` / `Folder:` / `Document:` / `Section:`) and returns everything else verbatim — preserving the URI-column round-trip invariant for `http://` / `https://` / `file://` URIs that came in via the #37 link-capture work.
+
 ## [0.4.1] — 2026-05-21
 
 ### Fixed
