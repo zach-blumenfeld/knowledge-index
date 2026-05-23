@@ -253,7 +253,11 @@ def test_ki_index_with_description_flag_sets_property(tmp_path, neo4j_profile, c
         )
     )
     old_xdg = os.environ.get("XDG_CONFIG_HOME")
+    old_profile = os.environ.get("KI_PROFILE")
     os.environ["XDG_CONFIG_HOME"] = str(tmp_path)
+    # Clear KI_PROFILE so a developer shell with `export KI_PROFILE=...` doesn't
+    # override the temp config's default profile (see Config.get_profile).
+    os.environ.pop("KI_PROFILE", None)
     try:
         # `find_config_path` resolves ~/.config/ki/config.yaml; XDG_CONFIG_HOME
         # redirects ~/.config to our tmp dir, but config dir is named "ki/", not
@@ -276,6 +280,8 @@ def test_ki_index_with_description_flag_sets_property(tmp_path, neo4j_profile, c
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:
             os.environ["XDG_CONFIG_HOME"] = old_xdg
+        if old_profile is not None:
+            os.environ["KI_PROFILE"] = old_profile
 
     # Marker should now have both uri: and description:
     marker = fresh / ".ki" / "vault.yaml"
