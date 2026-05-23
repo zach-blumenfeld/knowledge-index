@@ -130,7 +130,7 @@ def run_vault_search(session, query: str, k: int = 10) -> list[dict]:
 
 # B.12 — Containment tree (HAS walk). `ki outline`'s hierarchy producer.
 #
-# Emits the wire record format defined in docs/tree-format.md *Wire record
+# Emits the wire record format defined in docs/outline-format.md *Wire record
 # format*: {depth, inrel, label, name, displayName, uri, parent_uri,
 # sort_pos}. Sections carry sort_pos (NEXT_SECTION position in the parent
 # doc) so the renderer can order sibling sections by reading order.

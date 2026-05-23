@@ -93,7 +93,7 @@ The `--type neighbors` flag (1-hop `LINKS_TO` traversal via B.3) was removed in 
 
 ### When to invoke `ki outline`
 
-`ki outline` renders the containment hierarchy (Vault → Folder → Document → Section) plus outbound `LINKS_TO` edges, as a table-of-contents-style terminal output. See `docs/tree-format.md` for the exact format.
+`ki outline` renders the containment hierarchy (Vault → Folder → Document → Section) plus outbound `LINKS_TO` edges, as a table-of-contents-style terminal output. See `docs/outline-format.md` for the exact format.
 
 > **Naming.** `ki outline` is the canonical command name as of v0.5.0. `ki tree` is kept as a permanent alias — same flags, same behavior — so existing skill bundles, blog posts, and muscle memory keep working. Prefer `ki outline` in new code and prose.
 
@@ -114,7 +114,7 @@ ki outline --at "<uri>" --depth 2      # `--at` is now a fallback for the positi
 ki tree "<uri>" --depth 2              # `ki tree` is a permanent alias for `ki outline`
 ```
 
-**Row order is meaningful.** Folders and Documents under a parent are alphabetical by `name`. Sections under a Document or another Section are in **reading order** (NEXT_SECTION), not alphabetical — the first child section is the one that appears first in the source file. `LINKS_TO` siblings are alphabetical by target URI. See `docs/tree-format.md` *Sibling ordering*.
+**Row order is meaningful.** Folders and Documents under a parent are alphabetical by `name`. Sections under a Document or another Section are in **reading order** (NEXT_SECTION), not alphabetical — the first child section is the one that appears first in the source file. `LINKS_TO` siblings are alphabetical by target URI. See `docs/outline-format.md` *Sibling ordering*.
 
 ### When to invoke `ki get`
 

@@ -1,8 +1,9 @@
-"""Unit tests for the `ki tree` renderer.
+"""Unit tests for the `ki outline` renderer.
 
-These cover the pure-Python functions in `ki.commands.tree`: parsing `--at`,
-grouping rows by parent_uri, applying the per-group sort rules, DFS-emitting,
-and formatting the final text output. No Neo4j involved.
+These cover the pure-Python functions in `ki.commands.outline`: parsing
+the positional URI / `--at`, grouping rows by parent_uri, applying the
+per-group sort rules, DFS-emitting, and formatting the final text
+output. No Neo4j involved.
 
 Integration tests (B.12 / B.12-links against an ephemeral Neo4j) live in
 `tests/integration/test_search.py`.
@@ -10,7 +11,7 @@ Integration tests (B.12 / B.12-links against an ephemeral Neo4j) live in
 
 from __future__ import annotations
 
-from ki.commands.tree import (
+from ki.commands.outline import (
     Row,
     _dfs_emit,
     _format_rows,

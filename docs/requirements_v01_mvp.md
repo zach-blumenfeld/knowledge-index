@@ -90,7 +90,7 @@ mkdir my-vault              # plain folder, no special tooling
 echo "some ideas" >> my-vault/ideas.md
 ki index ./my-vault         # syncs to Neo4j (idempotent; auto-creates .ki/vault.yaml on first run)
 ki search "..." [flags]     # fulltext across {Document,Section,Vault} (B.1+B.2+B.11); --types narrows
-ki outline ["<uri>"]        # render the containment hierarchy (Vault → Folder → Doc → Section) — see docs/tree-format.md
+ki outline ["<uri>"]        # render the containment hierarchy (Vault → Folder → Doc → Section) — see docs/outline-format.md
                             #   `ki tree` is a permanent alias; `--at <uri>` still works as a back-compat flag.
 ki get "<uri>" [flags]      # fetch metadata + content at a Doc / Section URI; --type {path,content,full}
 ki rm ./my-vault                    # remove an entire vault from the index (vault-only; source files untouched)

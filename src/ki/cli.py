@@ -26,13 +26,13 @@ from .commands.get import cmd_get
 from .commands.index import cmd_index
 from .commands.init import cmd_init
 from .commands.nuke import cmd_nuke
+from .commands.outline import cmd_outline
 from .commands.rm import cmd_rm
 from .commands.search import cmd_search
 from .commands.skill import cmd_install as cmd_skill_install
 from .commands.skill import cmd_list as cmd_skill_list
 from .commands.skill import cmd_print as cmd_skill_print
 from .commands.skill import cmd_remove as cmd_skill_remove
-from .commands.tree import cmd_tree
 from .commands.vault import cmd_vault_list
 from .ingest.batcher import DEFAULT_BATCH_SIZE
 from .ingest.pipeline import DEFAULT_CONCURRENCY, DEFAULT_MAX_FILE_SIZE
@@ -191,14 +191,14 @@ def _run_outline(
     depth: int,
     full: bool,
 ) -> None:
-    sys.exit(cmd_tree(profile=profile, at=(uri or at_flag), depth=depth, full=full))
+    sys.exit(cmd_outline(profile=profile, at=(uri or at_flag), depth=depth, full=full))
 
 
 @main.command(
     "outline",
     help="Render the containment outline of indexed vaults (Vault → Folder → "
          "Document → Section). `ki tree` is a kept alias. "
-         "See docs/tree-format.md for the rendered format.",
+         "See docs/outline-format.md for the rendered format.",
 )
 @_outline_options
 def outline_cmd(

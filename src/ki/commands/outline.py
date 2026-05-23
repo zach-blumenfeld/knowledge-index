@@ -4,7 +4,7 @@ The CLI surface is `ki outline [<uri>]` (with `ki tree` kept as a permanent
 alias for back-compat). This module powers both — the dispatcher lives in
 `src/ki/cli.py`.
 
-See `docs/tree-format.md` for the rendered format spec, the wire record
+See `docs/outline-format.md` for the rendered format spec, the wire record
 schema, the sibling-ordering rules, and the `--full` description sub-line.
 See `docs/retrieval-queries.md` (B.12 / B.12-links) for the underlying
 queries.
@@ -24,7 +24,7 @@ from ..search.queries import run_b12, run_b12_links
 
 @dataclass
 class Row:
-    """Wire record from B.12 / B.12-links — see docs/tree-format.md."""
+    """Wire record from B.12 / B.12-links — see docs/outline-format.md."""
 
     depth: int
     inrel: str | None  # "HAS" | "LINKS_TO" | None
@@ -42,7 +42,7 @@ NAME_COL_CAP = 48
 TYPE_LETTER = {"Vault": "V", "Folder": "F", "Document": "D", "Section": "S"}
 
 
-def cmd_tree(
+def cmd_outline(
     *,
     profile: str | None,
     at: str | None,

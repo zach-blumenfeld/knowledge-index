@@ -152,17 +152,17 @@ def test_tree_alias_still_works():
 
 def test_outline_accepts_positional_uri_without_at_flag(monkeypatch):
     """`ki outline <uri>` binds the positional argument and flows it
-    through to cmd_tree's `at=` parameter. We stub cmd_tree so the test
+    through to cmd_outline's `at=` parameter. We stub cmd_outline so the test
     is a pure parser check — without the stub, Click's CliRunner runs the
     full callback, which connects to the user's real Neo4j (or hangs
     waiting on it)."""
     captured: dict = {}
 
-    def fake_cmd_tree(**kwargs):
+    def fake_cmd_outline(**kwargs):
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr("ki.cli.cmd_tree", fake_cmd_tree)
+    monkeypatch.setattr("ki.cli.cmd_outline", fake_cmd_outline)
     runner = CliRunner()
     res = runner.invoke(main, ["outline", "vault://test-uri"])
     assert res.exit_code == 0, res.output
@@ -173,11 +173,11 @@ def test_outline_accepts_positional_uri_without_at_flag(monkeypatch):
 def test_outline_accepts_at_flag_for_backcompat(monkeypatch):
     captured: dict = {}
 
-    def fake_cmd_tree(**kwargs):
+    def fake_cmd_outline(**kwargs):
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr("ki.cli.cmd_tree", fake_cmd_tree)
+    monkeypatch.setattr("ki.cli.cmd_outline", fake_cmd_outline)
     runner = CliRunner()
     res = runner.invoke(main, ["outline", "--at", "vault://test-uri"])
     assert res.exit_code == 0, res.output
@@ -189,11 +189,11 @@ def test_outline_positional_uri_wins_over_at_flag(monkeypatch):
     the `--at` flag is the fallback, not an override."""
     captured: dict = {}
 
-    def fake_cmd_tree(**kwargs):
+    def fake_cmd_outline(**kwargs):
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr("ki.cli.cmd_tree", fake_cmd_tree)
+    monkeypatch.setattr("ki.cli.cmd_outline", fake_cmd_outline)
     runner = CliRunner()
     res = runner.invoke(
         main,
@@ -207,11 +207,11 @@ def test_tree_alias_accepts_positional_uri(monkeypatch):
     """Positional URI works under the `ki tree` alias too."""
     captured: dict = {}
 
-    def fake_cmd_tree(**kwargs):
+    def fake_cmd_outline(**kwargs):
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr("ki.cli.cmd_tree", fake_cmd_tree)
+    monkeypatch.setattr("ki.cli.cmd_outline", fake_cmd_outline)
     runner = CliRunner()
     res = runner.invoke(main, ["tree", "vault://test-uri"])
     assert res.exit_code == 0, res.output
