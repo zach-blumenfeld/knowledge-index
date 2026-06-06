@@ -132,11 +132,17 @@ Two complementary strategies — **do both** (fan out parallel sub-agents, or ru
    ki outline "<folder|doc|section uri>" --depth 2  # recurse into a branch (see --help for flags)
    ```
    Best when the question maps to a known area of the vault.
-2. **Full-text search** — cast a wide net:
+2. **Full-text search with semantic expansion** — cast a wide net (fulltext over title + content + wikilink aliases):
    ```sh
    ki search "token refresh" --types section --k 10
    ```
-   Apply **semantic expansion** (see *Query expansion for semantic equivalence*) when hits look thin — rewrite to synonyms / related terms you know. Expanding pre-emptively to cut round-trips is fine, as is retrying a few times.
+   Queries are **Lucene syntax** — `AND`/`OR`/`NOT` (or `+`/`-`), `"exact phrases"`, `()` grouping, `*` wildcards, `~` fuzzy. ([query syntax](https://lucene.apache.org/core/8_2_0/queryparser/org/apache/lucene/queryparser/classic/package-summary.html#package.description))
+
+   **Semantic expansion** — when hits look thin (zero hits, one low-score hit, or no doc-level match for a doc-level query), rewrite the term to a few alternates you know from world knowledge and retry — as extra `ki search` calls or one OR-form query:
+   ```sh
+   ki search 'Anakin OR "Darth Vader" OR Vader'   # world-knowledge synonyms the vault never spelled out
+   ```
+   Expanding pre-emptively to save round-trips is fine. Synonyms the vault *did* spell out (`[[Darth Vader|Anakin]]`) are already folded into aliases; personal shorthand the user never linked won't expand.
 
 Pull the actual content by URI:
 ```sh
@@ -221,74 +227,12 @@ During indexing, the entire vault is removed from Neo4j then rebuilt to reflect 
 
 
 
-## Vault and File Indexing
-
-Vaults must be indexed to....
-Vaults should be Re-indexed whenever files in theior sorc]isponding directories change to staty upo-to-sync.
-### Trigger When
-
-### Trigger After
-Always get a refreshed Vault outline after re-index
-
-## When to Use Ki
-`ki` is useful for doing 5 things faster & with less tokens then normal file ops ....
-1. searching - ...
-2. navigating ....
-4. summarizing ...
-3. getting: read sections or subsections of markdown file contents without needing to open and scan entire source files
-
-
-### Search (...move to reference file)
-
-### Trigger When
-...?
-
-#### Search Steps
-1. ALWAYS check the vault outline first to see if there are documents or sections to focus on
-   1. If  nothing looks relevant move on to ki search otherwise collect uris and dig into deeper outlines
-   2. drill down on deeper outlines on any elements there with ki outline <uri> this will give you an outline starting at that element as root.  COuld be a folder, a document or section/subsection inside a document
-   3. Use web search to follow any external links if relevant
-2. use ki search --under vault...etc
-3. 
 
 
 
 
-## ALWAYS Remember
-Keep these fresh; if you don't know, **rerun** to recover:
-
-1. **Active profile & vault** → `ki status` (cwd-derived). Sub-agents: tell them to `cd` into the vault dir, then run `ki status` — nothing needs to be passed in the prompt.
-2. **Vault outline** → `ki outline <vault uri>`.
-3. **Indexing state** → GOOD / LIKELY_STALE / RE_INDEXING / DOWN (from `ki status` / `ki profile list`).
-
-Active context is **per-vault** (the `profile:` bound in `.ki/vault.yaml`) and **per-shell** (cwd), so parallel sessions on different vaults never collide — there's no single global "active" to clobber.
 
 
-## Recommended Usage Patterns
-1. Only work with one vault in one profile at a time during a session
-
-
-## How to invoke
-
-The commands you'll actually use:
-
-```bash
-ki configure                     # one-time per machine: writes ~/.config/ki/config.yaml
-ki index ./path/to/vault         # sync a folder into the graph (re-index = full nuke + re-ingest)
-ki search "query" [flags]        # retrieve via fulltext
-ki outline ["<uri>"]             # render the containment tree (B.12) — see "When to invoke ki outline"
-                                 #   (`ki tree` is a kept alias — same command, same flags)
-ki get "<uri>" [flags]           # fetch metadata + content at a Doc / Section URI — see "When to invoke ki get"
-ki vault list                    # show every indexed vault with its description (routing hint)
-ki rm ./path/to/vault            # remove an entire vault from the index (vault-only — see below)
-ki nuke                          # reset the entire graph + schema (typed confirmation required)
-```
-
-**Sync model — vault-level only.** ki keeps the *vault* as the only unit of sync. `ki index <vault>` adds-or-fully-refreshes a vault's content (re-index = nuke the vault's contents, then re-ingest). `ki rm <vault>` removes a whole vault. There's no document-level or subtree-level rm — that granularity isn't exposed. If a user wants stale docs cleaned up after deleting files on disk, the answer is `ki index <vault>` (it'll nuke + rebuild). See `docs/index_rm_behavior.md` for the design rationale.
-
-**Passing a file path or subdirectory to `ki rm` errors** with a message that points at `ki index` — surface that to the user verbatim, don't try a workaround.
-
-Also available: `ki init <path>` (advanced: write the vault marker without indexing), and `ki skill {list, install, remove, print}` for installing this routing-rules file into other agents (Cursor, Windsurf, etc.). See `ki skill list` for the full agent catalog.
 
 ### Picking a search mode
 
@@ -316,16 +260,6 @@ Plain-text output uses the same `T` letter convention as `ki outline`: `V`=Vault
 
 The `--type neighbors` flag (1-hop `LINKS_TO` traversal via B.3) was removed in 0.4.0. To see what a specific doc/section links to, use `ki outline "<uri>" --depth 1` — outbound `LINKS_TO` edges render as horizontal branches by default. For backlinks ("what links *to* this?"), there is no CLI surface yet — see [#35](https://github.com/zach-blumenfeld/knowledge-index/issues/35).
 
-### When to invoke `ki outline`
-
-`ki outline` renders the containment hierarchy (Vault → Folder → Document → Section) plus outbound `LINKS_TO` edges, as a table-of-contents-style terminal output. See `docs/outline-format.md` for the exact format.
-
-> **Naming.** `ki outline` is the canonical command name as of v0.5.0. `ki tree` is kept as a permanent alias — same flags, same behavior — so existing skill bundles, blog posts, and muscle memory keep working. Prefer `ki outline` in new code and prose.
-
-Use `ki outline` when:
-- **Search is returning weak results** and you want to see what's actually in the vault. The order to escalate: `ki search` → `ki search` with query-expansion alternates → `ki outline`. The outline shows you what docs / headings exist so you can re-search with better terms.
-- **You need to understand the vault's structure** before navigating (e.g. *"summarize what's in this vault"*, *"is there a folder for X?"*).
-- **You want to see what a doc/section links to.** `ki outline "<uri>" --depth 1` surfaces outbound `LINKS_TO` from that node as horizontal branches.
 
 ```bash
 ki outline                             # render every indexed vault, depth 4
@@ -339,12 +273,6 @@ ki outline --at "<uri>" --depth 2      # `--at` is now a fallback for the positi
 ki tree "<uri>" --depth 2              # `ki tree` is a permanent alias for `ki outline`
 ```
 
-**Row order is meaningful.** Folders and Documents under a parent are alphabetical by `name`. Sections under a Document or another Section are in **reading order** (NEXT_SECTION), not alphabetical — the first child section is the one that appears first in the source file. `LINKS_TO` siblings are alphabetical by target URI. See `docs/outline-format.md` *Sibling ordering*.
-
-### When to invoke `ki get`
-
-`ki get` is the **content fetch** step in the canonical chain `ki search` / `ki outline` → URI → `ki get`. Once you have a URI for a Document or Section, `ki get` returns its metadata + (optionally) its content.
-
 ```bash
 ki get "<uri>"                          # default --type content
 ki get "<uri>" --type path              # metadata only — read the file via `path`
@@ -353,7 +281,6 @@ ki get "<uri>" --type full              # reconstructed reading-order body (B.4 
 ki get "<uri-a>" "<uri-b>" "<uri-c>"    # batch — multiple URIs in one invocation
 ki get "<uri>" --json                   # machine-readable; always includes `path` (from #40)
 ```
-
 **Pick `--type` by intent:**
 
 | You want                                                              | Flag                 |
@@ -388,43 +315,6 @@ Section URI fragments encode the **full heading path** (`<h1-slug>/<h2-slug>/...
 
 To **expand** any inferred URI, run `ki outline "<that-uri>" --depth N`. To **search within** a subtree, [#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36) tracks the `--under` scoping flag; until it ships, search cross-vault and filter results by URI prefix.
 
-### Multi-vault routing
-
-When the user has more than one indexed vault, start with `ki vault list` (or `ki search "<topic>" --types vault`) to pick the right one. There is no CLI flag yet to scope a follow-up `ki search` to that vault ([#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36) tracks `--under`); for now, run the cross-vault search and filter results client-side by `document_uri` prefix matching the chosen vault's URI, or use `ki outline "<vault-uri>"` to navigate within the chosen vault.
-
-If a vault has no `description:` set, `ki` emits a warning at index time and on every `ki search --types vault` / `ki vault list` result. Treat that as a prompt to *ask the user* what the vault is for, then write it in one command:
-
-```bash
-ki index <vault> --description "One or two sentences on what's in this vault and when an agent should pick it."
-```
-
-`--description` refuses to overwrite an existing one — add `--force-description` to replace. If you'd rather edit the YAML by hand, the file is `<vault>/.ki/vault.yaml`:
-
-```yaml
-uri: <existing slug — do not touch>
-description: |
-  ...
-```
-
-(If asking the user isn't possible, `ki outline "<vault-uri>"` lets you skim the vault's structure and propose a description for confirmation.)
-
-### Query expansion for semantic equivalence
-
-`ki search` is fulltext on `displayName + content + aliases`. Wikilink display texts get folded into target aliases at ingest, so vaults that link `[[Darth Vader|Anakin]]` match "Anakin" already — but cultural / world-knowledge synonyms the *vault* never spells out won't.
-
-**When to expand.** Top-`k` results look weak: zero hits, a single hit with a low fulltext score, or no document-level match for what was clearly a document-level query.
-
-**How to expand.** Rewrite the user's term to a small set of plausible alternates you know from world knowledge (e.g. "Anakin" → also try "Darth Vader", "Vader", "Skywalker"; "JFK" → also try "John F Kennedy", "Kennedy"). Run alternates as additional `ki search` calls, or one OR-form Lucene query: `ki search 'JFK OR "John F Kennedy" OR Kennedy'`.
-
-**Limits.** This relies on what *you* know. Personal-vault aliases ("BB" = "Project Bluebird") won't be expanded this way unless the user has linked them in their notes — in which case the ingest-side wikilink-alias path already covers them.
-
-Example:
-
-```bash
-ki search Anakin --json          # 0 hits
-ki search 'Anakin OR "Darth Vader" OR Vader' --json   # retry expanded
-```
-
 ### If `ki` isn't installed yet
 
 ```bash
@@ -433,39 +323,3 @@ ki --version
 ```
 
 Safe to run unattended in agent auto-mode (idempotent, per-user).
-
-## Auto-mode rules
-
-- **Reversible, local actions: auto-fire.** Installing `ki`, `ki index`, single-doc and subtree `ki rm`, `ki skill install`, bringing up the Local Neo4j container (see below). Report what you did after the fact.
-- **Irreversible / billable actions: pause for explicit consent.** Whole-vault `ki rm --vault`, `ki configure → Aura` (creates a billable cloud resource), anything that requires the user to type a confirmation.
-- **Picking a Neo4j on first run.** Rule of thumb: **Local (Podman)** is right for solo / on-this-laptop work, **Aura** is for sharing an index across machines or a team, **Existing** is for "the user already has a Neo4j running, just point at it." Order to try:
-  1. **An existing reachable Neo4j** (env vars, a profile already in `~/.config/ki/config.yaml`, or a container/service already on `:7687`) — use `ki configure` option `3) Existing` and report what you connected to.
-  2. **Otherwise, the Local (Podman) path** — `ki configure` option `1) Local (neo4j w/ podman)`. Reversible/local; auto-fires *if* `podman` is on PATH and `:7687` is free. If `podman` isn't installed, pause and surface the install one-liner from `references/neo4j-podman.md` (Preflight). If `:7687` is occupied by something other than our container, fall back to option 3.
-  3. **Aura is never silent.** Only pick `2) Aura` if the user explicitly asked for cloud / Aura, or there's already an Aura profile. *"Build me a knowledge base"* is consent for the goal, not for creating cloud resources.
-- **Recovery when `ki` can't reach Neo4j (Local-Podman profiles).** Diagnose the container state and act, all idempotent:
-  - `podman ps -a --filter name=neo4j-ki` → stopped → `podman start neo4j-ki`. Data intact. Auto-fire.
-  - Container missing, `podman volume ls --filter name=neo4j-ki-data` shows the volume → re-run the *Bring up Neo4j* block in `references/neo4j-podman.md`. Data intact. Auto-fire.
-  - Container missing **and** volume missing → re-run *Bring up Neo4j*, then re-run `ki index <path>` for every vault the user had indexed (the indexes are gone). If you don't have the vault paths in conversation history, ask the user.
-  - Full recipes (including macOS `podman machine start` after reboot) live in `references/neo4j-podman.md` *Recovery* and *After a reboot*.
-- **File-system side-effects on the user's vault: never.** `ki` doesn't touch source files; the agent doesn't either, except for writing converted-markdown output to a user-approved folder (see PREPARE).
-
-## Capabilities not yet wired
-
-The retrieval shapes reachable today are: `ki search` (B.1 + B.2 + B.11 — fulltext across all three node types by default, narrow with `--types`), `ki outline` (B.12 + B.12-links — containment + outbound `LINKS_TO`), and `ki get` (B.4 / B.13 / B.14 — node metadata + reading-order content for a Document or Section URI). If a user asks for something `ki` doesn't currently expose — **backlinks** (#35), **subtree-scoped search** (`--under`, #36), section windowing, shortest path, vector / semantic search, native non-markdown ingest, MCP-bridged chat-app access — **don't pretend you'll run it**.
-
-Instead:
-
-1. Tell the user the capability isn't wired today.
-2. Suggest the closest wired alternative if there is one (e.g. for "what does this doc link to?" → `ki outline "<uri>" --depth 1`).
-3. Point them at the open issues for the roadmap: <https://github.com/zach-blumenfeld/knowledge-index/issues>.
-
-The full Cypher for each unwired retrieval shape exists in `docs/retrieval-queries.md`, so if the user really needs the answer once, they can run the query directly against Neo4j — but that's an explicit fallback, not something `ki` invokes for them.
-
-**Chat-app surfaces** (claude.ai, ChatGPT, Gemini, Copilot Web/Desktop) have no shell access and can't call `ki` at all. Suggest the user run a coding agent (you, in Claude Code) on the same machine, or paste `ki search "..." --json` output into the chat manually.
-
-## Cross-references
-
-- Full design spec: `docs/requirements_v01_mvp.md`
-- Schema (nodes / edges / properties): `docs/data-model.md`
-- What gets written on `ki index`: `docs/ingest-cypher.md`
-- What gets returned by `ki search`: `docs/retrieval-queries.md`
