@@ -8,9 +8,8 @@ Point `ki` at a folder (or many), sync to graph index, and query from the CLI or
 install `ki`, wire into Claude Code, ask Claude what's in your notes:
 
 ```bash
-uv tool install knowledge-index
-ki configure                       # one-time: pick Local (Podman), Aura, or an Existing Neo4j — see `references/neo4j-podman.md` for the Local path
-ki skill install claude-code       # drops the routing rules into ~/.claude/skills/ki/SKILL.md
+curl -sSfL https://knowledge-index.ai/install.sh | bash   # installs ki + neo4j-cli + agent skills
+ki configure                                              # one-time: pick Local (Podman), Aura, or an Existing Neo4j — see `references/neo4j-podman.md` for the Local path
 ```
 
 Then in Claude Code:
@@ -68,17 +67,16 @@ That's the whole loop. Read on for the same flow with other agents, direct CLI u
 Coding agents can shell out to `ki` directly. `ki skill install` drops the bundled routing rules (the markdown at [`skills/ki/SKILL.md`](skills/ki/SKILL.md)) into each agent's well-known config path so the agent knows *when* to use `ki` — track / remember / build a knowledge base / search my notes / find related material — and *when* to skip.
 
 ```bash
-# 1. Install ki on PATH.
-uv tool install knowledge-index            # if `uv` isn't installed: curl -LsSf https://astral.sh/uv/install.sh | sh
+# 1. Install both CLIs (ki + neo4j-cli) and the skills, into every detected agent.
+curl -sSfL https://knowledge-index.ai/install.sh | bash
 ki --version
 
 # 2. One-time Neo4j connection. Three paths: Local (Podman — see references/neo4j-podman.md),
 #    Aura (billable cloud), or Existing (point at a Neo4j you already run).
 ki configure
 
-# 3. Install the skill into every detected agent — or pick one explicitly.
-ki skill install                           # all detected agents
-ki skill install claude-code               # one specific agent
+# 3. Manage the skill install if needed (the installer already wired all detected agents).
+ki skill install claude-code               # (re)install for one specific agent
 ki skill list                              # what's wired up, what's detected
 ki skill remove claude-code                # undo
 ```
@@ -109,7 +107,7 @@ Auto-mode rules (full text in [`skills/ki/SKILL.md`](skills/ki/SKILL.md)): rever
 If you'd rather drive `ki` yourself:
 
 ```bash
-uv tool install knowledge-index                # install
+curl -sSfL https://knowledge-index.ai/install.sh | bash   # install ki + neo4j-cli + skills
 ki configure                                   # one-time Neo4j connection
 ki index ~/Documents/my-vault                  # sync the folder into the graph (idempotent)
 

@@ -32,6 +32,12 @@ It's faster and far cheaper in tokens than raw file ops over a markdown corpus. 
 - **URI** — the address of a vault / document / section in the index. Copy it from `ki outline` or search results and feed it into `ki get` / `ki outline`.
 - **`config.yaml`** — `~/.config/ki/config.yaml`; holds profiles + credentials. Does **not** track vaults — Neo4j does.
 
+## Dependencies
+
+`ki` manages its external dependencies and installs them **up front at install/setup time** — never by interrupting you mid-task:
+
+- **A Neo4j backend** — Local (Podman), Aura, or an existing instance, chosen via `ki configure`.
+- **`neo4j-cli` + its Cypher skills** — used for *Answer Vault-Wide Questions* and *Making Inferences*. Set up automatically when `ki` is installed; you don't install them by hand. `ki` bridges the active profile's credentials to neo4j-cli (`NEO4J_URI` / `NEO4J_USERNAME` / `NEO4J_PASSWORD`).
 
 ## PREPARE when
 
@@ -62,7 +68,7 @@ Only the profile **name** is stored (credentials stay in `config.yaml`), so this
 ### Step 0 — `ki` installed?
 
 ```sh
-ki --help            # if missing: uv tool install knowledge-index
+ki --help            # if missing: curl -sSfL https://knowledge-index.ai/install.sh | bash
 ```
 
 ### Step 1 — Point at the directory
@@ -101,7 +107,7 @@ Edges:
 ALWAYS start with the outline — a table-of-contents view that saves considerable navigation/search tokens:
 
 ```sh
-ki outline <vault uri> --token-limit 20000
+ki outline <vault uri> --full --token-limit 20000
 ```
 
 Then search / get (see *When to Use Ki*).
@@ -120,7 +126,7 @@ Two complementary strategies — **do both** (fan out parallel sub-agents, or ru
 
 1. **Structured navigation** — start at the table of contents, then drill into promising branches:
    ```sh
-   ki outline --full                                  # whole-vault map + descriptions
+   ki outline <vault uri> --full --depth 3                               # whole-vault map + description
    ki outline "<folder|doc|section uri>" --depth 2    # recurse into a branch (see --help for flags)
    ```
    Best when the question maps to a known area of the vault.
@@ -145,9 +151,11 @@ Sometimes the question is about the vault as a whole, not a specific slice:
 
 Two strategies:
 1. **Outline + search** — `ki outline --full` is the table of contents (plus each vault's description). Skim it to summarize coverage and structure; follow up with `ki search` for specifics. Best for *"what's in here."*
-2. **Custom Cypher** — for counts, aggregates, and structural questions, query the graph directly via the **`neo4j-cli` skill** (a separate dependency — *not* bundled with `ki`; connect using the active profile's credentials from `config.yaml`). Starting patterns live in `docs/retrieval-queries.md` (schema in `docs/data-model.md`). Best for *"how many / which is biggest / what links where."*
+2. **Custom Cypher** — for counts, aggregates, and structural questions, hand it to the **`neo4j-cli` Cypher skills**: run `neo4j-cli` with the active profile's credentials, scoped to your vault uri. Those skills know how to introspect the schema, so you don't need it spelled out. Best for *"how many / which is biggest / what links where."*
 
-<!-- req: `neo4j-cli` is an external tool (manual install; today only wired for `ki configure → Aura` via shutil.which). Delegating ad-hoc Cypher to its skill + the profile→env credential bridge (NEO4J_URI/USERNAME/PASSWORD) is speced in docs/v0_3_1_introspect_dedup but NOT wired. Decide: make neo4j-cli a hard dependency / auto-install it, and build the credential bridge? Until then this path is aspirational. -->
+> **ki URIs are hierarchical**, so filter with `STARTS WITH` to scope a query to any subtree: `WHERE n.uri STARTS WITH '<uri>'` matches everything under that vault / folder / document / section.
+
+<!-- req: ki must bridge the active profile's creds → neo4j-cli env (NEO4J_URI/USERNAME/PASSWORD) so delegated Cypher hits the right database. (neo4j-cli + its skills are installed by install.sh.) See docs/v0_3_1_introspect_dedup. -->
 
 ### Making Inferences
 
@@ -156,7 +164,7 @@ Sometimes the user wants analysis, not just retrieval:
 - *"How are concept A and concept B connected?"*
 - *"What are the biggest risks in Project X?"*
 
-Gather context with `ki outline` / `ki search` / `ki get`, but **lean on custom Cypher via the `neo4j-cli` skill** — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Connect with the bound profile's credentials from `config.yaml`; see `docs/retrieval-queries.md` for starting patterns.
+Gather context with `ki outline` / `ki search` / `ki get`, but **lean on the `neo4j-cli` Cypher skills** (run `neo4j-cli` with the active profile's credentials, scoped to the vault uri) — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Scope to a subtree with the hierarchical-uri `STARTS WITH` filter noted above.
 
 ### Updating & Adding Content
 
@@ -410,12 +418,11 @@ ki search 'Anakin OR "Darth Vader" OR Vader' --json   # retry expanded
 ### If `ki` isn't installed yet
 
 ```bash
-command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-uv tool install knowledge-index
+curl -sSfL https://knowledge-index.ai/install.sh | bash   # installs ki + neo4j-cli + agent skills
 ki --version
 ```
 
-Safe to run unattended in agent auto-mode (idempotent, per-user, reversible via `uv tool uninstall knowledge-index`).
+Safe to run unattended in agent auto-mode (idempotent, per-user).
 
 ## Auto-mode rules
 
