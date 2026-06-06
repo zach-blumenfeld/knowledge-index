@@ -17,11 +17,20 @@ Invoke `ki` when a user asks to:
 
 ## What `ki` is
 
+A command-line tool that builds a queryable **knowledge graph index** over a directory of markdown. It parses each `.md` into its documents, sections, and the wikilinks between them, stores that structure in Neo4j, and exposes fast search, navigation, and retrieval over it — so you can find and read the right *slice* of content without opening and scanning whole files.
+
 ## Why use `ki`
 
-## `ki` CLI
+It's faster and far cheaper in tokens than raw file ops over a markdown corpus. Instead of grepping and reading entire files into context, you query an index and pull just the sections you need — structure (headings, containment, links) is preserved, so retrieval is targeted. See *When to Use Ki* for the specific jobs it beats file ops at.
 
-`ki` is exposed as a command line tool
+## Key Terms
+
+- **Knowledge base** — a directory of markdown you want to search and navigate as a connected whole. Becomes a *vault* once `ki` indexes it.
+- **Vault** — a directory `ki` has marked (`.ki/vault.yaml`) and indexed. The unit of indexing and sync; identified by a slug **uri**, and **bound to one profile**.
+- **Profile** — a named Neo4j database (connection + credentials in `config.yaml`) that holds the graphs for one or more vaults. A privacy/isolation boundary (e.g. personal vs work).
+- **Index** — the knowledge graph in Neo4j (documents, sections, links) built from a vault's markdown. Rebuilt with `ki index`.
+- **URI** — the address of a vault / document / section in the index. Copy it from `ki outline` or search results and feed it into `ki get` / `ki outline`.
+- **`config.yaml`** — `~/.config/ki/config.yaml`; holds profiles + credentials. Does **not** track vaults — Neo4j does.
 
 
 ## PREPARE when
@@ -96,6 +105,63 @@ ki outline <vault uri> --token-limit 20000
 ```
 
 Then search / get (see *When to Use Ki*).
+
+
+## Usage
+
+### Search and Retrieve Specific Content
+
+When the user asks to search and retrieve something specific
+
+- Every file mentioning X
+- ...? <realtistic KB examples, think from user perspective if they have docs on aosftware project or research content, or for some project, they generally won't ask "find files with x" they will ask some domain specific question>
+
+There are two strategies - recommend doing both - agent fan out or sequentually then choose best response(s) 
+
+1. structured navigation: `ki outline --full`<also include optional params...should refer to --help?> ... then find potentially relevant folders/documents/sections etc. and recurse down `ki outline <folder/document/section uri>`
+2. full-text search `ki search`. Use semantic expansion <see below and add directions to here> as appropriate <I think it is fair to add before getting poor results if it makes sense to do so to reduce number of search calls..retry a few times as well is fine>
+
+You can retrieve full content from slices of documents (individual sections of documents), whole documents, or even entire folders via `ki get --full <list of uris>`
+
+### Answer Global <Whole KB? Right Name?> Questions
+Sometimes the user is not asking for specific content but instead more global questions about the Knowledge base
+- What is in this knowledge base?
+- How many files?
+- <more examples??>
+
+In these cases there are two strategies.  
+1. Outline summaries + searching <explain/show ...>
+2. Using the Neo4j CLI to write your own queries <how to guide? how will you know? is this skill already installed?  check the repo>
+
+## Making Inferences
+Sometimes the user is not just asking for information,  but wants to perform some analysis or make further inferences.
+- what are the key themes here?
+- How are concept A and B connected?
+- What are the biggest risks in Project x?
+
+For this use ki outline search and get as appropriate but lean havily on neo4j-cli custom cypher queries.  Likely load bearing in these scenarios ,<explain/show ...?>
+
+## Updating & Adding Content
+Whenever you or the user adds a new file or modifies an existing files contents you will want to (re-)index it to reflect current state. 
+`ki index <uri or abs_path>`
+
+## Removing and Moving Content
+Whenever you or the user removes a file also remove from ki
+`ki rm <uri or abs_path>`
+Same for moving a file
+`ki mv <uri or abs_path>`
+
+## Re-Indexing Entire Vaults
+
+Re-indexing entire vaults can become an expensive operations with more documents, but is sometimes necessary as updating/adding/removing individual content pieces may miss other changes made by the user (or accidentally by you).
+
+After significant changes or refactors to knowledge base content
+
+check `ki state`, if `STALE` run `ki index .` with a sub-agent preferably. 
+
+During indexing, the entire vault is removed from Neo4j then rebuilt to reflect what's on the file system currently. The process can last a couple seconds (for dozens of documents) or a few minutes for thousands of docs.  During re-indexing the the `ki vault` should not be used for search or answering questions.
+
+## Other Operations
 
 ## Vault and File Indexing
 
