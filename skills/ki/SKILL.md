@@ -146,8 +146,8 @@ Use `--type full` for whole sections / documents, `--type content` to get a node
 
 Sometimes the question is about the vault as a whole, not a specific slice:
 - *"What's in this knowledge base? What topics does it cover?"*
-- *"How many documents are there? Which folder is biggest?"*
-- *"What's been added or changed recently?"*
+- *"What's load-bearing here — what should I read first to understand it?"*
+- *"If I refactor this, what else will it affect?"*
 
 Two strategies:
 1. **Outline as overview** — read `ki outline --full` as a high-level map of the *whole* vault to summarize its coverage and structure (adjust --depth and recurse on uris as needed). Follow with `ki search/get` for any specifics. Best for *"what's in here."*
@@ -158,11 +158,13 @@ Two strategies:
 ### Making Inferences
 
 Sometimes the user wants analysis, not just retrieval:
-- *"What are the key themes across these notes?"*
-- *"How are concept A and concept B connected?"*
-- *"What are the biggest risks in Project X?"*
+- *"What are the main themes running through these notes?"*
+- *"How does [X] connect to [Y] — what's the throughline between them?"*
+- *"Pull together everything related to [X] and synthesize where it lands."*
+- *"Where do these notes reinforce or contradict each other on [topic]?"*
+- *"What's underdeveloped — what is reference a lot but never fleshed out?"*
 
-Gather context with `ki outline` / `ki search` / `ki get`, but **lean on the `neo4j-cli` Cypher skills** (run `neo4j-cli` with the active profile's credentials, scoped to the vault uri) — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Scope to a subtree with the hierarchical-uri `STARTS WITH` filter noted above.
+Gather context with `ki outline` / `ki search` / `ki get`, but **lean on `neo4j-cli` query and schema detection** — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Scope to a vault or any other subtree with the hierarchical uri `STARTS WITH` filter noted above.
 
 ### Updating & Adding Content
 
