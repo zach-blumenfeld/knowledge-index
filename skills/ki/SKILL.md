@@ -115,6 +115,8 @@ Then search / get (see *When to Use Ki*).
 
 ## Usage
 
+> **In a vault, read through `ki` (`search`/`outline`/`get`), not `Read`/`grep`/`cat` — and tell any sub-agents you spawn to do the same (pass them the vault uri).**
+
 ### Search & Retrieve Specific Content
 
 Users rarely ask "find files containing X" — they ask domain questions:
@@ -176,10 +178,10 @@ This is the default for routine edits. A whole-vault rebuild is too slow to run 
 
 ### Removing & Moving Content
 
-Keep the index in step with the filesystem **per file**, so you never pay for a full rebuild:
+Keep the index in step with the filesystem **per file**, so you avoid paying for full rebuilds:
 ```sh
-ki rm <file uri or path>           # remove one document from the index
-ki mv <old uri/path> <new path>    # rename / move a document — updates the graph in place, links preserved
+ki rm <file uri or path>           # remove one document or folder from the index
+ki mv <old uri/path> <new path>    # rename / move a document or folder — updates the graph in place, links preserved
 ```
 `ki rm` dispatches on its target: a **document** uri/path removes that one doc; a **vault** uri/dir removes the whole vault (typed confirmation — see *Other Operations*). `ki mv` updates the moved doc's path/uri without reparsing, so inbound links stay intact.
 
@@ -197,7 +199,7 @@ After significant changes or refactors to knowledge base content
 
 Run `ki status`; if it reports `STALE`, run `ki index .` — preferably in a sub-agent. 
 
-During indexing, the entire vault is removed from Neo4j then rebuilt to reflect what's on the file system currently. The process can last a couple seconds (for dozens of documents) or a few minutes for thousands of docs.  During re-indexing the the `ki vault` should not be used for search or answering questions.
+During indexing, the entire vault is removed from Neo4j then rebuilt to reflect what's on the file system currently. The process can last a couple seconds (for dozens of documents) or a few minutes (for thousands of docs).  During re-indexing the the `ki vault` should not be used for search or answering questions.
 
 ### Other Operations
 
@@ -207,6 +209,17 @@ During indexing, the entire vault is removed from Neo4j then rebuilt to reflect 
 - `ki init <path>` — (advanced) write `.ki/vault.yaml` without indexing.
 - `ki nuke` — reset the entire graph (all vaults); typed confirmation, last resort.
 - `ki skill …` — install this skill bundle into other agents.
+
+## Anti-Patterns
+
+1. **Raw file ops on vault content** — reading/searching a vault with `Read` / `grep` / `cat` instead of `ki`, and spawning sub-agents that default to file reads. Burns the tokens `ki` exists to save.
+2. **Defaulting the profile** — auto-picking `default_profile` (or any profile) when binding/indexing a vault. Profiles are privacy boundaries; confirm the profile once, at first usage in session. 
+3. **Full re-index for a small change** — running `ki index .` (full nuke + rebuild) after editing one file. Use per-file `ki index <file>` / `ki rm` / `ki mv`; reserve `ki index .` for bulk edits or refactors.
+4. **Cold-starting Neo4j just to look around** — spinning up a stopped profile's instance only to enumerate vaults.
+5. **Switching vault or profile mid-task without confirming** — work one vault + one profile per session; confirm any switch with the user.
+6. **Querying a vault while it's re-indexing**, or **fabricating URIs** — copy URIs from `ki outline` / `ki search`; never guess them.
+
+
 
 ## Vault and File Indexing
 
@@ -254,9 +267,6 @@ Active context is **per-vault** (the `profile:` bound in `.ki/vault.yaml`) and *
 ## Recommended Usage Patterns
 1. Only work with one vault in one profile at a time during a session
 
-## Anti-Patterns
-1. route calls between multiple vaults in one step or without confirming switches with users
-2. switching between profiles in one step or without confirming with user
 
 ## How to invoke
 
