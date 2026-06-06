@@ -109,59 +109,96 @@ Then search / get (see *When to Use Ki*).
 
 ## Usage
 
-### Search and Retrieve Specific Content
+### Search & Retrieve Specific Content
 
-When the user asks to search and retrieve something specific
+Users rarely ask "find files containing X" — they ask domain questions:
+- *"How does our auth flow handle token refresh?"* (software KB)
+- *"What did I conclude about GraphRAG indexing cost?"* (research KB)
+- *"Which notes mention the Postgres migration, and what's the rollback plan?"*
 
-- Every file mentioning X
-- ...? <realtistic KB examples, think from user perspective if they have docs on aosftware project or research content, or for some project, they generally won't ask "find files with x" they will ask some domain specific question>
+Two complementary strategies — **do both** (fan out parallel sub-agents, or run sequentially) and keep the best hits:
 
-There are two strategies - recommend doing both - agent fan out or sequentually then choose best response(s) 
+1. **Structured navigation** — start at the table of contents, then drill into promising branches:
+   ```sh
+   ki outline --full                                  # whole-vault map + descriptions
+   ki outline "<folder|doc|section uri>" --depth 2    # recurse into a branch (see --help for flags)
+   ```
+   Best when the question maps to a known area of the vault.
+2. **Full-text search** — cast a wide net:
+   ```sh
+   ki search "token refresh" --types section --k 10
+   ```
+   Apply **semantic expansion** (see *Query expansion for semantic equivalence*) when hits look thin — rewrite to synonyms / related terms you know. Expanding pre-emptively to cut round-trips is fine, as is retrying a few times.
 
-1. structured navigation: `ki outline --full`<also include optional params...should refer to --help?> ... then find potentially relevant folders/documents/sections etc. and recurse down `ki outline <folder/document/section uri>`
-2. full-text search `ki search`. Use semantic expansion <see below and add directions to here> as appropriate <I think it is fair to add before getting poor results if it makes sense to do so to reduce number of search calls..retry a few times as well is fine>
+Pull the actual content by URI:
+```sh
+ki get --type full "<uri>" ["<uri>" ...]   # reconstructed reading-order body; batch multiple URIs
+```
+Use `--type full` for whole sections / documents, `--type content` to get a node's preamble + child pointers and drill further, `--type path` for metadata only (then read the file yourself).
 
-You can retrieve full content from slices of documents (individual sections of documents), whole documents, or even entire folders via `ki get --full <list of uris>`
+### Answer Vault-Wide Questions
 
-### Answer Global <Whole KB? Right Name?> Questions
-Sometimes the user is not asking for specific content but instead more global questions about the Knowledge base
-- What is in this knowledge base?
-- How many files?
-- <more examples??>
+Sometimes the question is about the vault as a whole, not a specific slice:
+- *"What's in this knowledge base? What topics does it cover?"*
+- *"How many documents are there? Which folder is biggest?"*
+- *"What's been added or changed recently?"*
 
-In these cases there are two strategies.  
-1. Outline summaries + searching <explain/show ...>
-2. Using the Neo4j CLI to write your own queries <how to guide? how will you know? is this skill already installed?  check the repo>
+Two strategies:
+1. **Outline + search** — `ki outline --full` is the table of contents (plus each vault's description). Skim it to summarize coverage and structure; follow up with `ki search` for specifics. Best for *"what's in here."*
+2. **Custom Cypher** — for counts, aggregates, and structural questions, query the graph directly via the **`neo4j-cli` skill** (a separate dependency — *not* bundled with `ki`; connect using the active profile's credentials from `config.yaml`). Starting patterns live in `docs/retrieval-queries.md` (schema in `docs/data-model.md`). Best for *"how many / which is biggest / what links where."*
 
-## Making Inferences
-Sometimes the user is not just asking for information,  but wants to perform some analysis or make further inferences.
-- what are the key themes here?
-- How are concept A and B connected?
-- What are the biggest risks in Project x?
+<!-- req: `neo4j-cli` is an external tool (manual install; today only wired for `ki configure → Aura` via shutil.which). Delegating ad-hoc Cypher to its skill + the profile→env credential bridge (NEO4J_URI/USERNAME/PASSWORD) is speced in docs/v0_3_1_introspect_dedup but NOT wired. Decide: make neo4j-cli a hard dependency / auto-install it, and build the credential bridge? Until then this path is aspirational. -->
 
-For this use ki outline search and get as appropriate but lean havily on neo4j-cli custom cypher queries.  Likely load bearing in these scenarios ,<explain/show ...?>
+### Making Inferences
 
-## Updating & Adding Content
-Whenever you or the user adds a new file or modifies an existing files contents you will want to (re-)index it to reflect current state. 
-`ki index <uri or abs_path>`
+Sometimes the user wants analysis, not just retrieval:
+- *"What are the key themes across these notes?"*
+- *"How are concept A and concept B connected?"*
+- *"What are the biggest risks in Project X?"*
 
-## Removing and Moving Content
-Whenever you or the user removes a file also remove from ki
-`ki rm <uri or abs_path>`
-Same for moving a file
-`ki mv <uri or abs_path>`
+Gather context with `ki outline` / `ki search` / `ki get`, but **lean on custom Cypher via the `neo4j-cli` skill** — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Connect with the bound profile's credentials from `config.yaml`; see `docs/retrieval-queries.md` for starting patterns.
 
-## Re-Indexing Entire Vaults
+### Updating & Adding Content
+
+When you or the user creates or edits a file, index **just that file** — fast and incremental, no full rebuild:
+```sh
+ki index <file.md>      # add or update a single document (accepts a path or uri)
+```
+This is the default for routine edits. A whole-vault rebuild is too slow to run after every change — reserve `ki index .` for bulk edits or structural refactors (see *Re-Indexing Entire Vaults*).
+
+### Removing & Moving Content
+
+Keep the index in step with the filesystem **per file**, so you never pay for a full rebuild:
+```sh
+ki rm <file uri or path>           # remove one document from the index
+ki mv <old uri/path> <new path>    # rename / move a document — updates the graph in place, links preserved
+```
+`ki rm` dispatches on its target: a **document** uri/path removes that one doc; a **vault** uri/dir removes the whole vault (typed confirmation — see *Other Operations*). `ki mv` updates the moved doc's path/uri without reparsing, so inbound links stay intact.
+
+<!-- req (NEEDED — full re-index lag is too long for routine edits):
+  - `ki index <file>`: accept a single file path/uri → incremental upsert of one document (today ki index is folder/vault-level only).
+  - `ki rm <doc uri|file>`: document-level removal, dispatching vault-vs-doc on target type (today ki rm is vault-only and errors on sub-vault targets — revisit docs/index_rm_behavior.md).
+  - `ki mv <old> <new>`: new command; move/rename a document in the graph in place (path + uri update, links preserved) without a reparse.
+  All must be fast/incremental, NOT full-vault rebuilds. -->
+
+### Re-Indexing Entire Vaults
 
 Re-indexing entire vaults can become an expensive operations with more documents, but is sometimes necessary as updating/adding/removing individual content pieces may miss other changes made by the user (or accidentally by you).
 
 After significant changes or refactors to knowledge base content
 
-check `ki state`, if `STALE` run `ki index .` with a sub-agent preferably. 
+Run `ki status`; if it reports `STALE`, run `ki index .` — preferably in a sub-agent. 
 
 During indexing, the entire vault is removed from Neo4j then rebuilt to reflect what's on the file system currently. The process can last a couple seconds (for dozens of documents) or a few minutes for thousands of docs.  During re-indexing the the `ki vault` should not be used for search or answering questions.
 
-## Other Operations
+### Other Operations
+
+- `ki configure` / `ki profile list` — manage Neo4j connection profiles.
+- `ki vault list` — inspect indexed vaults (uri, description).
+- `ki use <profile>` — set / change the vault's profile binding.
+- `ki init <path>` — (advanced) write `.ki/vault.yaml` without indexing.
+- `ki nuke` — reset the entire graph (all vaults); typed confirmation, last resort.
+- `ki skill …` — install this skill bundle into other agents.
 
 ## Vault and File Indexing
 
