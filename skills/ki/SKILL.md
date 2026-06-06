@@ -138,11 +138,10 @@ Two complementary strategies — **do both** (fan out parallel sub-agents, or ru
    ```
    Queries are **Lucene syntax** — `AND`/`OR`/`NOT` (or `+`/`-`), `"exact phrases"`, `()` grouping, `*` wildcards, `~` fuzzy. ([query syntax](https://lucene.apache.org/core/8_2_0/queryparser/org/apache/lucene/queryparser/classic/package-summary.html#package.description))
 
-   **Semantic expansion** — when hits look thin (zero hits, one low-score hit, or no doc-level match for a doc-level query), rewrite the term to a few alternates you know from world knowledge and retry — as extra `ki search` calls or one OR-form query:
+   **Semantic expansion** — the index only does lexical matching, so synonyms or semantically relevant content may be missed (e.g. search on "Darth Vader" misses "Anakin Skywalker"). Account for this by rewriting the term to a few alternates you know and running them as extra `ki search` calls or one OR-form query — either reactively (results look thin: few hits, low-score hits, or no hits) or pre-emptively when you already expect a mismatch:
    ```sh
    ki search 'Anakin OR "Darth Vader" OR Vader'   # world-knowledge synonyms the vault never spelled out
    ```
-   Expanding pre-emptively to save round-trips is fine. Synonyms the vault *did* spell out (`[[Darth Vader|Anakin]]`) are already folded into aliases; personal shorthand the user never linked won't expand.
 
 Pull the actual content by URI:
 ```sh
