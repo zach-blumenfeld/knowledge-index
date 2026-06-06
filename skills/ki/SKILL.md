@@ -126,8 +126,8 @@ Two complementary strategies — **do both** (fan out parallel sub-agents, or ru
 
 1. **Structured navigation** — start at the table of contents, then drill into promising branches:
    ```sh
-   ki outline <vault uri> --full --depth 3                               # whole-vault map + description
-   ki outline "<folder|doc|section uri>" --depth 2    # recurse into a branch (see --help for flags)
+   ki outline <vault uri> --full --depth 3  # whole-vault map + description
+   ki outline "<folder|doc|section uri>" --depth 2  # recurse into a branch (see --help for flags)
    ```
    Best when the question maps to a known area of the vault.
 2. **Full-text search** — cast a wide net:
@@ -150,7 +150,7 @@ Sometimes the question is about the vault as a whole, not a specific slice:
 - *"What's been added or changed recently?"*
 
 Two strategies:
-1. **Outline + Search** — **Structured navigation** (with `ki outline`) to get high level outlines, followed up with **Full-text search** (`ki search`). Best for *"what's in here."*
+1. **Outline as overview** — read `ki outline --full` as a high-level map of the *whole* vault to summarize its coverage and structure (adjust --depth and recurse on uris as needed). Follow with `ki search/get` for any specifics. Best for *"what's in here."*
 2. **Custom Cypher** — for more flexible counts, aggregates, and structural questions, use the **`neo4j-cli`** to directly inspect the schema and query the database
    - Use the neo4j credentials from the ki profile
    - To scope queries to the vault uri (or any folder, document, section therein) know that **ki URIs are hierarchical**, so filtering `uri` with `STARTS WITH '<uri>'` filters to the subtree - everything under that vault / folder / document / section.
