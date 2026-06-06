@@ -1,47 +1,151 @@
-# `ki` — Skill spec
+# `ki` — Usage
 
-Agent-facing routing rules for the `knowledge-index` (`ki`) CLI. If you are an agent reading this in response to a user's request, this file tells you when to invoke `ki` and when to take a different action.
-
-> **Description:** Search index for agent memory — knowledge graph index for your documents. Point `ki` at a folder of markdown files; it builds a searchable knowledge graph in Neo4j you can query from the CLI or any agent.
+---
+> **Description:** Your load-bearing tool for viewing & searching text based files. Saving time and tokens by quickly auto constructing a knowledge graph index for faster search and structured navigation within and across markdown files, their sections, and the links between them.
+---
 
 ## TRIGGER when
 
 Invoke `ki` when a user asks to:
 
-- track conversations or notes in memory across sessions
-- remember / document something for use later
-- build a knowledge base around a topic
-- incorporate a folder of notes / vault / documents into durable memory
-- search or recall information they've saved
-- find connections / related notes across their writing (outbound `LINKS_TO` is wired; backlinks are not — see #35)
-- get full text or sibling context for a section in their notes
+- ...(create a knowledge base??)
+- View, Summerize & Navigate
+- Search
+- Get (Retrieve) - 
+- Index
+## Do Not Use When
 
-Example user prompts that should route here:
-- *"Can you track our conversations in memory?"*
-- *"Can you document this process for use later?"*
-- *"Can you start building a knowledge base for me around [topic X]?"*
-- *"Can you incorporate these notes / this vault into your memory?"*
-- *"What do my notes say about X?"*
-- *"Find the document where I wrote about Y."*
+## What `ki` is
+
+## Why use `ki`
+
+## `ki` CLI
+
+`ki` is exposed as a command line tool
+
 
 ## PREPARE when
 
-Source content isn't markdown. `ki` v1 indexes `.md` files only. To handle non-markdown sources:
+Source content isn't markdown. `ki` indexes `.md` files only. To handle non-markdown sources:
 
 1. Convert non-markdown sources (PDF / docx / HTML / plaintext) to markdown first, using `pandoc`, `markitdown`, or by reading + transcribing.
 2. Save the output to a folder the user picks (ask them where the first time; remember their answer for future runs).
 3. Then run `ki index` on it.
 
-The agent does the conversion; `ki` does not. This is by design — `ki` is an index, not a document store.
-
 ## SKIP when
+...?
 
-- The user wants **ephemeral, single-session memory** (transient conversation state). Use the assistant's built-in conversation context instead.
-- The user wants **Claude's own built-in agent-memory system** (`~/.claude/projects/.../memory/`, where preferences / user-feedback / project state live). That's a layer for agent-internal state; `ki` is for the user's content. They coexist — don't conflate them.
-- The user wants to **modify their source files** (rename, rewrite, reorganize). `ki` never mutates sources. Use a separate file-editing flow.
-- The content is not markdown **and** the user doesn't want it converted (see *PREPARE when* for the conversion path).
+## On First Use In Session
 
-Note: `ki search` is **cross-vault by default**, and today that's the *only* mode — it runs across every vault indexed to the same Neo4j with no CLI-side scoping flag (a `--under <vault|folder|doc|section>` flag is tracked in [#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36)). Don't skip `ki` because the request spans multiple folders / projects / vaults — that's the case it's *built for*. To narrow to a specific vault today, search cross-vault and filter the results client-side by `document_uri` prefix, or use `ki outline "<vault-uri>"` to navigate within a single vault's structure.
+The user is always thinking about one **directory**: *set up* a knowledge base on it, or *use* the one that's there. Both intents funnel through the same job — **get that directory to a READY vault, then use it.** The only branch that matters is how far along the directory already is.
+
+A vault is a directory marked with `.ki/vault.yaml`, which records the vault's uri and the **profile** (Neo4j database) it's bound to:
+
+```yaml
+# <vault>/.ki/vault.yaml
+uri: my-notes
+profile: personal        # which neo4j this vault lives in — set once at first index
+description: "..."
+```
+
+Only the profile **name** is stored (credentials stay in `config.yaml`), so this file is safe to commit. This binding is how the vault knows its own profile without ever prompting the user.
+
+### Step 0 — `ki` installed?
+
+```sh
+ki --help            # if missing: uv tool install knowledge-index
+```
+
+### Step 1 — Point at the directory
+
+- **Default:** the current directory.
+- User names a path → `cd` there.
+
+### Step 2 — Get the directory to READY
+
+Run `ki status`. It resolves **in layers** and reports the first blocking state — each layer needs the one above it to pass:
+
+1. **Disk marker** (no Neo4j needed) — is there a `.ki/` here?
+2. **Neo4j reachability** — `ki status` *attempts a connection* to the bound profile and classifies the result (you don't know this until you try).
+3. **Graph state** — only knowable once Neo4j is reachable.
+
+Act on the reported state, then re-run until READY:
+
+| State | How `ki status` knows | Action |
+|---|---|---|
+| `NOT_A_VAULT` | no `.ki/` on disk | Setting up. List profiles (`ki profile list` — from `config.yaml`, no Neo4j needed); user picks one to **bind** — never default (personal/work boundary). None yet → `references/configure-profile.md`. Then `ki index . --profile <p> --description "..."` |
+| `NEO4J_DOWN` | connect → `ServiceUnavailable` (nothing listening) | start it → `references/neo4j-troubleshoot.md` |
+| `NEO4J_UNRESPONSIVE` | connect hangs / times out | container up but not ready, or wedged → wait, then `references/neo4j-troubleshoot.md` |
+| `AUTH_ERROR` | connect → authentication failure | profile credentials wrong → `references/configure-profile.md` (re-enter creds) — **not** a restart |
+| `NOT_INDEXED` | reachable, but no `:Vault` node | `ki index .` (profile already bound) |
+| `STALE` | indexed, source files changed since | `ki index .` to refresh |
+| `READY` | indexed + in sync | proceed to Step 3 |
+
+Layers 1–2 work even when Neo4j is down (that's how `ki status` reports the Neo4j rows at all). The graph rows below require a reachable Neo4j.
+
+Edges:
+- Bound profile missing from `config.yaml` (renamed / cloned to another machine) → surface to user, re-bind (`ki use <profile>`).
+- Source dir moved → `cd` to the new path and `ki index .`.
+
+### Step 3 — Use it
+
+ALWAYS start with the outline — a table-of-contents view that saves considerable navigation/search tokens:
+
+```sh
+ki outline <vault uri> --token-limit 20000
+```
+
+Then search / get (see *When to Use Ki*).
+
+## Vault and File Indexing
+
+Vaults must be indexed to....
+Vaults should be Re-indexed whenever files in theior sorc]isponding directories change to staty upo-to-sync.
+### Trigger When
+
+### Trigger After
+Always get a refreshed Vault outline after re-index
+
+## When to Use Ki
+`ki` is useful for doing 5 things faster & with less tokens then normal file ops ....
+1. searching - ...
+2. navigating ....
+4. summarizing ...
+3. getting: read sections or subsections of markdown file contents without needing to open and scan entire source files
+
+
+### Search (...move to reference file)
+
+### Trigger When
+...?
+
+#### Search Steps
+1. ALWAYS check the vault outline first to see if there are documents or sections to focus on
+   1. If  nothing looks relevant move on to ki search otherwise collect uris and dig into deeper outlines
+   2. drill down on deeper outlines on any elements there with ki outline <uri> this will give you an outline starting at that element as root.  COuld be a folder, a document or section/subsection inside a document
+   3. Use web search to follow any external links if relevant
+2. use ki search --under vault...etc
+3. 
+
+
+
+
+## ALWAYS Remember
+Keep these fresh; if you don't know, **rerun** to recover:
+
+1. **Active profile & vault** → `ki status` (cwd-derived). Sub-agents: tell them to `cd` into the vault dir, then run `ki status` — nothing needs to be passed in the prompt.
+2. **Vault outline** → `ki outline <vault uri>`.
+3. **Indexing state** → GOOD / LIKELY_STALE / RE_INDEXING / DOWN (from `ki status` / `ki profile list`).
+
+Active context is **per-vault** (the `profile:` bound in `.ki/vault.yaml`) and **per-shell** (cwd), so parallel sessions on different vaults never collide — there's no single global "active" to clobber.
+
+
+## Recommended Usage Patterns
+1. Only work with one vault in one profile at a time during a session
+
+## Anti-Patterns
+1. route calls between multiple vaults in one step or without confirming switches with users
+2. switching between profiles in one step or without confirming with user
 
 ## How to invoke
 
