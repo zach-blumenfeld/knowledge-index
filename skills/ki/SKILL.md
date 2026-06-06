@@ -150,12 +150,10 @@ Sometimes the question is about the vault as a whole, not a specific slice:
 - *"What's been added or changed recently?"*
 
 Two strategies:
-1. **Outline + search** — `ki outline --full` is the table of contents (plus each vault's description). Skim it to summarize coverage and structure; follow up with `ki search` for specifics. Best for *"what's in here."*
-2. **Custom Cypher** — for counts, aggregates, and structural questions, hand it to the **`neo4j-cli` Cypher skills**: run `neo4j-cli` with the active profile's credentials, scoped to your vault uri. Those skills know how to introspect the schema, so you don't need it spelled out. Best for *"how many / which is biggest / what links where."*
-
-> **ki URIs are hierarchical**, so filter with `STARTS WITH` to scope a query to any subtree: `WHERE n.uri STARTS WITH '<uri>'` matches everything under that vault / folder / document / section.
-
-<!-- req: ki must bridge the active profile's creds → neo4j-cli env (NEO4J_URI/USERNAME/PASSWORD) so delegated Cypher hits the right database. (neo4j-cli + its skills are installed by install.sh.) See docs/v0_3_1_introspect_dedup. -->
+1. **Outline + Search** — **Structured navigation** (with `ki outline`) to get high level outlines, followed up with **Full-text search** (`ki search`). Best for *"what's in here."*
+2. **Custom Cypher** — for more flexible counts, aggregates, and structural questions, use the **`neo4j-cli`** to directly inspect the schema and query the database
+   - Use the neo4j credentials from the ki profile
+   - To scope queries to the vault uri (or any folder, document, section therein) know that **ki URIs are hierarchical**, so filtering `uri` with `STARTS WITH '<uri>'` filters to the subtree - everything under that vault / folder / document / section.
 
 ### Making Inferences
 
