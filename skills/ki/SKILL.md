@@ -32,20 +32,12 @@ It's faster and far cheaper in tokens than raw file ops over a markdown corpus. 
 - **URI** — the address of a vault / document / section in the index. Copy it from `ki outline` or search results and feed it into `ki get` / `ki outline`. URIs are hierarchical paths, so trim a trailing segment to get an ancestor — no query needed (drop `/h2` → parent section, the whole `#…` → owning doc, `/foo.md` → folder).
 - **`config.yaml`** — `~/.config/ki/config.yaml`; holds profiles + credentials. Does **not** track vaults — Neo4j does.
 
-## PREPARE when
-
-Source content isn't markdown. `ki` indexes `.md` files only. To handle non-markdown sources:
-
-1. Convert non-markdown sources (PDF / docx / HTML / plaintext) to markdown first, using `pandoc`, `markitdown`, or by reading + transcribing.
-2. Save the output to a folder the user picks (ask them where the first time; remember their answer for future runs).
-3. Then run `ki index` on it.
-
 ## SKIP when
 ...?
 
 ## On First Use In Session
 
-The user is always thinking about one **directory**: *set up* a knowledge base on it, or *use* the one that's there. Both intents funnel through the same job — **get that directory to a READY vault, then use it.** The only branch that matters is how far along the directory already is.
+The user is generally thinking about one **directory**: *set up* a knowledge base on it, or *use* the one that's there. Both intents funnel through the same job — **get that directory to a READY vault, then use it.** The only branch that matters is how far along the directory already is.
 
 A vault is a directory marked with `.ki/vault.yaml`, which records the vault's uri and the **profile** (Neo4j database) it's bound to:
 
@@ -57,6 +49,8 @@ description: "..."
 ```
 
 Only the profile **name** is stored (credentials stay in `config.yaml`), so this file is safe to commit. This binding is how the vault knows its own profile without ever prompting the user.
+
+> **`ki` indexes `.md` files only.** Convert non-markdown sources (PDF / docx / HTML) to markdown first — `pandoc`, `markitdown`, or read + transcribe — into a folder the user picks (ask once, reuse it), then `ki index`.
 
 ### Step 0 — `ki` installed?
 
