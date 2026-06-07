@@ -25,6 +25,7 @@ from ..config import find_config_path, load_config
 from ..ingest import queries as Q
 from ..ingest.remove import DEFAULT_CHUNK_SIZE, remove_vault
 from ..neo4j_client import driver_for
+from ..profile_resolve import resolve_profile
 from ..vault import read_vault_marker, remove_vault_marker, vault_marker_path
 
 console = Console()
@@ -50,9 +51,9 @@ def cmd_rm(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = cfg.get_profile(profile)
 
     vault_uri, vault_root = _resolve_vault_target(target)
+    prof = resolve_profile(cfg, profile, start_dir=vault_root)
 
     with driver_for(prof) as driver, driver.session() as session:
         row = session.run(Q.COUNT_VAULT, vaultUri=vault_uri).single()

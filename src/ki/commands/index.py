@@ -24,6 +24,7 @@ from ..ingest.pipeline import (
     IngestServiceUnavailable,
     ingest_vault,
 )
+from ..profile_resolve import resolve_profile
 from ..vault import (
     VaultDescriptionExists,
     vault_marker_path,
@@ -193,7 +194,7 @@ def cmd_index(
 
     cfg = load_config(cfg_path)
     try:
-        prof = cfg.get_profile(profile)
+        prof = resolve_profile(cfg, profile, start_dir=path)
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
 

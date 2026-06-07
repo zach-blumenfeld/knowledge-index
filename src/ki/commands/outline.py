@@ -19,6 +19,7 @@ import click
 
 from ..config import find_config_path, load_config
 from ..neo4j_client import driver_for
+from ..profile_resolve import resolve_profile
 from ..search.queries import run_b12, run_b12_links
 
 
@@ -53,7 +54,7 @@ def cmd_outline(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = cfg.get_profile(profile)
+    prof = resolve_profile(cfg, profile)
 
     root_uri = _parse_at(at)
 

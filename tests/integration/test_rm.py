@@ -27,7 +27,7 @@ def indexed_vault(vault_dir, neo4j_profile, cleanup_vault, monkeypatch, tmp_path
     monkeypatch.delenv("KI_PROFILE", raising=False)
     cfg = Config()
     cfg.add_profile(Profile(
-        name="default", uri=neo4j_profile.uri,
+        name=neo4j_profile.name, uri=neo4j_profile.uri,
         user=neo4j_profile.user, password=neo4j_profile.password,
     ))
     save_config(cfg)
@@ -171,7 +171,7 @@ def test_rm_orphan_gc_removes_unresolved_wikilink_targets(
     monkeypatch.delenv("KI_PROFILE", raising=False)
     cfg = Config()
     cfg.add_profile(Profile(
-        name="default", uri=neo4j_profile.uri,
+        name=neo4j_profile.name, uri=neo4j_profile.uri,
         user=neo4j_profile.user, password=neo4j_profile.password,
     ))
     save_config(cfg)

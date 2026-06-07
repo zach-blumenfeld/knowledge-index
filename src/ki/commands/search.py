@@ -26,6 +26,7 @@ from rich.table import Table
 
 from ..config import find_config_path, load_config
 from ..neo4j_client import driver_for
+from ..profile_resolve import resolve_profile
 from ..search.queries import run_b1, run_b2, run_vault_search
 
 console = Console()
@@ -86,7 +87,7 @@ def cmd_search(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = cfg.get_profile(profile)
+    prof = resolve_profile(cfg, profile)
 
     rows: list[dict[str, Any]] = []
     with driver_for(prof) as driver, driver.session() as session:

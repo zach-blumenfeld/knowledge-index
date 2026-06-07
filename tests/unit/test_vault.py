@@ -12,8 +12,10 @@ from ki.vault import (
     VaultDescriptionExists,
     compute_base_slug,
     find_next_vault_slug,
+    find_vault_root,
     read_vault_description,
     read_vault_marker,
+    read_vault_profile,
     remove_vault_marker,
     vault_marker_path,
     write_vault_description,
@@ -33,6 +35,50 @@ def test_write_marker_round_trips_uri_and_description(tmp_path):
     write_vault_marker(tmp_path, uri="my-notes", description="long-form drafts")
     data = yaml.safe_load(vault_marker_path(tmp_path).read_text(encoding="utf-8"))
     assert data == {"uri": "my-notes", "description": "long-form drafts"}
+
+
+def test_write_marker_round_trips_profile(tmp_path):
+    write_vault_marker(tmp_path, uri="my-notes", profile="personal")
+    data = yaml.safe_load(vault_marker_path(tmp_path).read_text(encoding="utf-8"))
+    assert data == {"uri": "my-notes", "profile": "personal"}
+    assert read_vault_profile(tmp_path) == "personal"
+
+
+def test_read_profile_none_when_absent(tmp_path):
+    write_vault_marker(tmp_path, uri="my-notes")
+    assert read_vault_profile(tmp_path) is None
+
+
+def test_read_profile_none_when_no_marker(tmp_path):
+    assert read_vault_profile(tmp_path) is None
+
+
+def test_write_description_preserves_profile(tmp_path):
+    write_vault_marker(tmp_path, uri="my-notes", profile="work")
+    write_vault_description(tmp_path, "drafts")
+    assert read_vault_profile(tmp_path) == "work"
+    assert read_vault_description(tmp_path) == "drafts"
+
+
+def test_find_vault_root_walks_up_from_subdir(tmp_path):
+    write_vault_marker(tmp_path, uri="my-notes")
+    nested = tmp_path / "a" / "b" / "c"
+    nested.mkdir(parents=True)
+    assert find_vault_root(nested) == tmp_path.resolve()
+
+
+def test_find_vault_root_walks_up_from_file(tmp_path):
+    write_vault_marker(tmp_path, uri="my-notes")
+    f = tmp_path / "a" / "note.md"
+    f.parent.mkdir(parents=True)
+    f.write_text("# hi", encoding="utf-8")
+    assert find_vault_root(f) == tmp_path.resolve()
+
+
+def test_find_vault_root_none_when_no_marker(tmp_path):
+    nested = tmp_path / "a" / "b"
+    nested.mkdir(parents=True)
+    assert find_vault_root(nested) is None
 
 
 def test_write_marker_truncates_long_description(tmp_path, caplog):

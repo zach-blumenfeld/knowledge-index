@@ -24,6 +24,7 @@ import click
 
 from ..config import find_config_path, load_config
 from ..neo4j_client import driver_for
+from ..profile_resolve import resolve_profile
 from ..search.queries import run_b4, run_b13, run_b14
 
 VALID_TYPES = ("path", "content", "full")
@@ -48,7 +49,7 @@ def cmd_get(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = cfg.get_profile(profile)
+    prof = resolve_profile(cfg, profile)
 
     results: list[dict[str, Any]] = []
     errors: list[tuple[str, str]] = []  # (uri, message)

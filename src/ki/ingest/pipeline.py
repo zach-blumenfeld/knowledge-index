@@ -555,6 +555,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                     final_description = None
                 write_vault_marker(
                     vault_root, uri=vault_uri, description=final_description,
+                    profile=opts.profile.name,
                 )
                 result.vault_uri = vault_uri
                 result.vault_created = vault_created

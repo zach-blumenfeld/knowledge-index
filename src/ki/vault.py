@@ -84,10 +84,43 @@ def read_vault_uri(vault_root: Path) -> str | None:
     return str(data["uri"]).strip()
 
 
+def read_vault_profile(vault_root: Path) -> str | None:
+    """Read the bound profile **name** from the marker (or None if absent).
+
+    This is the vault's own answer to "which Neo4j do I live in" — set once
+    at first index and committed alongside the source. Only the name is
+    stored; credentials stay in `config.yaml`.
+    """
+    data = read_vault_marker(vault_root)
+    if data is None:
+        return None
+    prof = data.get("profile")
+    if not isinstance(prof, str) or not prof.strip():
+        return None
+    return prof.strip()
+
+
+def find_vault_root(start: Path) -> Path | None:
+    """Walk up from `start` to the nearest ancestor holding `.ki/vault.yaml`.
+
+    Returns the vault root (the dir containing `.ki/`), or None if no marker
+    is found before the filesystem root. This is how a command run *inside*
+    a vault discovers which vault it's in without being told.
+    """
+    cur = Path(start).expanduser().resolve()
+    if cur.is_file():
+        cur = cur.parent
+    for d in (cur, *cur.parents):
+        if vault_marker_path(d).exists():
+            return d
+    return None
+
+
 def write_vault_marker(
-    vault_root: Path, *, uri: str, description: str | None = None
+    vault_root: Path, *, uri: str, description: str | None = None,
+    profile: str | None = None,
 ) -> None:
-    """Write `.ki/vault.yaml` with the assigned URI and optional description.
+    """Write `.ki/vault.yaml` with the assigned URI, profile, and optional description.
 
     Atomic-enough for ki's purposes (single-file YAML write). Always
     rewrites the file in full — callers compose the desired state and pass
@@ -97,6 +130,8 @@ def write_vault_marker(
     marker = vault_marker_path(vault_root)
     marker.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, Any] = {"uri": uri}
+    if profile is not None and profile.strip():
+        data["profile"] = profile.strip()
     if description is not None:
         desc = description.strip()
         encoded = desc.encode("utf-8")

@@ -17,6 +17,7 @@ from rich.table import Table
 from ..config import find_config_path, load_config
 from ..ingest.queries import VAULT_LIST
 from ..neo4j_client import driver_for
+from ..profile_resolve import resolve_profile
 
 console = Console()
 
@@ -26,7 +27,7 @@ def cmd_vault_list(profile: str | None, as_json: bool = False) -> int:
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = cfg.get_profile(profile)
+    prof = resolve_profile(cfg, profile)
 
     with driver_for(prof) as driver:
         with driver.session() as session:
