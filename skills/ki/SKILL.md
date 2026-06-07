@@ -193,12 +193,12 @@ Keep the index in step with the filesystem **per file**, so you avoid paying for
 ki rm <file uri or path>           # remove one document or folder from the index
 ki mv <old uri/path> <new path>    # rename / move a document or folder — updates the graph in place, links preserved
 ```
-`ki rm` dispatches on its target: a **document or folder** uri/path removes that node (a folder takes its contents with it); a **vault** uri/dir removes the whole vault (typed confirmation — see *Other Operations*). `ki mv` updates the moved document's or folder's path/uri without reparsing, so inbound links stay intact.
+`ki rm` removes its target from the index: a **document or folder** (the folder's contents go with it), or a whole **vault** (asks for typed confirmation — see *Other Operations*). `ki mv <old> <new>` moves/renames a document or folder in the index — subtree-scoped, so use it instead of re-indexing the whole vault.
 
 <!-- req (NEEDED — full re-index lag is too long for routine edits):
   - `ki index <file>`: accept a single file path/uri → incremental upsert of one document (today ki index is folder/vault-level only).
   - `ki rm <doc|folder uri|path>`: document- and folder-level removal, dispatching doc-vs-folder-vs-vault on target type (today ki rm is vault-only and errors on sub-vault targets — revisit docs/index_rm_behavior.md).
-  - `ki mv <old> <new>`: new command; move/rename a document or folder in the graph in place (path + uri update, links preserved) without a reparse.
+  - `ki mv <old> <new>`: re-key the moved node + descendant section URIs, re-attach HAS to the new parent, re-resolve the moved file's outbound links. Inbound LINKS_TO survive only if the existing node is mutated in place — a rm+reindex drops them and would need referrer re-resolution. Keep it scoped to the moved subtree, not a full rebuild.
   All must be fast/incremental, NOT full-vault rebuilds. -->
 
 ### Re-Indexing Entire Vaults
