@@ -117,6 +117,8 @@ Then search / get (see *When to Use Ki*).
 
 > **In a vault, read through `ki` (`search`/`outline`/`get`), not `Read`/`grep`/`cat` — and tell any sub-agents you spawn to do the same (pass them the vault uri).**
 
+This skill covers *when* and *why* to reach for each command; **`ki <cmd> --help` is the source of truth for exact flags.** Check it when a flag is unclear rather than guessing — it's read-only and safe to allowlist.
+
 ### Search & Retrieve Specific Content
 
 Users rarely ask "find files containing X" — they ask domain questions:
@@ -132,7 +134,7 @@ Two complementary strategies — **do both** (fan out parallel sub-agents, or ru
    ki outline "<folder|doc|section uri>" --depth 2  # recurse into a branch (see --help for flags)
    ```
    Best when the question maps to a known area of the vault.
-2. **Full-text search with semantic expansion** — cast a wide net (fulltext over title + content + wikilink aliases):
+2. **Full-text search with semantic expansion** — cast a wide net (fulltext over title + content + wikilink aliases; spans documents, sections & vaults by default — narrow with `--types`):
    ```sh
    ki search "token refresh" --types section --k 10
    ```
@@ -147,7 +149,10 @@ Pull the actual content by URI:
 ```sh
 ki get --type full "<uri>" ["<uri>" ...]   # reconstructed reading-order body; batch multiple URIs
 ```
-Use `--type full` for whole sections / documents, `--type content` to get a node's preamble + child pointers and drill further, `--type path` for metadata only (then read the file yourself).
+Use `--type full` for whole sections / documents, `--type content` to get a node's preamble + child pointers and drill further, `--type path` for metadata only (then read the file yourself). `ki get` takes **only** document/section URIs — for a folder use `ki outline`. 
+
+
+Markdown links to non-md files or external URLs become **stub** document nodes (metadata only, no content) — they surface in search/outline as link targets because an `.md` file points at them. Only `.md` files are actually indexed; `ki get` on a stub returns just its metadata.
 
 ### Answer Vault-Wide Questions
 
@@ -160,7 +165,7 @@ Two strategies:
 1. **Outline as overview** — read `ki outline --full` as a high-level map of the *whole* vault to summarize its coverage and structure (adjust --depth and recurse on uris as needed). Follow with `ki search/get` for any specifics. Best for *"what's in here."*
 2. **Custom Cypher** — for more flexible counts, aggregates, and structural questions, use the **`neo4j-cli`** to directly inspect the schema and query the database
    - Use the neo4j credentials from the ki profile
-   - To scope queries to the vault uri (or any folder, document, section therein) know that **ki URIs are hierarchical**, so filtering `uri` with `STARTS WITH '<uri>'` filters to the subtree - everything under that vault / folder / document / section.
+   - To scope queries to the vault uri (or any folder, document, section therein) know that **ki URIs are hierarchical**, so filtering `uri` with `STARTS WITH '<uri>/'` filters to the subtree — everything under that vault / folder / document / section. Keep the trailing `/`: `STARTS WITH 'my-notes'` would also match the sibling vault `my-notes-2`.
 
 ### Making Inferences
 
@@ -169,7 +174,7 @@ Sometimes the user wants analysis, not just retrieval:
 - *"How does [X] connect to [Y] — what's the throughline between them?"*
 - *"Pull together everything related to [X] and synthesize where it lands."*
 - *"Where do these notes reinforce or contradict each other on [topic]?"*
-- *"What's underdeveloped — what is reference a lot but never fleshed out?"*
+- *"What's underdeveloped — what's referenced a lot but never fleshed out?"*
 
 Gather context with `ki outline` / `ki search` / `ki get`, but **lean on `neo4j-cli` query and schema detection** — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Scope to a vault or any other subtree with the hierarchical uri `STARTS WITH` filter noted above.
 
@@ -188,12 +193,12 @@ Keep the index in step with the filesystem **per file**, so you avoid paying for
 ki rm <file uri or path>           # remove one document or folder from the index
 ki mv <old uri/path> <new path>    # rename / move a document or folder — updates the graph in place, links preserved
 ```
-`ki rm` dispatches on its target: a **document** uri/path removes that one doc; a **vault** uri/dir removes the whole vault (typed confirmation — see *Other Operations*). `ki mv` updates the moved doc's path/uri without reparsing, so inbound links stay intact.
+`ki rm` dispatches on its target: a **document or folder** uri/path removes that node (a folder takes its contents with it); a **vault** uri/dir removes the whole vault (typed confirmation — see *Other Operations*). `ki mv` updates the moved document's or folder's path/uri without reparsing, so inbound links stay intact.
 
 <!-- req (NEEDED — full re-index lag is too long for routine edits):
   - `ki index <file>`: accept a single file path/uri → incremental upsert of one document (today ki index is folder/vault-level only).
-  - `ki rm <doc uri|file>`: document-level removal, dispatching vault-vs-doc on target type (today ki rm is vault-only and errors on sub-vault targets — revisit docs/index_rm_behavior.md).
-  - `ki mv <old> <new>`: new command; move/rename a document in the graph in place (path + uri update, links preserved) without a reparse.
+  - `ki rm <doc|folder uri|path>`: document- and folder-level removal, dispatching doc-vs-folder-vs-vault on target type (today ki rm is vault-only and errors on sub-vault targets — revisit docs/index_rm_behavior.md).
+  - `ki mv <old> <new>`: new command; move/rename a document or folder in the graph in place (path + uri update, links preserved) without a reparse.
   All must be fast/incremental, NOT full-vault rebuilds. -->
 
 ### Re-Indexing Entire Vaults
