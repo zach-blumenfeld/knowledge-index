@@ -90,7 +90,7 @@ Act on the reported state, then re-run until READY:
 | `NEO4J_UNRESPONSIVE` | connect hangs / times out | container up but not ready, or wedged → wait, then `references/neo4j-troubleshoot.md` |
 | `AUTH_ERROR` | connect → authentication failure | profile credentials wrong → `references/configure-profile.md` (re-enter creds) — **not** a restart |
 | `NOT_INDEXED` | reachable, but no `:Vault` node | `ki index .` (profile already bound) |
-| `STALE` | indexed, source files changed since | `ki index .` to refresh |
+| `STALE` | indexed, but the set or content-hash of `.md` files no longer matches the graph | `ki index .` to refresh |
 | `READY` | indexed + in sync | proceed to Step 3 |
 
 Layers 1–2 work even when Neo4j is down (that's how `ki status` reports the Neo4j rows at all). The graph rows below require a reachable Neo4j.
@@ -112,9 +112,10 @@ Then search / get (see *Search & Retrieve* under *Usage*).
 
 ## Usage
 
-> **In a vault, read through `ki` (`search`/`outline`/`get`), not `Read`/`grep`/`cat` — and tell any sub-agents you spawn to do the same (pass them the vault uri).**
 
 This skill covers *when* and *why* to reach for each command; **`ki <cmd> --help` is the source of truth for exact flags.** Check it when a flag is unclear rather than guessing — it's read-only and safe to allowlist.
+
+> **In a vault, read files through `ki` (`search`/`outline`/`get`), not `Read`/`grep`/`cat` — and tell any sub-agents you spawn to do the same (pass them the vault uri).**
 
 ### Search & Retrieve Specific Content
 
@@ -207,6 +208,8 @@ Re-indexing entire vaults can become an expensive operations with more documents
 After significant changes or refactors to knowledge base content
 
 Run `ki status`; if it reports `STALE`, run `ki index .` — preferably in a sub-agent. 
+
+> **`STALE`/`READY` is markdown-only — not bulletproof.** It does **not** notice changes to linked non-markdown attachments (PDFs, decks, images captured as stub nodes), and a vault indexed with a non-default `--max-file-size` can skew the diff. So `READY` guarantees the **markdown** is in sync, not necessarily every attachment. When in doubt — or after bulk/attachment changes — a full `ki index .` is the source of truth.
 
 During indexing, the entire vault is removed from Neo4j then rebuilt to reflect what's on the file system currently. The process can last a couple seconds (for dozens of documents) or a few minutes (for thousands of docs).  During re-indexing the the `ki vault` should not be used for search or answering questions.
 
