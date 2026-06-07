@@ -13,6 +13,13 @@ line, up to the next `## [` heading. Keep version sections under that
 exact pattern. Editorial prose is fine; just don't change the heading.
 -->
 
+## [Unreleased]
+
+### Changed
+
+- **Agent skill renamed `ki` → `knowledge-index`.** The bundled skill's frontmatter `name` is now `knowledge-index`, and `ki skill install` writes it to `<agent-config>/skills/knowledge-index/SKILL.md` (previously `.../skills/ki/SKILL.md`) — aligning the skill with the package name and the sibling `neo4j-cli` skill. The `ki` CLI command and the `ki` Python import package are unchanged.
+  - **Migration:** a prior `ki skill install` left the skill at the old `skills/ki/` path. After upgrading, re-run `ki skill install` to write the new `knowledge-index/` skill, then delete the stale `skills/ki/` directory in each agent's config by hand — `ki skill remove` now targets the new path and won't clean up the old one.
+
 ## [0.5.0] — 2026-05-22
 
 ### Added
