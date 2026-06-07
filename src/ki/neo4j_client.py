@@ -16,11 +16,34 @@ from .config import Profile
 from .ingest.queries import SCHEMA_STATEMENTS
 
 
+class _ProfiledDriver:
+    """Wraps a Neo4j driver so every `session()` targets the profile's database.
+
+    When the profile's `database` is None we pass nothing — the driver then
+    uses the server's *home* database, which is correct for standard Neo4j
+    (`neo4j`) and for Aura (the instance DBID). Forcing `database="neo4j"`
+    ourselves would break Aura Free, so we only set it when explicitly known.
+    Everything else (verify_connectivity, close, …) delegates to the driver.
+    """
+
+    def __init__(self, driver, database: str | None):
+        self._driver = driver
+        self._database = database
+
+    def session(self, **kwargs):
+        if self._database and "database" not in kwargs:
+            kwargs["database"] = self._database
+        return self._driver.session(**kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._driver, name)
+
+
 @contextmanager
 def driver_for(profile: Profile):
     driver = GraphDatabase.driver(profile.uri, auth=(profile.user, profile.password))
     try:
-        yield driver
+        yield _ProfiledDriver(driver, profile.database)
     finally:
         driver.close()
 

@@ -33,6 +33,15 @@ ki configure --yes           # non-interactive: auto-pick Local without promptin
 
 `ki configure` probes the backend, writes the profile into `config.yaml`, and makes it the default if it's the first one.
 
+## Which database
+
+A Neo4j instance can hold several databases. `ki` connects to the instance's **home database** unless a profile names a specific one — and crucially it does **not** assume `neo4j`:
+
+- **Local** → pinned to `neo4j` (ki created the container, so it's known).
+- **Existing / Aura** → leave the `Database` prompt **blank** to use the server's home database. That's correct for standard Neo4j *and* Aura, whose home db is the instance DBID — forcing `neo4j` would fail on Aura Free. Only enter a name to target a *specific* non-home database on a multi-db server.
+
+(Stored as `database:` on the profile when set; absent means "home database.")
+
 ## Wrong credentials (`AUTH_ERROR`)
 
 The database is up; the profile's stored credentials are wrong. **Re-run `ki configure`** for that profile to re-enter them — do **not** restart Neo4j. (For Local/Podman the canonical creds are `neo4j` / `password`; see neo4j-podman.md.)

@@ -146,6 +146,7 @@ def _configure_local(name: str) -> Profile:
         user=creds.user,
         password=creds.password,
         source="local-podman",
+        database="neo4j",  # the container's default db; known and safe to pin.
     )
 
 
@@ -179,4 +180,16 @@ def _configure_existing(name: str) -> Profile:
     uri = Prompt.ask("Neo4j URI", default="bolt://localhost:7687")
     user = Prompt.ask("User", default="neo4j")
     password = Prompt.ask("Password", password=True)
-    return Profile(name=name, uri=uri, user=user, password=password, source="existing")
+    # Blank → use the server's home database. Don't default to "neo4j": that
+    # name doesn't exist on Aura Free (home db is the instance DBID).
+    database = Prompt.ask(
+        "Database [blank = server's home database]", default=""
+    ).strip() or None
+    return Profile(
+        name=name,
+        uri=uri,
+        user=user,
+        password=password,
+        source="existing",
+        database=database,
+    )

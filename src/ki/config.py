@@ -17,6 +17,7 @@ profiles:
     user: "neo4j"
     password: "..."
     source: "local-podman"    # one of: local-podman | aura | existing
+    database: "neo4j"         # optional; omit to use the server's home database
   work:
     uri: "neo4j+s://..."
     user: "neo4j"
@@ -45,14 +46,21 @@ class Profile:
     user: str
     password: str
     source: str = "existing"  # local-podman | aura | existing
+    # Which database within the instance. None → use the server's home
+    # database (correct for standard Neo4j *and* Aura, whose home db is the
+    # instance DBID). Never default this to "neo4j" — that breaks Aura Free.
+    database: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "uri": self.uri,
             "user": self.user,
             "password": self.password,
             "source": self.source,
         }
+        if self.database:
+            d["database"] = self.database
+        return d
 
     @classmethod
     def from_dict(cls, name: str, data: dict) -> Profile:
@@ -62,6 +70,7 @@ class Profile:
             user=data["user"],
             password=data["password"],
             source=data.get("source", "existing"),
+            database=data.get("database"),
         )
 
 
