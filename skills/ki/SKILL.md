@@ -6,14 +6,22 @@
 
 ## TRIGGER when
 
-Invoke `ki` when a user asks to:
+Reach for `ki` whenever the work involves a **directory of markdown** (notes, docs, a wiki, a "second brain") — it's your default read/search tool there:
 
-- ...(create a knowledge base??)
-- View, Summerize & Navigate
-- Search
-- Get (Retrieve) - 
-- Index
+- **Set up / maintain** a knowledge base on a folder (index it, keep it in sync).
+- **Search / find** across the corpus — *"what did I write about X?"*, *"find the note on Y."*
+- **Navigate / summarize** — *"what's in this vault?"*, its structure or coverage.
+- **Get / read** specific sections or documents without opening whole files.
+- **Answer questions grounded** in the user's notes/docs.
+- **Vault-wide / structural / inference** questions — what's load-bearing, how things connect.
+
+Rule of thumb: any time you'd otherwise `grep` / `cat` / read across a folder of `.md`, use `ki` instead.
+
 ## Do Not Use When
+
+- The source **isn't markdown** and isn't being converted — `ki` indexes `.md` only (see the note under *On First Use*).
+- **Source code or non-prose** — use `grep` / `ripgrep` / editor tooling; `ki` models prose structure (headings, links), not code.
+- A **single known file or quick one-off read** where indexing isn't worth it — just `Read` it.
 
 ## What `ki` is
 
@@ -31,9 +39,6 @@ It's faster and far cheaper in tokens than raw file ops over a markdown corpus. 
 - **Index** — the knowledge graph in Neo4j (documents, sections, links) built from a vault's markdown. Rebuilt with `ki index`.
 - **URI** — the address of a vault / document / section in the index. Copy it from `ki outline` or search results and feed it into `ki get` / `ki outline`. URIs are hierarchical paths, so trim a trailing segment to get an ancestor — no query needed (drop `/h2` → parent section, the whole `#…` → owning doc, `/foo.md` → folder).
 - **`config.yaml`** — `~/.config/ki/config.yaml`; holds profiles + credentials. Does **not** track vaults — Neo4j does.
-
-## SKIP when
-...?
 
 ## On First Use In Session
 
