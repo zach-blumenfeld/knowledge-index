@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import click
@@ -37,6 +38,7 @@ def cmd_get(
     profile: str | None,
     get_type: str,
     as_json: bool,
+    directory: Path | None = None,
 ) -> int:
     if get_type not in VALID_TYPES:
         raise click.ClickException(
@@ -49,7 +51,7 @@ def cmd_get(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = resolve_profile(cfg, profile)
+    prof = resolve_profile(cfg, profile, start_dir=directory)
 
     results: list[dict[str, Any]] = []
     errors: list[tuple[str, str]] = []  # (uri, message)

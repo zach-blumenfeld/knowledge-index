@@ -13,6 +13,7 @@ queries.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import click
@@ -49,12 +50,13 @@ def cmd_outline(
     at: str | None,
     depth: int,
     full: bool,
+    directory: Path | None = None,
 ) -> int:
     cfg_path = find_config_path()
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = resolve_profile(cfg, profile)
+    prof = resolve_profile(cfg, profile, start_dir=directory)
 
     root_uri = _parse_at(at)
 

@@ -53,6 +53,22 @@ def main(verbose: int) -> None:
     logging.basicConfig(level=max(level, logging.DEBUG), format="%(levelname)s %(message)s")
 
 
+def _directory_option(f):
+    """Shared `-C/--directory` for the read commands (outline/tree/search/get).
+
+    Resolves the vault's profile as if the command were run from <dir> (git's
+    `-C`). Defaults to the current directory. Scope of *results* is unchanged —
+    this only relocates which vault's bound profile is used.
+    """
+    return click.option(
+        "-C", "--directory", "directory",
+        type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+        default=None,
+        help="Resolve the vault's profile as if run from this directory "
+             "(default: current directory).",
+    )(f)
+
+
 @main.command("configure", help="Set up a Neo4j connection profile.")
 @click.option("--profile", "profile_name", default=None, help="Profile name to write")
 @click.option(
@@ -169,6 +185,7 @@ def status_cmd(
 )
 @click.argument("query")
 @click.option("--profile", default=None)
+@_directory_option
 @click.option(
     "--types", "types_csv",
     default="document,section,vault",
@@ -184,6 +201,7 @@ def status_cmd(
 def search_cmd(
     query: str,
     profile: str | None,
+    directory: Path | None,
     types_csv: str,
     k: int,
     as_json: bool,
@@ -195,6 +213,7 @@ def search_cmd(
             types_csv=types_csv,
             k=k,
             as_json=as_json,
+            directory=directory,
         )
     )
 
@@ -218,6 +237,7 @@ def _outline_options(f):
         "--profile", default=None,
         help="Profile name (overrides KI_PROFILE / default)",
     )(f)
+    f = _directory_option(f)
     f = click.argument("uri", required=False)(f)
     return f
 
@@ -228,8 +248,12 @@ def _run_outline(
     profile: str | None,
     depth: int,
     full: bool,
+    directory: Path | None,
 ) -> None:
-    sys.exit(cmd_outline(profile=profile, at=(uri or at_flag), depth=depth, full=full))
+    sys.exit(cmd_outline(
+        profile=profile, at=(uri or at_flag), depth=depth, full=full,
+        directory=directory,
+    ))
 
 
 @main.command(
@@ -243,10 +267,11 @@ def outline_cmd(
     uri: str | None,
     at_flag: str | None,
     profile: str | None,
+    directory: Path | None,
     depth: int,
     full: bool,
 ) -> None:
-    _run_outline(uri, at_flag, profile, depth, full)
+    _run_outline(uri, at_flag, profile, depth, full, directory)
 
 
 @main.command(
@@ -260,10 +285,11 @@ def tree_cmd(
     uri: str | None,
     at_flag: str | None,
     profile: str | None,
+    directory: Path | None,
     depth: int,
     full: bool,
 ) -> None:
-    _run_outline(uri, at_flag, profile, depth, full)
+    _run_outline(uri, at_flag, profile, depth, full, directory)
 
 
 @main.command(
@@ -273,6 +299,7 @@ def tree_cmd(
 )
 @click.argument("uris", nargs=-1, required=True)
 @click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+@_directory_option
 @click.option(
     "--type", "get_type",
     type=click.Choice(["path", "content", "full"]),
@@ -285,6 +312,7 @@ def tree_cmd(
 def get_cmd(
     uris: tuple[str, ...],
     profile: str | None,
+    directory: Path | None,
     get_type: str,
     as_json: bool,
 ) -> None:
@@ -294,6 +322,7 @@ def get_cmd(
             profile=profile,
             get_type=get_type,
             as_json=as_json,
+            directory=directory,
         )
     )
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import click
@@ -80,6 +81,7 @@ def cmd_search(
     types_csv: str,
     k: int,
     as_json: bool,
+    directory: Path | None = None,
 ) -> int:
     types = _parse_types(types_csv)
 
@@ -87,7 +89,7 @@ def cmd_search(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = resolve_profile(cfg, profile)
+    prof = resolve_profile(cfg, profile, start_dir=directory)
 
     rows: list[dict[str, Any]] = []
     with driver_for(prof) as driver, driver.session() as session:
