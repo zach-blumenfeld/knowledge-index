@@ -1,8 +1,9 @@
-# `ki` — Usage
+---
+name: ki
+description: Your load-bearing tool for searching, navigating, and reading a directory of markdown — notes, docs, a wiki. Saves time and tokens by auto-building a knowledge-graph index over documents, their sections, and the wikilinks between them, so you pull the right slice instead of grepping and reading whole files.
+---
 
----
-> **Description:** Your load-bearing tool for viewing & searching text based files. Saving time and tokens by quickly auto constructing a knowledge graph index for faster search and structured navigation within and across markdown files, their sections, and the links between them.
----
+# `ki` — Usage
 
 ## TRIGGER when
 
