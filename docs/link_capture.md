@@ -64,7 +64,7 @@ A markdown link to a non-md path. ki tries to resolve the path on disk; the outc
    - Relative path (`./deck.pptx`, `../foo.png`) → resolve against the source markdown file's directory.
 3. Compute the absolute on-disk path (`.resolve()`).
 4. Branch:
-   - **Inside the vault root and the file exists on disk** → MERGE a stub `:Document` (`sourceType=LOCAL_FILE`) with `path`, `fileHash = sha256(file bytes)`, and `displayName = first link text seen`. Materialize any missing parent `:Folder` chain. Add a `:LINKS_TO` edge from the source.
+   - **Inside the vault root and the file exists on disk** → MERGE a stub `:Document` (`sourceType=LOCAL_STUB`) with `path`, `fileHash = sha256(file bytes)`, and `displayName = first link text seen`. Materialize any missing parent `:Folder` chain. Add a `:LINKS_TO` edge from the source.
    - **Inside the vault root but the file does NOT exist on disk** → log a warning, skip. No node created, no edge emitted. The link text still lives in the source section's content for fulltext recovery if the file shows up later.
    - **Outside the vault root** → treat as external. MERGE an external `:Document` with URI `file:///absolute/path` and `displayName = first link text seen`. No `path`, no `fileHash`, no `HAS` edge. (Per #37 design — vault-escaping links land in the external bucket rather than the broken-link bucket.)
 

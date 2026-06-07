@@ -64,12 +64,20 @@ Inherits the v2 connector spec (§3) and adds:
 
 Folder-level metadata (Obsidian folder notes, Hugo `_index.md`, etc.) is still captured by indexing whatever Document lives at that path — the `:Folder` node itself stays intentionally property-poor.
 
-**Three Document kinds (0.4.0 / #37).** A `:Document` represents one of three real-world things, distinguished by `sourceType` and property fill — not by label. `LINKS_TO` edges stay polymorphic-free (`Document|Section → Document|Section`).
+**Four Document kinds, four `sourceType`s (0.4.0 / #37).** A `:Document` represents one of four real-world things, distinguished by `sourceType` and property fill — not by label. `LINKS_TO` edges stay polymorphic-free (`Document|Section → Document|Section`).
+
+`sourceType` encodes **what ki did with the thing**, not the file's extension:
+
+- `LOCAL_FILE` — a primary document ki **walked the disk for and parsed** into sections/content. Today that's `.md` only, but the value is deliberately extension-agnostic: when ki learns to parse other formats, those parsed docs are `LOCAL_FILE` too. This is the set "is the index in sync with disk?" (`ki status` STALE) reasons over.
+- `LOCAL_STUB` — a real on-disk file ki only **stubbed** because a markdown link points at it (`[Slides](./deck.pptx)`). On disk, with a `path` + `fileHash`, but never parsed (`content = null`). Not part of the disk walk — discovered link-side.
+- `URL_LINK` / `WIKILINK_UNRESOLVED` — not on disk at all (see below).
+
+The `LOCAL_FILE` / `LOCAL_STUB` split keeps "primary parsed doc" an explicit property rather than a `.md`-suffix proxy, so query sites never hard-code an extension list.
 
 | Kind                       | `sourceType`           | `uri`                              | `path`                  | `content`     | `fileHash`        | HAS-parent              |
 |----------------------------|------------------------|------------------------------------|-------------------------|---------------|-------------------|--------------------------|
 | Internal markdown          | `LOCAL_FILE`           | `<vaultId>/path/to/foo.md`         | absolute POSIX          | parsed body   | sha256 of bytes   | parent Folder (or Vault) |
-| **Internal non-md stub**   | `LOCAL_FILE`           | `<vaultId>/path/to/slides.pptx`    | absolute POSIX          | `null`        | sha256 of bytes   | parent Folder (or Vault) |
+| **Internal non-md stub**   | `LOCAL_STUB`           | `<vaultId>/path/to/slides.pptx`    | absolute POSIX          | `null`        | sha256 of bytes   | parent Folder (or Vault) |
 | **External URL / file**    | `URL_LINK`             | `https://...` or `file:///...`     | `null`                  | `null`        | `null`            | **none** — outside the vault tree |
 | Unresolved wikilink target | `WIKILINK_UNRESOLVED`  | `<vaultId>/<wikilink-name>`        | `null`                  | `null`        | `null`            | parent (vault that referenced it) |
 
@@ -90,7 +98,7 @@ Internal non-md stubs are discovered link-driven (`[Slides](./deck.pptx)`) — t
 | `frontmatter`          | string       | no       | JSON-serialised unknown frontmatter keys.                                                                                                                                                       |
 | `frontmatterCreatedAt` | datetime     | no       | If frontmatter declares `created:` / `date:`.                                                                                                                                                   |
 | `content`              | `string` | No       | Preamble text (any text before the first heading in the file) followed by `uri:` references to direct top-level sections. Shallow content + child pointers — see §4 Content Construction Rules. |
-| `sourceType`           | enum         | yes      | `LOCAL_FILE` \| `URL_LINK` \| `WIKILINK_UNRESOLVED`.                                                                                                                                            |
+| `sourceType`           | enum         | yes      | `LOCAL_FILE` (parsed primary doc) \| `LOCAL_STUB` (on-disk file stubbed via a link, not parsed) \| `URL_LINK` \| `WIKILINK_UNRESOLVED`.                                                          |
 | `firstLoadedAt`        | `datetime` | yes      | Timestamp when the document was ingested. Set on CREATE only (not overwritten on re-ingest).                                                                                                    |
 | `lastLoadedAt`         | datetime | yes      | updated on each ingest for vault.                                                                                                                                                               |
 

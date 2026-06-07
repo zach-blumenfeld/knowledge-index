@@ -187,7 +187,7 @@ SET ld += $loadProps,
 
 # 4.3 step 5.5 — stub :Document upsert for internal non-md files (e.g.
 # `[Slides](./deck.pptx)`). Same node-property shape as the main Document
-# (name, displayName, path, fileHash) but with sourceType = LOCAL_FILE and
+# (name, displayName, path, fileHash) but with sourceType = LOCAL_STUB and
 # no content / frontmatter / aliases-from-frontmatter (aliases are filled
 # from link-text via WRITE_DISPLAY_TEXT_ALIASES). The parent HAS edge is
 # written separately via WRITE_TREE_EDGES — same as md docs.
@@ -201,7 +201,7 @@ WRITE_STUB_DOCUMENTS = """
 UNWIND $stubDocRows AS row
 MERGE (d:Document {uri: row.uri})
 ON CREATE SET d.firstLoadedAt = $now,
-              d.sourceType = 'LOCAL_FILE',
+              d.sourceType = 'LOCAL_STUB',
               d.displayName = row.displayName
 SET d.name = row.name,
     d.path = row.path,
