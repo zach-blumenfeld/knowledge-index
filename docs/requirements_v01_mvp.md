@@ -162,7 +162,7 @@ ki nuke --dry-run / --yes / --chunk-size N
 $ ki configure
 No Neo4j connection found. Set one up?
 
-  1) Local (neo4j w/ podman) → runs `neo4j:latest` in a local Podman container (APOC + GenAI plugins); full runbook at `references/neo4j-podman.md`
+  1) Local (neo4j w/ podman) → runs `neo4j:latest` in a local Podman container (APOC + GenAI plugins); full runbook at `skills/knowledge-index/references/neo4j-podman.md`
      Best for: solo work on this laptop
   2) Aura                    → wraps `neo4j-cli aura create` (cloud — billable; creates a real instance) see https://github.com/neo4j-labs/neo4j-cli
      Best for: sharing an index across machines or a team
@@ -172,14 +172,14 @@ No Neo4j connection found. Set one up?
 Choice [1]:
 ```
 
-Option 1 shells out to `podman` (canonical container `neo4j-ki`, named volume `neo4j-ki-data`, `--restart unless-stopped`); option 2 shells out to `neo4j-cli`. Neither reimplements lifecycle / version pinning / health checks. The Podman path is preferred over a raw `docker run` because (a) Podman is rootless by default, (b) the named volume + `--restart` policy give data persistence and reboot-survival without systemd plumbing, and (c) the agent runbook in `references/neo4j-podman.md` covers recovery for the three failure modes (container stopped / removed / volume wiped) the agent has to handle on auto-mode.
+Option 1 shells out to `podman` (canonical container `neo4j-ki`, named volume `neo4j-ki-data`, `--restart unless-stopped`); option 2 shells out to `neo4j-cli`. Neither reimplements lifecycle / version pinning / health checks. The Podman path is preferred over a raw `docker run` because (a) Podman is rootless by default, (b) the named volume + `--restart` policy give data persistence and reboot-survival without systemd plumbing, and (c) the agent runbook in `skills/knowledge-index/references/neo4j-podman.md` covers recovery for the three failure modes (container stopped / removed / volume wiped) the agent has to handle on auto-mode.
 
 ## Agent auto-mode behavior
 
 **Principle: autonomy ≠ permission to do irreversible things on someone's behalf.** Auto-mode lifts UX friction; it doesn't lift agent judgment about real-world side effects.
 
 **Auto without asking** (reversible, local, no cost):
-- Bring up the Local Neo4j container via `podman` (the `ki configure → Local` path; reversible via `podman stop neo4j-ki && podman rm neo4j-ki && podman volume rm neo4j-ki-data`). See `references/neo4j-podman.md`.
+- Bring up the Local Neo4j container via `podman` (the `ki configure → Local` path; reversible via `podman stop neo4j-ki && podman rm neo4j-ki && podman volume rm neo4j-ki-data`). See `skills/knowledge-index/references/neo4j-podman.md`.
 - Write `~/.config/ki/config.yaml` with the resulting credentials.
 - Write `.ki/vault.yaml` markers (auto-create with `uri:` only — leave any user-authored fields alone).
 - Index the vault.
@@ -194,7 +194,7 @@ Option 1 shells out to `podman` (canonical container `neo4j-ki`, named volume `n
 
 **Surface even on auto-mode**:
 - One-line after-the-fact notice: *"Started Neo4j locally via podman; credentials in `~/.config/ki/config.yaml`."* Transparency, not approval-gating.
-- Errors (port `:7687` in use, `podman` not installed). Auto-mode should not mean silent failure — pause and surface the install one-liner / port-collision diagnosis from `references/neo4j-podman.md`.
+- Errors (port `:7687` in use, `podman` not installed). Auto-mode should not mean silent failure — pause and surface the install one-liner / port-collision diagnosis from `skills/knowledge-index/references/neo4j-podman.md`.
 - The fact that I made a local-vs-cloud decision, so the user can override.
 
 **Preference learning**: if the user says once "always default to Aura for ki" or "never use cloud Neo4j," save a feedback memory and honor it across sessions without re-asking.
@@ -232,7 +232,7 @@ Documents, sections, and edges all use the standard `UNWIND` pattern — driver-
 - Single vault: up to **10,000 markdown files** / **1 GB of content**.
 - Single document: up to **1 MB** / **~10,000 sections**. Files above the threshold are skipped with a warning, not silently truncated (see lever 6).
 - Re-index of an **unchanged** vault: **< 5 seconds** (fileHash skip makes this near-instant).
-- Initial index of a **10k-document vault**: **< 5 minutes** on a developer laptop against local Neo4j (Podman container per `references/neo4j-podman.md`).
+- Initial index of a **10k-document vault**: **< 5 minutes** on a developer laptop against local Neo4j (Podman container per `skills/knowledge-index/references/neo4j-podman.md`).
 
 ### Neo4j heap sizing
 
@@ -245,7 +245,7 @@ The canonical Local-Podman container ships with **`heap_max__size=1G` + `pagecac
 
 Always set heap and page cache **together** — Neo4j's pre-flight refuses to start if `heap + pagecache + native overhead > container memory`. Setting only heap leaves the page cache to auto-tune, which can blow the budget on a constrained Podman VM and crash-loop the container.
 
-On macOS, the Podman machine's RAM is the outer constraint: `podman machine init --memory 4096` (4 GB) leaves enough headroom for the canonical ~2 GB Neo4j commit plus container overhead. See `references/neo4j-podman.md` *Preflight* and *Resizing the Podman machine*.
+On macOS, the Podman machine's RAM is the outer constraint: `podman machine init --memory 4096` (4 GB) leaves enough headroom for the canonical ~2 GB Neo4j commit plus container overhead. See `skills/knowledge-index/references/neo4j-podman.md` *Preflight* and *Resizing the Podman machine*.
 
 ### Levers (in order of impact)
 

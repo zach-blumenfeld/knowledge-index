@@ -12,4 +12,4 @@ See `AGENTS.md` for the canonical contributor instructions — everything in the
   3. The implementation under `src/ki/`
   Drift between these is the #1 source of agent-routing bugs.
 - If a user asks Claude Code to *use* `ki` to index or search their notes, route via `skills/knowledge-index/SKILL.md` (the user-facing skill spec), not via this file.
-- The `neo4j-cli` skill is the natural dependency for the `ki configure → Aura` path. The Local path is Podman-backed — `src/ki/neo4j_podman.py` shells out to `podman` per `references/neo4j-podman.md` (which is the source of truth for the container/volume/image/plugin choices). Don't reimplement either.
+- The `neo4j-cli` skill is the natural dependency for the `ki configure → Aura` path. The Local path is Podman-backed — `src/ki/neo4j_podman.py` shells out to `podman` per `skills/knowledge-index/references/neo4j-podman.md` (which is the source of truth for the container/volume/image/plugin choices). Don't reimplement either.

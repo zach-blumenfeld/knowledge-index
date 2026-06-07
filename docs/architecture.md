@@ -142,7 +142,7 @@ Vaults reference profiles by **name**. Credentials never live inside a vault, so
 
 `ki configure` is an interactive wizard with three paths:
 
-- **`1) Local (neo4j w/ podman)`** — shells out to `podman` to run `neo4j:latest` in the canonical container (`neo4j-ki`, named volume `neo4j-ki-data`, `--restart unless-stopped`, plugins `apoc` + `genai`). The full runbook + recovery procedures live in `references/neo4j-podman.md`. `src/ki/neo4j_podman.py` mirrors the canonical values — both must agree.
+- **`1) Local (neo4j w/ podman)`** — shells out to `podman` to run `neo4j:latest` in the canonical container (`neo4j-ki`, named volume `neo4j-ki-data`, `--restart unless-stopped`, plugins `apoc` + `genai`). The full runbook + recovery procedures live in `skills/knowledge-index/references/neo4j-podman.md`. `src/ki/neo4j_podman.py` mirrors the canonical values — both must agree.
 - **`2) Aura`** — shells out to `neo4j-cli aura create` (billable cloud resource).
 - **`3) Existing`** — prompts for URI + credentials.
 
@@ -173,7 +173,7 @@ A reading order if you want to get up to speed:
 5. **`docs/ingest-cypher.md`** + **`docs/retrieval-queries.md`** — the working Cypher. `src/ki/ingest/queries.py` and `src/ki/search/queries.py` lift from these.
 6. **`docs/index_rm_behavior.md`** + **`docs/link_capture.md`** — the v0.4.0 sync model (`ki rm` vault-only, `ki index` re-index = nuke + rebuild) and the link-capture matrix (three Document kinds). Newest specs; not in the original requirements doc.
 7. **`skills/knowledge-index/SKILL.md`** — the agent-as-user contract. When changing CLI shape, update this in the same PR.
-8. **`references/neo4j-podman.md`** — the Local Neo4j runbook. Source of truth for the Podman container/volume/image/plugin choices that `src/ki/neo4j_podman.py` mirrors.
+8. **`skills/knowledge-index/references/neo4j-podman.md`** — the Local Neo4j runbook. Source of truth for the Podman container/volume/image/plugin choices that `src/ki/neo4j_podman.py` mirrors.
 
 ## Deferred — what's not wired and the closest workaround
 

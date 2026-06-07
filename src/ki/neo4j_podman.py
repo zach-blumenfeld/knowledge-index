@@ -1,7 +1,7 @@
 """Thin wrapper around `podman` for the `ki configure → Local` path.
 
 The full runbook (commands, recovery, teardown) lives in
-`references/neo4j-podman.md` — this module mirrors the same canonical values
+`skills/knowledge-index/references/neo4j-podman.md` — this module mirrors the same canonical values
 (container name, volume, image, plugins, auth) so the doc and the code agree.
 
 Surface kept intentionally narrow:
@@ -76,7 +76,7 @@ def is_installed() -> bool:
 def _require() -> None:
     if not is_installed():
         raise PodmanNotInstalled(
-            "`podman` is not installed. See references/neo4j-podman.md "
+            "`podman` is not installed. See skills/knowledge-index/references/neo4j-podman.md "
             "(Preflight) for install steps — on macOS: `brew install podman` "
             "then `podman machine init && podman machine start`."
         )
@@ -161,7 +161,7 @@ def _wait_for_ready(timeout: int = 120) -> None:
     else:
         raise PodmanError(
             f"Neo4j did not open :{BOLT_PORT} within {timeout}s. "
-            "Check `podman logs neo4j-ki` and references/neo4j-podman.md."
+            "Check `podman logs neo4j-ki` and skills/knowledge-index/references/neo4j-podman.md."
         )
     # Phase 2: wait for actual query readiness.
     while time.monotonic() < deadline:
@@ -171,7 +171,7 @@ def _wait_for_ready(timeout: int = 120) -> None:
     raise PodmanError(
         f"Neo4j opened :{BOLT_PORT} but is not yet serving queries after "
         f"{timeout}s. Check `podman logs neo4j-ki` and "
-        "references/neo4j-podman.md."
+        "skills/knowledge-index/references/neo4j-podman.md."
     )
 
 
@@ -205,7 +205,7 @@ def ensure_running(*, wait_seconds: int = 120) -> PodmanCredentials:
             f"Port :{BOLT_PORT} is already in use by something other than the "
             f"`{CONTAINER_NAME}` container. Either stop that process, or use "
             "`ki configure → 3) Existing` to point at it. See "
-            "references/neo4j-podman.md (Preflight)."
+            "skills/knowledge-index/references/neo4j-podman.md (Preflight)."
         )
 
     proc = _run(

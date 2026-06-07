@@ -34,6 +34,12 @@ def test_read_bundled_skill_dev_fallback_resolves_to_repo_path():
     assert skill_mod.read_bundled_skill() == canonical.read_text(encoding="utf-8")
 
 
+def test_read_bundled_references_includes_the_runbooks():
+    refs = skill_mod.read_bundled_references()
+    assert {"configure-profile.md", "neo4j-troubleshoot.md", "neo4j-podman.md"} <= set(refs)
+    assert refs["neo4j-podman.md"].strip()  # non-empty content
+
+
 # --- catalog ----------------------------------------------------------------
 
 
@@ -102,6 +108,10 @@ def test_install_writes_skill_for_every_agent(agent, fake_home):
     target = _expected_skill_path(fake_home, agent)
     assert target.is_file(), f"{agent}: expected {target}"
     assert target.read_text(encoding="utf-8") == skill_mod.read_bundled_skill()
+    # References ship alongside SKILL.md in a sibling references/ dir.
+    assert (target.parent / "references" / "neo4j-podman.md").is_file(), (
+        f"{agent}: references not shipped"
+    )
 
 
 def test_install_case_insensitive_agent_name(fake_home):

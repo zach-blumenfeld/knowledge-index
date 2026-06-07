@@ -48,7 +48,7 @@ def test_render_local_podman_points_at_canonical_container_and_runbook():
     assert "podman start neo4j-ki" in out
     assert "podman ps -a --filter name=neo4j-ki" in out
     # Runbook pointer — same one SKILL.md sends agents to.
-    assert "references/neo4j-podman.md" in out
+    assert "skills/knowledge-index/references/neo4j-podman.md" in out
     # Count carries through into the message.
     assert "3043" in out and "3269" in out
     # Generic hints should NOT show up for the Podman-specific path.

@@ -54,6 +54,7 @@ packages = ["src/ki"]
 # (`skills/knowledge-index/SKILL.md`) and is also the rendered file on GitHub.
 [tool.hatch.build.targets.wheel.force-include]
 "skills/knowledge-index/SKILL.md" = "ki/_resources/SKILL.md"
+"skills/knowledge-index/references" = "ki/_resources/references"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/ki", "skills/", "README.md", "LICENSE", "docs/"]

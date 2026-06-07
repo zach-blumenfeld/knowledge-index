@@ -9,7 +9,7 @@ install `ki`, wire into Claude Code, ask Claude what's in your notes:
 
 ```bash
 curl -sSfL https://knowledge-index.ai/install.sh | bash   # installs ki + neo4j-cli + agent skills
-ki configure                                              # one-time: pick Local (Podman), Aura, or an Existing Neo4j — see `references/neo4j-podman.md` for the Local path
+ki configure                                              # one-time: pick Local (Podman), Aura, or an Existing Neo4j — see `skills/knowledge-index/references/neo4j-podman.md` for the Local path
 ```
 
 Then in Claude Code:
@@ -71,7 +71,7 @@ Coding agents can shell out to `ki` directly. `ki skill install` drops the bundl
 curl -sSfL https://knowledge-index.ai/install.sh | bash
 ki --version
 
-# 2. One-time Neo4j connection. Three paths: Local (Podman — see references/neo4j-podman.md),
+# 2. One-time Neo4j connection. Three paths: Local (Podman — see skills/knowledge-index/references/neo4j-podman.md),
 #    Aura (billable cloud), or Existing (point at a Neo4j you already run).
 ki configure
 
@@ -138,7 +138,7 @@ Not yet supported. Required MCP server.  On Roadmap
 
 `ki configure` offers three paths: **Local** (Podman), **Aura** (billable cloud), **Existing** (point at a URI you already have).
 
-**Local** runs `neo4j:latest` in a Podman container with the APOC + GenAI plugins enabled, a named volume for persistence, and `--restart unless-stopped`. The full agent-followable runbook — preflight, bring-up, recovery for the three failure modes (container stopped / removed / volume wiped), and teardown — lives in [`references/neo4j-podman.md`](references/neo4j-podman.md). `ki configure → Local` shells out to that path automatically; if you'd rather read what it does first, the runbook is the source of truth.
+**Local** runs `neo4j:latest` in a Podman container with the APOC + GenAI plugins enabled, a named volume for persistence, and `--restart unless-stopped`. The full agent-followable runbook — preflight, bring-up, recovery for the three failure modes (container stopped / removed / volume wiped), and teardown — lives in [`skills/knowledge-index/references/neo4j-podman.md`](skills/knowledge-index/references/neo4j-podman.md). `ki configure → Local` shells out to that path automatically; if you'd rather read what it does first, the runbook is the source of truth.
 
 Prerequisite: `podman` on PATH. On macOS:
 
@@ -156,7 +156,7 @@ On Linux: `apt install podman` / `dnf install podman` / etc. (no `machine` step 
 
 ### No vector search yet — fulltext only
 
-`ki search` runs against the `content_search` fulltext index over `Document|Section|Vault.{displayName, content, aliases, description}`. There are no vector indexes or embeddings in the graph yet; hybrid (fulltext + vector) is on the v2 list. The `genai` plugin is already enabled in the Podman setup (see `references/neo4j-podman.md`) for the upgrade path, so when this lands existing vaults won't need to be re-ingested.
+`ki search` runs against the `content_search` fulltext index over `Document|Section|Vault.{displayName, content, aliases, description}`. There are no vector indexes or embeddings in the graph yet; hybrid (fulltext + vector) is on the v2 list. The `genai` plugin is already enabled in the Podman setup (see `skills/knowledge-index/references/neo4j-podman.md`) for the upgrade path, so when this lands existing vaults won't need to be re-ingested.
 
 Of the ten queries defined in [`docs/retrieval-queries.md`](docs/retrieval-queries.md), three are wired into the CLI today; the rest exist as Cypher but aren't reachable through `ki search` yet:
 
