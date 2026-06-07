@@ -21,7 +21,7 @@ A command-line tool that builds a queryable **knowledge graph index** over a dir
 
 ## Why use `ki`
 
-It's faster and far cheaper in tokens than raw file ops over a markdown corpus. Instead of grepping and reading entire files into context, you query an index and pull just the sections you need — structure (headings, containment, links) is preserved, so retrieval is targeted. See *When to Use Ki* for the specific jobs it beats file ops at.
+It's faster and far cheaper in tokens than raw file ops over a markdown corpus. Instead of grepping and reading entire files into context, you query an index and pull just the sections you need — structure (headings, containment, links) is preserved, so retrieval is targeted. See *Usage* for the specific jobs it beats file ops at.
 
 ## Key Terms
 
@@ -29,7 +29,7 @@ It's faster and far cheaper in tokens than raw file ops over a markdown corpus. 
 - **Vault** — a directory `ki` has marked (`.ki/vault.yaml`) and indexed. The unit of indexing and sync; identified by a slug **uri**, and **bound to one profile**.
 - **Profile** — a named Neo4j database (connection + credentials in `config.yaml`) that holds the graphs for one or more vaults. A privacy/isolation boundary (e.g. personal vs work).
 - **Index** — the knowledge graph in Neo4j (documents, sections, links) built from a vault's markdown. Rebuilt with `ki index`.
-- **URI** — the address of a vault / document / section in the index. Copy it from `ki outline` or search results and feed it into `ki get` / `ki outline`.
+- **URI** — the address of a vault / document / section in the index. Copy it from `ki outline` or search results and feed it into `ki get` / `ki outline`. URIs are hierarchical paths, so trim a trailing segment to get an ancestor — no query needed (drop `/h2` → parent section, the whole `#…` → owning doc, `/foo.md` → folder).
 - **`config.yaml`** — `~/.config/ki/config.yaml`; holds profiles + credentials. Does **not** track vaults — Neo4j does.
 
 ## Dependencies
@@ -110,7 +110,7 @@ ALWAYS start with the outline — a table-of-contents view that saves considerab
 ki outline <vault uri> --full --token-limit 20000
 ```
 
-Then search / get (see *When to Use Ki*).
+Then search / get (see *Search & Retrieve* under *Usage*).
 
 
 ## Usage
@@ -228,102 +228,3 @@ During indexing, the entire vault is removed from Neo4j then rebuilt to reflect 
 4. **Cold-starting Neo4j just to look around** — spinning up a stopped profile's instance only to enumerate vaults.
 5. **Switching vault or profile mid-task without confirming** — work one vault + one profile per session; confirm any switch with the user.
 6. **Querying a vault while it's re-indexing**, or **fabricating URIs** — copy URIs from `ki outline` / `ki search`; never guess them.
-
-
-
-
-
-
-
-
-
-
-### Picking a search mode
-
-`ki search` runs across **all three** node types by default (`:Document`, `:Section`, `:Vault`) and returns the top-`k` results overall, sorted by fulltext score. Narrow with `--types` when you know which granularity you want:
-
-| User intent                                              | Command                                                | Underlying query |
-|----------------------------------------------------------|--------------------------------------------------------|------------------|
-| *"What did I write about X?"* (cast a wide net)          | `ki search "X"` (default — all three types)            | B.1 + B.2 + B.11 merged by score |
-| *"What did I write about X?"* (finest grain only)        | `ki search "X" --types section`                        | B.2 — section content fulltext |
-| *"Find the doc called Y"* / *"the note where I…"*        | `ki search "Y" --types document --k 5`                 | B.1 — document title fulltext  |
-| *"Which of my vaults is about X?"* (cross-vault routing) | `ki search "X" --types vault --k 5`                    | B.11 — vault fulltext over `description` |
-| *"What's related to this doc?"* / *"what links to X?"*   | (not wired — see *Capabilities not yet wired*)         | — |
-
-Flag mechanics:
-- `--types` is a comma-separated subset of `{document,section,vault}`. Omit to default to all three. Combine arbitrarily: `--types section,vault`.
-- `--k N` is the **total** result cap across all selected types — not per-type. Each underlying query is run with the same `k`; results are merged, sorted by score, and capped to `N` rows total.
-- `--json` emits a machine-readable list. The list is heterogeneous — each row keeps its native B.1 / B.2 / B.11 shape plus a `label` field (`"Document"` / `"Section"` / `"Vault"`). Key off `label` (or off the `document_uri` / `section_uri` / `vault_uri` field) to identify each row's type.
-- `--profile <name>` overrides the default Neo4j connection profile (also via `KI_PROFILE=<name>`).
-
-Plain-text output uses the same `T` letter convention as `ki outline`: `V`=Vault, `D`=Document, `S`=Section. The `uri` column carries the load-bearing identifier you can paste into `ki get <uri>` or `ki outline <uri>`.
-
-**Document results now include external URLs and internal non-md files** (#37). A markdown link like `[Launch blog](https://neo4j.com/blog/...)` creates an external `:Document` keyed by the URL itself; `[Slides](./deck.pptx)` creates an internal stub `:Document` (`sourceType=LOCAL_FILE`, no content, just metadata + fileHash). `ki search --types document` and `ki outline` surface all three Document kinds (internal md, internal non-md stub, external URL). `ki get <external-url>` works and returns the external Document's metadata; the URI is the URL itself — no slug prefix.
-
-**Cross-type score caveat.** Fulltext scores are not strictly comparable across queries (different term-frequency normalization per set size), so the merged ranking is a heuristic. If a query feels off, re-run with `--types <one>` to see the native ranking for that type alone.
-
-The `--type neighbors` flag (1-hop `LINKS_TO` traversal via B.3) was removed in 0.4.0. To see what a specific doc/section links to, use `ki outline "<uri>" --depth 1` — outbound `LINKS_TO` edges render as horizontal branches by default. For backlinks ("what links *to* this?"), there is no CLI surface yet — see [#35](https://github.com/zach-blumenfeld/knowledge-index/issues/35).
-
-
-```bash
-ki outline                             # render every indexed vault, depth 4
-ki outline "my-notes"                  # render one specific vault (URI is the slug)
-ki outline "Vault:my-notes"            # same, with the Label: prefix (issue convention)
-ki outline "<doc-uri>" --depth 2       # render a doc and its section subtree
-ki outline --full                      # also show vault description sub-lines
-
-# Back-compat: the v0.4.x form keeps working.
-ki outline --at "<uri>" --depth 2      # `--at` is now a fallback for the positional URI
-ki tree "<uri>" --depth 2              # `ki tree` is a permanent alias for `ki outline`
-```
-
-```bash
-ki get "<uri>"                          # default --type content
-ki get "<uri>" --type path              # metadata only — read the file via `path`
-ki get "<uri>" --type content           # node's stored content (preamble + child URI pointers per Rule 1)
-ki get "<uri>" --type full              # reconstructed reading-order body (B.4 for Documents, B.14 for Sections)
-ki get "<uri-a>" "<uri-b>" "<uri-c>"    # batch — multiple URIs in one invocation
-ki get "<uri>" --json                   # machine-readable; always includes `path` (from #40)
-```
-**Pick `--type` by intent:**
-
-| You want                                                              | Flag                 |
-|-----------------------------------------------------------------------|----------------------|
-| Just the metadata so you can `Read` the file yourself                 | `--type path`        |
-| The node's own content + URI handles to drill into children           | `--type content` (default) |
-| The reconstructed full reading-order body in one call                 | `--type full`        |
-
-`--type content` returns the node's stored `content` field. Per Content Construction Rule 1, that's the *preamble text directly under this node's heading* followed by `uri:` references to direct children — child body text is **not** inlined. Drill into a child URI with another `ki get`, or escalate to `--type full` to get the whole subtree in one query.
-
-`--type full` does a single bounded Cypher walk (no client-side recursion) — cheap even on long documents. Use it when you actually want the bytes back without a second round trip.
-
-**`ki get` only accepts `:Document` and `:Section` URIs.** Passing a `:Folder` URI errors and points at `ki outline <uri>` (enumeration is what folders are for). Passing a `:Vault` URI errors and points at `ki vault list` / `ki outline <uri>`. Passing an unknown URI errors and cites the URI verbatim.
-
-### Walking the URI schema
-
-`ki` URIs encode the containment hierarchy as a path. `ki outline`'s URI column shows the **full URI** for every row — no shorthand — so you can copy a URI directly out of the outline and feed it straight back into `ki outline <uri>` or `ki get <uri>`.
-
-**Vault URIs are human-readable slugs.** Derived from the vault directory's basename on first ingest (e.g. `~/my-notes` → `my-notes`). On collision with an existing vault in the same Neo4j, ki appends `-1`, `-2`, etc — max+1 over currently-present slugs. So a fresh basename-`my-notes` vault becomes `my-notes-3` if `my-notes`, `my-notes-1`, `my-notes-2` are already taken. Deleting a vault (`ki rm --vault`) frees its slug for reassignment, so a long-lived agent skill referencing `my-notes-2/foo.md` could silently re-point at a different vault if `my-notes-2` is removed and a new same-basename vault ingests. Treat the URI as opaque once assigned — read it from `ki vault list` or the row in `ki outline` rather than guessing.
-
-You can also derive **ancestor** URIs by trimming, without any "go up" query:
-
-| URI shape                                                                                                  | Trim to get parent                                                          |
-|------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| `my-notes/projects/foo.md#h1-slug/h2-slug` (nested section)                                                | Trim `/h2-slug` → `my-notes/projects/foo.md#h1-slug` (the parent Section).  |
-| `my-notes/projects/foo.md#some-heading` (top-level section)                                                | Trim `#some-heading` → `my-notes/projects/foo.md` (the owning Doc).         |
-| `my-notes/projects/foo.md`                                                                                 | Trim `/foo.md` → `my-notes/projects` (the parent Folder).                   |
-| `my-notes/projects`                                                                                        | Trim `/projects` → `my-notes` (the Vault root, just the slug).              |
-| `my-notes`                                                                                                 | No further trim — Vault is the top. (`User` is not surfaced in URIs.)       |
-
-Section URI fragments encode the **full heading path** (`<h1-slug>/<h2-slug>/...`), so trimming the last `/<segment>` of the fragment gives the parent section's URI — and trimming the whole `#...` gives the owning Doc.
-
-To **expand** any inferred URI, run `ki outline "<that-uri>" --depth N`. To **search within** a subtree, [#36](https://github.com/zach-blumenfeld/knowledge-index/issues/36) tracks the `--under` scoping flag; until it ships, search cross-vault and filter results by URI prefix.
-
-### If `ki` isn't installed yet
-
-```bash
-curl -sSfL https://knowledge-index.ai/install.sh | bash   # installs ki + neo4j-cli + agent skills
-ki --version
-```
-
-Safe to run unattended in agent auto-mode (idempotent, per-user).
