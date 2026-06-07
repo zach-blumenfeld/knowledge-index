@@ -32,13 +32,6 @@ It's faster and far cheaper in tokens than raw file ops over a markdown corpus. 
 - **URI** — the address of a vault / document / section in the index. Copy it from `ki outline` or search results and feed it into `ki get` / `ki outline`. URIs are hierarchical paths, so trim a trailing segment to get an ancestor — no query needed (drop `/h2` → parent section, the whole `#…` → owning doc, `/foo.md` → folder).
 - **`config.yaml`** — `~/.config/ki/config.yaml`; holds profiles + credentials. Does **not** track vaults — Neo4j does.
 
-## Dependencies
-
-`ki` manages its external dependencies and installs them **up front at install/setup time** — never by interrupting you mid-task:
-
-- **A Neo4j backend** — Local (Podman), Aura, or an existing instance, chosen via `ki configure`.
-- **`neo4j-cli` + its Cypher skills** — used for *Answer Vault-Wide Questions* and *Making Inferences*. Set up automatically when `ki` is installed; you don't install them by hand. `ki` bridges the active profile's credentials to neo4j-cli (`NEO4J_URI` / `NEO4J_USERNAME` / `NEO4J_PASSWORD`).
-
 ## PREPARE when
 
 Source content isn't markdown. `ki` indexes `.md` files only. To handle non-markdown sources:
@@ -166,6 +159,8 @@ Two strategies:
 2. **Custom Cypher** — for more flexible counts, aggregates, and structural questions, use the **`neo4j-cli`** to directly inspect the schema and query the database
    - Use the neo4j credentials from the ki profile
    - To scope queries to the vault uri (or any folder, document, section therein) know that **ki URIs are hierarchical**, so filtering `uri` with `STARTS WITH '<uri>/'` filters to the subtree — everything under that vault / folder / document / section. Keep the trailing `/`: `STARTS WITH 'my-notes'` would also match the sibling vault `my-notes-2`.
+
+<!-- req: install.sh installs neo4j-cli + its Cypher skills, but ki must still bridge the active profile's creds → neo4j-cli env (NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD) so delegated Cypher hits the right database. Not yet wired — see docs/v0_3_1_introspect_dedup. -->
 
 ### Making Inferences
 
