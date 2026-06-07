@@ -6,17 +6,23 @@ Agent runbook. Reached when there are **no profiles yet**, when credentials are 
 
 `ki configure` offers three. Choose by where the graph should live:
 
-| Backend | Use when | Notes |
-|---|---|---|
-| **1) Local (Podman)** | solo / on-this-laptop work | self-managed `neo4j:latest` container. Bring-up + recovery: [neo4j-podman.md](neo4j-podman.md). |
-| **3) Existing** | a Neo4j is already running (another container, a service, env vars) | point `ki` at its Bolt URI + credentials; don't double-bind `:7687`. |
-| **2) Aura** | sharing one index across machines / a team | **billable cloud** — wraps `neo4j-cli aura create`; requires `neo4j-cli`. |
+| Backend | Use when                                                                  | Notes |
+|---|---------------------------------------------------------------------------|---|
+| **1) Local (Podman)** | solo / on-this-laptop work                                                | self-managed `neo4j:latest` container. Bring-up + recovery: [neo4j-podman.md](neo4j-podman.md). |
+| **3) Existing** | User already has a Neo4j running (another container, a service, env vars) | point `ki` at its Bolt URI + credentials. |
+| **2) Aura** | sharing one index across machines / a team                                | **billable cloud** — wraps `neo4j-cli aura create`; requires `neo4j-cli`. |
 
-## Auto-mode (when you're choosing for the user)
+## Auto-mode (choosing for the user)
 
-- **Existing reachable Neo4j** (a profile already in `config.yaml`, or something already answering on `:7687`) → use `3) Existing`; report what you connected to.
-- **Otherwise Local (Podman)** → `1) Local`. Reversible and local, so auto-fire **if** `podman` is on PATH and `:7687` is free (see neo4j-podman.md *Preflight*). If `podman` is missing, surface the install step; don't guess.
-- **Aura is never silent.** Only pick `2) Aura` if the user explicitly asked for cloud / Aura. "Build me a knowledge base" is consent for the goal, not for creating a billable resource.
+The choice is driven by whether a profile already exists — **not** by what happens to be listening on a port.
+
+- **A profile already exists** in `config.yaml` → use it; you're not configuring.
+- **No profile → default to Local (Podman)** (auto-fire only if `podman` is on PATH):
+  - `:7687` free → bring Local up there (see neo4j-podman.md *Preflight*).
+  - `:7687` busy → it's some other service you have no credentials for (an unrelated Neo4j, or not Neo4j at all) — **don't adopt it**; bring Local up on the next free port.
+  - `podman` missing → surface the install step; don't guess.
+- **Existing (`3`) is never inferred** from an open port — use it only when the user names a Neo4j they run and gives its Bolt URI + credentials.
+- **Aura is never silent** — pick `2) Aura` only if the user explicitly asked for cloud / Aura. "Build me a knowledge base" is consent for the goal, not for a billable resource.
 
 ## Run it
 

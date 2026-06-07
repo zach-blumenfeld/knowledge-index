@@ -38,7 +38,14 @@ Then confirm `:7687` is free:
 lsof -i :7687
 ```
 
-If something already answers there, it's either an existing `neo4j-ki` container (skip to *Verify*) or a different Neo4j (use `ki configure → 3) Existing` to point at it instead — don't double-bind the port).
+If something already answers there, find out whether it's ki's own container:
+
+```bash
+podman ps --filter name=neo4j-ki
+```
+
+- **`neo4j-ki` is running** → Local is already up; skip to *Verify*.
+- **Something else holds the port** (an unrelated Neo4j, or a non-Neo4j service) → don't double-bind it and don't assume it's yours. Bring Local up on a free port instead; only use `ki configure → 3) Existing` if the user confirms it's their Neo4j and hands over the credentials.
 
 ## Bring up Neo4j
 
@@ -47,6 +54,8 @@ One container, one volume, detached, auto-restart:
 ```bash
 podman run -d --name neo4j-ki --restart unless-stopped -p 7474:7474 -p 7687:7687 -v neo4j-ki-data:/data -e NEO4J_AUTH=neo4j/password -e 'NEO4J_PLUGINS=["apoc","genai"]' -e NEO4J_server_memory_heap_max__size=1G -e NEO4J_server_memory_pagecache_size=512M neo4j:latest
 ```
+
+**If `:7687` (or `:7474`) is busy**, substitute a free host port in the `-p` mapping — e.g. `-p 7688:7687`. The container's *internal* ports stay `7474`/`7687`; only the host side moves. (`ki configure → Local` does this automatically and records the chosen port in the profile's `uri`.)
 
 Setting heap + pagecache together is mandatory: Neo4j's pre-flight refuses to start if their sum (plus native overhead) exceeds container memory. `1G + 512M` keeps Neo4j around ~2 GB total — fits comfortably in a 4 GB Podman VM and leaves the user's laptop usable for everything else. Without these, the JVM auto-tunes from container memory and runs with a much smaller heap, causing mid-ingest OOMs on multi-thousand-doc vaults (see #54).
 

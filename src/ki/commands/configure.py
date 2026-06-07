@@ -137,8 +137,6 @@ def _configure_local(name: str) -> Profile:
         )
     try:
         creds = neo4j_podman.ensure_running()
-    except neo4j_podman.PortInUseError as exc:
-        raise click.ClickException(str(exc)) from exc
     except neo4j_podman.PodmanError as exc:
         raise click.ClickException(str(exc)) from exc
     console.print(f"[green]✓[/green] Neo4j ready at {creds.uri}")
