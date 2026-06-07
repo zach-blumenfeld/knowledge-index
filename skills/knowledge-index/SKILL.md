@@ -2,7 +2,11 @@
 name: knowledge-index
 description: Search, navigate, and read a markdown knowledge base — a directory of notes, docs, or a wiki — via an auto-built knowledge-graph index over documents, their sections, and the wikilinks between them, retrieving the right slice instead of grepping and reading whole files. Use when working in a folder of markdown — setting up or maintaining a knowledge base, finding or retrieving content, summarizing it, or answering questions grounded in the notes.
 ---
-
+<!-- TODO
+1. graph reasoning reframe here.  Not text2Cypher/Query. Carry over, to blog. We could have called this...but thi is actually more fitting, and prompting as such helps substantially. When you prompt an agent with "query-first" language i.e. to make Cypher queries - it thinks in terms of (SQL) DB query in Cypher syntax, while working it leaves huge benifits on the table.  Instead, prompt the agent with "reasoning-first" languge - read schema and reason over how to find paths and patterns in the graph - use the Cypher query language to express and execute. It is a true unlock.  Simple yet so powerful. The reframe has improved my agents graph queries substantially. 
+2. Rewrite the references (as much as needed)
+3. get all the todos left on your plate. 
+-->
 # `ki` — Usage
 
 ## Trigger When
@@ -100,7 +104,7 @@ Edges:
 ALWAYS start with the outline — a table-of-contents view that saves considerable navigation/search tokens:
 
 ```sh
-ki outline <vault uri> --full --token-limit 20000
+ki outline <vault uri> --full
 ```
 
 Then search / get (see *Search & Retrieve* under *Usage*).

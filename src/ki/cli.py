@@ -9,6 +9,7 @@ User-visible commands:
   ki get <uri> ...          fetch metadata + content for a Document / Section URI
   ki rm <vault>             remove an entire vault from the index (vault-only — see docs/index_rm_behavior.md)
   ki nuke                   reset the entire graph and drop all schema (typed confirmation required)
+  ki profile list           list every connection profile in config.yaml (no Neo4j)
   ki vault list             list every indexed vault with its description
   ki init <path>            (advanced) write `.ki/vault.yaml` without indexing
 """
@@ -28,6 +29,7 @@ from .commands.index import cmd_index
 from .commands.init import cmd_init
 from .commands.nuke import cmd_nuke
 from .commands.outline import cmd_outline
+from .commands.profile import cmd_profile_list
 from .commands.rm import cmd_rm
 from .commands.search import cmd_search
 from .commands.skill import cmd_install as cmd_skill_install
@@ -382,6 +384,17 @@ def nuke_cmd(
 @click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
 def init_cmd(path: Path, profile: str | None) -> None:
     sys.exit(cmd_init(path, profile=profile))
+
+
+@main.group("profile", help="Manage Neo4j connection profiles (config-only, no Neo4j).")
+def profile_group() -> None:
+    pass
+
+
+@profile_group.command("list", help="List every profile in config.yaml (no Neo4j needed).")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def profile_list_cmd(as_json: bool) -> None:
+    sys.exit(cmd_profile_list(as_json=as_json))
 
 
 @main.group("vault", help="Inspect indexed vaults.")
