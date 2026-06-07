@@ -2,6 +2,7 @@
 
 User-visible commands:
   ki configure              one-time Neo4j connection setup
+  ki status [<path>]        report vault state + next action (NOT_A_VAULT … READY)
   ki index <path>           sync a folder of markdown into the graph (re-index = full nuke + re-ingest)
   ki search <query>         fulltext across {Document,Section,Vault} (B.1 / B.2 / B.11)
   ki outline [<uri>]        render the containment tree (B.12). `ki tree` is a kept alias.
@@ -33,6 +34,7 @@ from .commands.skill import cmd_install as cmd_skill_install
 from .commands.skill import cmd_list as cmd_skill_list
 from .commands.skill import cmd_print as cmd_skill_print
 from .commands.skill import cmd_remove as cmd_skill_remove
+from .commands.status import cmd_status
 from .commands.vault import cmd_vault_list
 from .ingest.batcher import DEFAULT_BATCH_SIZE
 from .ingest.pipeline import DEFAULT_CONCURRENCY, DEFAULT_MAX_FILE_SIZE
@@ -120,6 +122,40 @@ def index_cmd(
             description=description,
             force_description=force_description,
             chunk_size=chunk_size,
+        )
+    )
+
+
+@main.command(
+    "status",
+    help="Report a vault's state and the next action: NOT_A_VAULT / "
+         "PROFILE_MISSING / NEO4J_DOWN / NEO4J_UNRESPONSIVE / AUTH_ERROR / "
+         "NOT_INDEXED / STALE / READY. Walks up from PATH (default: cwd). "
+         "Exit 0 only when READY.",
+)
+@click.argument(
+    "path",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    required=False,
+)
+@click.option("--profile", default=None, help="Override the vault's bound profile.")
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.option(
+    "--timeout", "conn_timeout", type=float, default=5.0,
+    help="Seconds to wait on the Neo4j connectivity probe (default: 5).",
+)
+def status_cmd(
+    path: Path | None,
+    profile: str | None,
+    as_json: bool,
+    conn_timeout: float,
+) -> None:
+    sys.exit(
+        cmd_status(
+            path,
+            profile=profile,
+            as_json=as_json,
+            conn_timeout=conn_timeout,
         )
     )
 

@@ -277,6 +277,25 @@ RETURN v.displayName AS display_name,
 """.strip()
 
 
+# `ki status` — cheap existence check for a vault node (NOT_INDEXED vs indexed).
+VAULT_EXISTS = """
+MATCH (v:Vault {uri: $vaultUri})
+RETURN count(v) AS n
+""".strip()
+
+
+# `ki status` — the URIs + content hashes of every *primary parsed* document
+# under a vault (STALE diff). `sourceType = 'LOCAL_FILE'` is the whole point of
+# the LOCAL_FILE/LOCAL_STUB split: it selects exactly the docs that came from
+# the disk walk, excluding LOCAL_STUB attachments, URL_LINK externals, and
+# WIKILINK_UNRESOLVED stubs — whose URIs may also start with the vault prefix.
+LIST_LOCAL_FILE_DOC_HASHES = """
+MATCH (d:Document)
+WHERE d.sourceType = 'LOCAL_FILE' AND d.uri STARTS WITH $prefix
+RETURN d.uri AS uri, d.fileHash AS fileHash
+""".strip()
+
+
 # Step 1 — snapshot the URIs of LINKS_TO targets that sit OUTSIDE the vault
 # being removed. These are the only external nodes whose degree could
 # plausibly drop to zero as a result of the upcoming removal, so they're
