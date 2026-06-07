@@ -1,11 +1,11 @@
 ---
-name: ki
-description: Your load-bearing tool for searching, navigating, and reading a directory of markdown — notes, docs, a wiki. Saves time and tokens by auto-building a knowledge-graph index over documents, their sections, and the wikilinks between them, so you pull the right slice instead of grepping and reading whole files.
+name: knowledge-index
+description: Search, navigate, and read a markdown knowledge base — a directory of notes, docs, or a wiki — via an auto-built knowledge-graph index over documents, their sections, and the wikilinks between them, retrieving the right slice instead of grepping and reading whole files. Use when working in a folder of markdown — setting up or maintaining a knowledge base, finding or retrieving content, summarizing it, or answering questions grounded in the notes.
 ---
 
 # `ki` — Usage
 
-## TRIGGER when
+## Trigger When
 
 Reach for `ki` whenever the work involves a **directory of markdown** (notes, docs, a wiki, a "second brain") — it's your default read/search tool there:
 

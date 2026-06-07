@@ -64,7 +64,7 @@ That's the whole loop. Read on for the same flow with other agents, direct CLI u
 
 ### With a coding agent (Claude Code, Cursor, Windsurf, …)
 
-Coding agents can shell out to `ki` directly. `ki skill install` drops the bundled routing rules (the markdown at [`skills/ki/SKILL.md`](skills/ki/SKILL.md)) into each agent's well-known config path so the agent knows *when* to use `ki` — track / remember / build a knowledge base / search my notes / find related material — and *when* to skip.
+Coding agents can shell out to `ki` directly. `ki skill install` drops the bundled routing rules (the markdown at [`skills/knowledge-index/SKILL.md`](skills/knowledge-index/SKILL.md)) into each agent's well-known config path so the agent knows *when* to use `ki` — track / remember / build a knowledge base / search my notes / find related material — and *when* to skip.
 
 ```bash
 # 1. Install both CLIs (ki + neo4j-cli) and the skills, into every detected agent.
@@ -100,7 +100,7 @@ Then ask the agent things like:
 - *"What did I write about retrieval strategies?"*
 - *"Find the doc where I sketched the schema."*
 
-Auto-mode rules (full text in [`skills/ki/SKILL.md`](skills/ki/SKILL.md)): reversible local actions (`ki index`, single-doc `ki rm`) fire without asking; irreversible or billable actions (`ki configure → Aura`, whole-vault `ki rm --vault`) pause for explicit consent. Source files are never modified by either `ki` or the agent.
+Auto-mode rules (full text in [`skills/knowledge-index/SKILL.md`](skills/knowledge-index/SKILL.md)): reversible local actions (`ki index`, single-doc `ki rm`) fire without asking; irreversible or billable actions (`ki configure → Aura`, whole-vault `ki rm --vault`) pause for explicit consent. Source files are never modified by either `ki` or the agent.
 
 ### From the command line (no agent)
 
@@ -170,7 +170,7 @@ The remaining seven retrieval shapes — full-document text, frontmatter + secti
 
 ### Markdown (`.md`) only — convert other formats first
 
-v1 indexes `.md` files only. For PDFs, docx, HTML, or plaintext, convert to markdown first with `pandoc`, `markitdown`, or by reading + transcribing, then run `ki index` on the output folder. See the *PREPARE when* section of [`skills/ki/SKILL.md`](skills/ki/SKILL.md) for the agent-side flow. Native ingest of other formats is on the roadmap.
+v1 indexes `.md` files only. For PDFs, docx, HTML, or plaintext, convert to markdown first with `pandoc`, `markitdown`, or by reading + transcribing, then run `ki index` on the output folder. See the *On First Use* section of [`skills/knowledge-index/SKILL.md`](skills/knowledge-index/SKILL.md) for the agent-side flow. Native ingest of other formats is on the roadmap.
 
 ### No MCP server to work with chat apps — only coding agents work today
 
@@ -247,7 +247,7 @@ Before opening a PR:
 2. Skim [`docs/requirements_v01_mvp.md`](docs/requirements_v01_mvp.md) — anything in there is normative. If your change conflicts with the spec, update the spec in the same PR.
 3. If you're changing the schema, update [`docs/data-model.md`](docs/data-model.md) before the code.
 4. If you're changing Cypher, update [`docs/ingest-cypher.md`](docs/ingest-cypher.md) or [`docs/retrieval-queries.md`](docs/retrieval-queries.md) before the code — those are the source of truth.
-5. If you're changing CLI behavior, keep [`docs/requirements_v01_mvp.md`](docs/requirements_v01_mvp.md), [`skills/ki/SKILL.md`](skills/ki/SKILL.md), and the implementation in lockstep — drift between those is the #1 source of agent-routing bugs.
+5. If you're changing CLI behavior, keep [`docs/requirements_v01_mvp.md`](docs/requirements_v01_mvp.md), [`skills/knowledge-index/SKILL.md`](skills/knowledge-index/SKILL.md), and the implementation in lockstep — drift between those is the #1 source of agent-routing bugs.
 
 ### Release flow
 
@@ -266,7 +266,7 @@ The workflow refuses to re-release an existing tag (forces a version bump on re-
 - [`docs/data-model.md`](docs/data-model.md) — Neo4j schema (nodes, edges, properties)
 - [`docs/ingest-cypher.md`](docs/ingest-cypher.md) — what `ki index` writes
 - [`docs/retrieval-queries.md`](docs/retrieval-queries.md) — what `ki search` exposes (B.1–B.10)
-- [`skills/ki/SKILL.md`](skills/ki/SKILL.md) — agent routing rules (when an agent should invoke `ki`)
+- [`skills/knowledge-index/SKILL.md`](skills/knowledge-index/SKILL.md) — agent routing rules (when an agent should invoke `ki`)
 - [`AGENTS.md`](AGENTS.md) — for AI agents (or humans) contributing to the codebase
 - [`CHANGELOG.md`](CHANGELOG.md) — release history
 

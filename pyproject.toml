@@ -51,9 +51,9 @@ packages = ["src/ki"]
 
 # Bundle the agent skill into the wheel so `ki skill install` can read it
 # via importlib.resources. The canonical source lives at the repo root
-# (`skills/ki/SKILL.md`) and is also the rendered file on GitHub.
+# (`skills/knowledge-index/SKILL.md`) and is also the rendered file on GitHub.
 [tool.hatch.build.targets.wheel.force-include]
-"skills/ki/SKILL.md" = "ki/_resources/SKILL.md"
+"skills/knowledge-index/SKILL.md" = "ki/_resources/SKILL.md"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/ki", "skills/", "README.md", "LICENSE", "docs/"]

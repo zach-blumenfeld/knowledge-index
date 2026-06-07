@@ -1,6 +1,6 @@
 """`ki skill <install|remove|list|print>` — manage the agent-skill bundle.
 
-The skill bundle is the markdown file at `skills/ki/SKILL.md` (shipped inside
+The skill bundle is the markdown file at `skills/knowledge-index/SKILL.md` (shipped inside
 the wheel as `ki/_resources/SKILL.md`). It tells AI agents when to invoke
 `ki` and how. `ki skill install` drops it into each supported agent's
 well-known config path so the agent picks it up without the user copying
@@ -35,7 +35,7 @@ console = Console()
 
 SKILL_RESOURCE_PACKAGE = "ki._resources"
 SKILL_RESOURCE_NAME = "SKILL.md"
-TOOL_NAME = "ki"
+TOOL_NAME = "knowledge-index"
 
 
 # --- agent catalog ----------------------------------------------------------
@@ -136,7 +136,7 @@ def read_bundled_skill() -> str:
     `ki/_resources/SKILL.md` so `importlib.resources` finds it.
 
     In a dev checkout (editable install): the wheel hasn't been built, so
-    fall back to the canonical repo path `skills/ki/SKILL.md`, located by
+    fall back to the canonical repo path `skills/knowledge-index/SKILL.md`, located by
     walking up from this module to the repo root. The fallback never fires
     in production.
     """
@@ -149,7 +149,7 @@ def read_bundled_skill() -> str:
 
     # Dev fallback: src/ki/commands/skill.py → src/ki/commands → src/ki → src → <repo>.
     repo_root = Path(__file__).resolve().parents[3]
-    candidate = repo_root / "skills" / "ki" / "SKILL.md"
+    candidate = repo_root / "skills" / "knowledge-index" / "SKILL.md"
     if candidate.is_file():
         return candidate.read_text(encoding="utf-8")
     raise FileNotFoundError(

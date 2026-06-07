@@ -150,7 +150,7 @@ Vaults reference profiles by **name**. Credentials never live inside a vault, so
 
 ## Agent integration
 
-`ki` is designed for two modes of use: a human typing commands, and a coding agent invoking `ki` via shell. The agent-as-user contract lives in `skills/ki/SKILL.md` (which ships bundled with the package and gets dropped into each agent's well-known config path by `ki skill install`).
+`ki` is designed for two modes of use: a human typing commands, and a coding agent invoking `ki` via shell. The agent-as-user contract lives in `skills/knowledge-index/SKILL.md` (which ships bundled with the package and gets dropped into each agent's well-known config path by `ki skill install`).
 
 `SKILL.md` defines:
 
@@ -172,7 +172,7 @@ A reading order if you want to get up to speed:
 4. **`docs/data-model.md`** — the schema. Normative on node properties, edge directions, content-construction rules.
 5. **`docs/ingest-cypher.md`** + **`docs/retrieval-queries.md`** — the working Cypher. `src/ki/ingest/queries.py` and `src/ki/search/queries.py` lift from these.
 6. **`docs/index_rm_behavior.md`** + **`docs/link_capture.md`** — the v0.4.0 sync model (`ki rm` vault-only, `ki index` re-index = nuke + rebuild) and the link-capture matrix (three Document kinds). Newest specs; not in the original requirements doc.
-7. **`skills/ki/SKILL.md`** — the agent-as-user contract. When changing CLI shape, update this in the same PR.
+7. **`skills/knowledge-index/SKILL.md`** — the agent-as-user contract. When changing CLI shape, update this in the same PR.
 8. **`references/neo4j-podman.md`** — the Local Neo4j runbook. Source of truth for the Podman container/volume/image/plugin choices that `src/ki/neo4j_podman.py` mirrors.
 
 ## Deferred — what's not wired and the closest workaround

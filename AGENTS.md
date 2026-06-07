@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Instructions for AI agents (Claude, Codex, Cursor, etc.) working **on** the `knowledge-index` codebase. If you are an agent being asked by a user to *use* `ki` (index their notes, search their knowledge base, etc.), read `skills/ki/SKILL.md` instead.
+Instructions for AI agents (Claude, Codex, Cursor, etc.) working **on** the `knowledge-index` codebase. If you are an agent being asked by a user to *use* `ki` (index their notes, search their knowledge base, etc.), read `skills/knowledge-index/SKILL.md` instead.
 
 ## What this repo is
 
@@ -39,7 +39,7 @@ These constrain every change you make. If a proposed feature violates one of the
 | `docs/data-model.md`              | Neo4j schema: `User`, `Vault`, `Folder`, `Document`, `Section` node properties; `USES_VAULT`, `LOADED`, `HAS`, `LINKS_TO` edges. |
 | `docs/ingest-cypher.md`           | Batched `UNWIND` ingest queries (§4.3) and constraints / fulltext index (§4.4). Modify here when changing what `ki index` writes to Neo4j.                              |
 | `docs/retrieval-queries.md`       | Retrieval queries `B.1`–`B.12` (fulltext search incl. vault routing, neighbourhood, document text, windowing, backlinks, shortest path, containment-tree walk). Modify here when changing what `ki search` / `ki vault list` / `ki outline` expose. |
-| `skills/ki/SKILL.md`              | Agent-as-user routing rules (TRIGGER / PREPARE / SKIP). Ships with the published tool.                                                                                  |
+| `skills/knowledge-index/SKILL.md`              | Agent-as-user routing rules (TRIGGER / PREPARE / SKIP). Ships with the published tool.                                                                                  |
 | `references/neo4j-podman.md`      | Agent-followable runbook for the `ki configure → Local` path (Podman). Canonical values (container, volume, image, plugins, auth) here are the source of truth — `src/ki/neo4j_podman.py` must match. |
 | `CLAUDE.md`                       | Claude-Code-specific notes; defers to this file.                                                                                                                        |
 
@@ -107,4 +107,4 @@ if you change the generator, run them.
 
 - Open `docs/requirements_v01_mvp.md` and search for the keyword. The full design intent is captured there.
 - For schema / Cypher questions, `docs/data-model.md` is normative; `docs/ingest-cypher.md` and `docs/retrieval-queries.md` are the working queries that *match* the model.
-- For agent-as-user behavior (TRIGGER / PREPARE / SKIP, auto-mode rules), `skills/ki/SKILL.md` is the contract; don't change it without updating `docs/requirements_v01_mvp.md` in the same PR.
+- For agent-as-user behavior (TRIGGER / PREPARE / SKIP, auto-mode rules), `skills/knowledge-index/SKILL.md` is the contract; don't change it without updating `docs/requirements_v01_mvp.md` in the same PR.
