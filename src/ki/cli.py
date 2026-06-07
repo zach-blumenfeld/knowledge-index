@@ -7,7 +7,7 @@ User-visible commands:
   ki search <query>         fulltext across {Document,Section,Vault} (B.1 / B.2 / B.11)
   ki outline [<uri>]        render the containment tree (B.12). `ki tree` is a kept alias.
   ki get <uri> ...          fetch metadata + content for a Document / Section URI
-  ki rm <vault>             remove an entire vault from the index (vault-only — see docs/index_rm_behavior.md)
+  ki drop <vault>           remove an entire vault from the index (vault-only — see docs/index_rm_behavior.md)
   ki nuke                   reset the entire graph and drop all schema (typed confirmation required)
   ki profile list           list every connection profile in config.yaml (no Neo4j)
   ki vault list             list every indexed vault with its description
@@ -24,13 +24,13 @@ import click
 
 from . import __version__
 from .commands.configure import configure as configure_flow
+from .commands.drop import cmd_drop
 from .commands.get import cmd_get
 from .commands.index import cmd_index
 from .commands.init import cmd_init
 from .commands.nuke import cmd_nuke
 from .commands.outline import cmd_outline
 from .commands.profile import cmd_profile_list
-from .commands.rm import cmd_rm
 from .commands.search import cmd_search
 from .commands.skill import cmd_install as cmd_skill_install
 from .commands.skill import cmd_list as cmd_skill_list
@@ -328,7 +328,7 @@ def get_cmd(
 
 
 @main.command(
-    "rm",
+    "drop",
     help="Remove an entire vault from the index. Source files untouched. "
          "Sub-vault granularity is not supported — see `docs/index_rm_behavior.md`.",
 )
@@ -346,7 +346,7 @@ def get_cmd(
          "Lower it (e.g. 200) if you see Neo4j OOM during removal; "
          "raise it on small graphs to cut transaction overhead.",
 )
-def rm_cmd(
+def drop_cmd(
     target: str,
     profile: str | None,
     dry_run: bool,
@@ -355,7 +355,7 @@ def rm_cmd(
     chunk_size: int,
 ) -> None:
     sys.exit(
-        cmd_rm(
+        cmd_drop(
             target,
             profile=profile,
             dry_run=dry_run,

@@ -4,7 +4,7 @@ Instructions for AI agents (Claude, Codex, Cursor, etc.) working **on** the `kno
 
 ## What this repo is
 
-`knowledge-index` (CLI: `ki`) is a personal knowledge index backed by Neo4j. It reads a local folder of markdown files and maintains a searchable knowledge graph over them. The two primitive verbs are `ki index` (sync) and `ki search` (query); navigation/management commands (`ki vault list`, `ki rm`, `ki configure`, `ki init`, and `ki outline` — formerly `ki tree`, which is kept as a permanent alias) sit on top of those. For the full design spec see `docs/requirements_v01_mvp.md`.
+`knowledge-index` (CLI: `ki`) is a personal knowledge index backed by Neo4j. It reads a local folder of markdown files and maintains a searchable knowledge graph over them. The two primitive verbs are `ki index` (sync) and `ki search` (query); navigation/management commands (`ki vault list`, `ki drop`, `ki configure`, `ki init`, and `ki outline` — formerly `ki tree`, which is kept as a permanent alias) sit on top of those. For the full design spec see `docs/requirements_v01_mvp.md`.
 
 ## Non-negotiable design principles
 

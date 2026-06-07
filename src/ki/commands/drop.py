@@ -1,10 +1,10 @@
-"""`ki rm <vault>` — remove an entire vault from the index. Source files untouched.
+"""`ki drop <vault>` — remove an entire vault from the index. Source files untouched.
 
 Vault-only by design. See `docs/index_rm_behavior.md` for the model: ki keeps
-the vault as the only unit of sync, so `ki rm` operates only on vault-level
+the vault as the only unit of sync, so `ki drop` operates only on vault-level
 targets. Passing a file path, subdirectory, or any other granularity errors
 with a message that points at `ki index` (the only way to re-sync individual
-content).
+content today).
 
 Flags:
   --yes            skip the typed-display-name confirm (scripts / agent auto-mode)
@@ -31,14 +31,14 @@ from ..vault import read_vault_marker, remove_vault_marker, vault_marker_path
 console = Console()
 
 NON_VAULT_TARGET_MESSAGE = (
-    "ki rm only operates on vaults. Individual folders, documents, and "
+    "ki drop only operates on whole vaults. Individual folders, documents, and "
     "sections sync at the vault level to mirror what's currently on disk — "
-    "use `ki index <vault>` to refresh, or `ki rm <vault>` to remove the "
+    "use `ki index <vault>` to refresh, or `ki drop <vault>` to remove the "
     "whole vault."
 )
 
 
-def cmd_rm(
+def cmd_drop(
     target: str,
     *,
     profile: str | None,
@@ -140,6 +140,6 @@ def _resolve_vault_target(target: str) -> tuple[str, Path | None]:
     slug = target.strip()
     if not slug:
         raise click.ClickException(
-            "empty `ki rm` target — pass a vault root path or a Vault.uri slug"
+            "empty `ki drop` target — pass a vault root path or a Vault.uri slug"
         )
     return slug, None

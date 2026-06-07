@@ -4,7 +4,7 @@ How `ki` turns markdown links into graph edges and target nodes. This page is th
 
 Related docs:
 - `docs/data-model.md` *Three Document kinds* — the node shapes that target nodes take.
-- `docs/index_rm_behavior.md` — what happens to link targets on re-index and `ki rm`.
+- `docs/index_rm_behavior.md` — what happens to link targets on re-index and `ki drop`.
 - `docs/ingest-cypher.md` §4.3 step 5.5 / 5.6 — the underlying MERGE Cypher.
 
 ## What `ki` recognizes
@@ -109,7 +109,7 @@ For internal `.md` Documents the displayName always equals the filename (per #28
 | `ki search --types document` | Yes — external Documents are in the `content_search` fulltext index via `displayName + aliases`. | Yes. |
 | `ki search --types section` | LINKS_TO edges affect ranking indirectly via section content (which still contains the raw markdown), but external Documents themselves are not sections. | Same. |
 | `ki get <uri>` | Yes — pass an external URL and get the Document's metadata. | Yes — pass the stub's URI. `--type full` and `--type content` are no-ops for stubs and externals since they have no `content`. |
-| `ki rm <vault>` | Survives if any other vault still links to it. Otherwise GC'd by the orphan-sweep step in the remove routine (see `docs/index_rm_behavior.md` *Removal routine* step 3). | Removed with the vault (HAS-attached). |
+| `ki drop <vault>` | Survives if any other vault still links to it. Otherwise GC'd by the orphan-sweep step in the remove routine (see `docs/index_rm_behavior.md` *Removal routine* step 3). | Removed with the vault (HAS-attached). |
 
 ## Re-ingest behavior
 
@@ -177,4 +177,4 @@ Five `:LINKS_TO` edges total, four target Documents created (one already existed
 | `src/ki/ingest/queries.py` | `WRITE_STUB_DOCUMENTS`, `WRITE_EXTERNAL_DOCUMENTS`, `WRITE_LINKS_TO`, `WRITE_DISPLAY_TEXT_ALIASES`. |
 | `docs/data-model.md` | Document kinds matrix; HAS-invariant amendment; displayName precedence rule. |
 | `docs/ingest-cypher.md` | Write-order narrative for steps 5.5 / 5.6 / 6 / 7. |
-| `docs/index_rm_behavior.md` | What happens to internal stubs vs external Documents on re-index and `ki rm`. |
+| `docs/index_rm_behavior.md` | What happens to internal stubs vs external Documents on re-index and `ki drop`. |

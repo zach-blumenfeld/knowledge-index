@@ -30,8 +30,8 @@ Two working commands: `ki index` (sync a folder into the graph) and `ki search` 
 `ki` **never mutates source documents.** The user's markdown files are owned by the user (and by their editor, their git, their Dropbox sync, their Obsidian vault) — `ki` only reads them and maintains a *derived index* in Neo4j. Anything `ki` writes lives in `~/.config/ki/` (config) or in Neo4j (the index), or — in the single exception — in `.ki/vault.yaml`, a small file carrying vault identity (`uri:`, written once on first ingest) plus optional user-authored vault-level metadata such as `description:`. `ki` writes `uri:` on first creation, and writes other user-authored fields **only when the user explicitly asks** via a flag (e.g. `ki index --description "..."`). Without such a flag, every key besides `uri:` is read-only.
 
 Practical consequences:
-- No `ki rm --purge`, no `ki rewrite`, no "fix this frontmatter," no "auto-organize my notes." If a feature requires writing into a `.md` file, it's out of scope.
-- A vault can be deleted entirely from the index (`ki rm --vault`) and the source files are untouched.
+- No `ki drop --purge`, no `ki rewrite`, no "fix this frontmatter," no "auto-organize my notes." If a feature requires writing into a `.md` file, it's out of scope.
+- A vault can be deleted entirely from the index (`ki drop`) and the source files are untouched.
 - Conversely, `rm -rf my-vault/` leaves the graph in Neo4j stale until the next `ki index` — that's fine, the user is in charge of their files.
 - This is what makes the tool safe to point at an Obsidian vault, a git repo, or a research folder without thinking twice.
 
@@ -93,7 +93,7 @@ ki search "..." [flags]     # fulltext across {Document,Section,Vault} (B.1+B.2+
 ki outline ["<uri>"]        # render the containment hierarchy (Vault → Folder → Doc → Section) — see docs/outline-format.md
                             #   `ki tree` is a permanent alias; `--at <uri>` still works as a back-compat flag.
 ki get "<uri>" [flags]      # fetch metadata + content at a Doc / Section URI; --type {path,content,full}
-ki rm ./my-vault                    # remove an entire vault from the index (vault-only; source files untouched)
+ki drop ./my-vault                    # remove an entire vault from the index (vault-only; source files untouched)
 ki nuke                             # reset the entire graph + schema (typed confirmation required)
 
 ki index ./my-vault --profile work    # explicit profile override
@@ -102,7 +102,7 @@ KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents /
 
 **Navigation + fetch loop.** `ki search` and `ki outline` return URIs; `ki get <uri>` fetches what those URIs point to. `--type content` (default) returns the node's stored content + `uri:` references to direct children (per Rule 1 in `docs/data-model.md`); `--type full` returns the full reading-order body via B.4 / B.14; `--type path` returns the metadata shell only, so the agent can `Read` the file via the `path` property. `ki get` only accepts `:Document` and `:Section` URIs — `:Folder` and `:Vault` URIs error with a hint pointing at `ki outline` / `ki vault list`.
 
-**Three commands users actually need: `ki configure`, `ki index`, `ki rm`.** `ki configure` is run once per machine (or per new Neo4j connection); `ki index` and `ki rm` are the working verbs.
+**Three commands users actually need: `ki configure`, `ki index`, `ki drop`.** `ki configure` is run once per machine (or per new Neo4j connection); `ki index` and `ki drop` are the working verbs.
 
 ### Auto-sense on `ki index`
 
@@ -116,34 +116,34 @@ KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents /
 
 A thin alias that writes `.ki/vault.yaml` *without* indexing. Useful only in narrow cases — e.g., pre-creating the marker so it's committed to git before any content exists. Not part of the quick-start; most users never run it.
 
-### Removal (`ki rm`, `ki nuke`)
+### Removal (`ki drop`, `ki nuke`)
 
-ki keeps the **vault** as the only unit of sync. `ki rm` operates only on vault-level targets; sub-vault granularity (doc, subtree) is not exposed. The motivation and the full removal-routine spec live in **`docs/index_rm_behavior.md`** — read that for the design.
+ki keeps the **vault** as the only unit of sync. `ki drop` operates only on vault-level targets; sub-vault granularity (doc, subtree) is not exposed. The motivation and the full removal-routine spec live in **`docs/index_rm_behavior.md`** — read that for the design.
 
 ```bash
-ki rm ./my-vault                       # remove a whole vault by path (typed confirmation required)
-ki rm my-vault-slug                    # same, by Vault.uri slug
-ki rm <target> --dry-run               # show what would be removed; touch nothing
-ki rm <target> --yes                   # skip the typed-display-name confirm
-ki rm <target> --keep-marker           # remove vault data but keep .ki/vault.yaml
+ki drop ./my-vault                       # remove a whole vault by path (typed confirmation required)
+ki drop my-vault-slug                    # same, by Vault.uri slug
+ki drop <target> --dry-run               # show what would be removed; touch nothing
+ki drop <target> --yes                   # skip the typed-display-name confirm
+ki drop <target> --keep-marker           # remove vault data but keep .ki/vault.yaml
                                        #   (next `ki index` rebuilds onto the same Vault.uri)
-ki rm <target> --chunk-size N          # rows per batched-remove transaction (default 1000)
+ki drop <target> --chunk-size N          # rows per batched-remove transaction (default 1000)
 
 ki nuke                                # reset the entire graph + drop ki-owned schema
 ki nuke --keep-marker                  # same, but keep every .ki/vault.yaml on disk
 ki nuke --dry-run / --yes / --chunk-size N
 ```
 
-**Sub-vault `ki rm` is rejected with a clear error** pointing the user at `ki index <vault>` — that's the only way to sync content at file granularity (a full re-index nukes + re-ingests the vault).
+**Sub-vault `ki drop` is rejected with a clear error** pointing the user at `ki index <vault>` — that's the only way to sync content at file granularity (a full re-index nukes + re-ingests the vault).
 
 **Defaults driven by safety and reversibility:**
 
-- **Source files are never touched.** `ki rm` / `ki nuke` remove nodes from Neo4j; that's all. If the user wants files gone, they use `rm`. (See *Core design principle*.)
+- **Source files are never touched.** `ki drop` / `ki nuke` remove nodes from Neo4j; that's all. If the user wants files gone, they use `rm`. (See *Core design principle*.)
 - **Vault removal requires typed display-name confirmation**; `ki nuke` requires typed `"nuke"` confirmation. Both bypass with `--yes`.
-- **Marker stays unless `--keep-marker=False`.** `ki rm` removes `.ki/vault.yaml` by default; `ki nuke` removes every known marker by default. Pass `--keep-marker` to preserve so the next `ki index` rebuilds onto the same `Vault.uri` — the "reset this vault" idiom.
+- **Marker stays unless `--keep-marker=False`.** `ki drop` removes `.ki/vault.yaml` by default; `ki nuke` removes every known marker by default. Pass `--keep-marker` to preserve so the next `ki index` rebuilds onto the same `Vault.uri` — the "reset this vault" idiom.
 - **`LOADED` provenance edges are removed with their endpoints** via `DETACH DELETE`. Provenance is moot once the entity is gone; if anyone needs ingest history, it's reconstructable from logs.
 
-**Agent auto-mode handling:** `ki rm` (whole vault) and `ki nuke` require explicit user consent every time, regardless of harness permission, because they destroy graph state. See *Agent auto-mode behavior* for the full partition.
+**Agent auto-mode handling:** `ki drop` (whole vault) and `ki nuke` require explicit user consent every time, regardless of harness permission, because they destroy graph state. See *Agent auto-mode behavior* for the full partition.
 
 ## Configuration & Neo4j setup
 

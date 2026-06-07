@@ -18,7 +18,7 @@ These shape every decision below. From `AGENTS.md`:
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  User / Agent                                                │
-│   ▸ runs `ki configure | index | search | tree | get | rm`   │
+│   ▸ runs `ki configure | index | search | tree | get | drop` │
 └────────────────────────────┬─────────────────────────────────┘
                              │
 ┌────────────────────────────┴─────────────────────────────────┐
@@ -97,11 +97,11 @@ The `Content Construction Rules` in `docs/data-model.md` are load-bearing here: 
 
 `src/ki/ingest/batcher.py` is a thin loop over `UNWIND $rows AS row` writes. Default batch is 1,000 rows. On a Neo4j `TransientError` containing "out of memory", the batcher halves the batch size (floor 16), retries the failed slice once, and continues at the smaller size. The batcher emits one warning per ingest on first shrink so the user knows their Neo4j heap is the bottleneck.
 
-### `ki rm <vault-path>` and `ki nuke`
+### `ki drop <vault-path>` and `ki nuke`
 
 Two removal verbs, no per-doc / subtree granularity (v0.4.0 vault-level sync model — see `docs/index_rm_behavior.md`):
 
-- **`ki rm <vault-path>`** — remove a whole vault from the index. Typed confirmation of the vault display name required. Source files are never touched. Passing a file path or a subdirectory under a vault errors with a message pointing at `ki index` — re-indexing nukes-and-rebuilds, which is how stale docs get cleaned up after the user deletes files on disk.
+- **`ki drop <vault-path>`** — remove a whole vault from the index. Typed confirmation of the vault display name required. Source files are never touched. Passing a file path or a subdirectory under a vault errors with a message pointing at `ki index` — re-indexing nukes-and-rebuilds, which is how stale docs get cleaned up after the user deletes files on disk.
 - **`ki nuke`** — reset the entire graph: every Vault, every Document, every Section, every edge, plus the schema constraints + fulltext index, get torn down and recreated. Typed confirmation required. Use when something has gone wrong at the schema level or when starting over.
 
 ## Two read paths
@@ -157,7 +157,7 @@ Vaults reference profiles by **name**. Credentials never live inside a vault, so
 - **TRIGGER when** — user prompts that should route to `ki` ("track our conversations in memory", "what did I write about X?", "build a knowledge base for me").
 - **PREPARE when** — agent-side conversion of non-markdown sources (PDF / docx / HTML) into markdown the user owns, *then* `ki index`.
 - **SKIP when** — ephemeral session memory, source-file mutation, or non-markdown content the user doesn't want converted.
-- **Auto-mode rules** — what the agent may do unattended vs. what requires explicit consent. Reversible/local actions (`ki index`, `ki skill install`, bringing up the Local Podman container) auto-fire; billable or destructive ones (`ki configure → Aura`, whole-vault `ki rm --vault`) pause.
+- **Auto-mode rules** — what the agent may do unattended vs. what requires explicit consent. Reversible/local actions (`ki index`, `ki skill install`, bringing up the Local Podman container) auto-fire; billable or destructive ones (`ki configure → Aura`, whole-vault `ki drop`) pause.
 - **Recovery** — what the agent does when `ki` fails to connect on a Local-Podman profile: `podman start` → re-`podman run` with same volume → re-index if the volume is gone.
 
 **Chat-app surfaces** (claude.ai, ChatGPT, Gemini, Copilot Web/Desktop) can't shell out to `ki` and aren't supported in v1. The path forward is an MCP server bridging the chat surface to a local `ki`.
@@ -171,7 +171,7 @@ A reading order if you want to get up to speed:
 3. **`docs/requirements_v01_mvp.md`** — the full design spec. Normative on CLI shape, scalability envelopes, auto-mode rules.
 4. **`docs/data-model.md`** — the schema. Normative on node properties, edge directions, content-construction rules.
 5. **`docs/ingest-cypher.md`** + **`docs/retrieval-queries.md`** — the working Cypher. `src/ki/ingest/queries.py` and `src/ki/search/queries.py` lift from these.
-6. **`docs/index_rm_behavior.md`** + **`docs/link_capture.md`** — the v0.4.0 sync model (`ki rm` vault-only, `ki index` re-index = nuke + rebuild) and the link-capture matrix (three Document kinds). Newest specs; not in the original requirements doc.
+6. **`docs/index_rm_behavior.md`** + **`docs/link_capture.md`** — the v0.4.0 sync model (`ki drop` vault-only, `ki index` re-index = nuke + rebuild) and the link-capture matrix (three Document kinds). Newest specs; not in the original requirements doc.
 7. **`skills/knowledge-index/SKILL.md`** — the agent-as-user contract. When changing CLI shape, update this in the same PR.
 8. **`skills/knowledge-index/references/neo4j-podman.md`** — the Local Neo4j runbook. Source of truth for the Podman container/volume/image/plugin choices that `src/ki/neo4j_podman.py` mirrors.
 

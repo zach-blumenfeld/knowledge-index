@@ -12,7 +12,7 @@ def test_help_lists_all_commands():
     runner = CliRunner()
     res = runner.invoke(main, ["--help"])
     assert res.exit_code == 0
-    for cmd in ("configure", "index", "search", "rm", "init", "vault"):
+    for cmd in ("configure", "index", "search", "drop", "init", "vault"):
         assert cmd in res.output
 
 
@@ -80,13 +80,13 @@ def test_vault_list_help_works():
         assert flag in res.output
 
 
-def test_rm_help_lists_safety_flags():
-    """`ki rm` is vault-only in 0.4.0 — see docs/index_rm_behavior.md.
+def test_drop_help_lists_safety_flags():
+    """`ki drop` is vault-only in 0.4.0 — see docs/index_rm_behavior.md.
 
     Removed flag: `--vault` (the command is vault-only now; flag is redundant).
     """
     runner = CliRunner()
-    res = runner.invoke(main, ["rm", "--help"])
+    res = runner.invoke(main, ["drop", "--help"])
     assert res.exit_code == 0
     for flag in ("--dry-run", "--yes", "--keep-marker", "--chunk-size"):
         assert flag in res.output

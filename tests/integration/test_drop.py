@@ -1,11 +1,11 @@
-"""Integration tests for `ki rm` — vault-only model (see docs/index_rm_behavior.md)."""
+"""Integration tests for `ki drop` — vault-only model (see docs/index_rm_behavior.md)."""
 
 from __future__ import annotations
 
 import click
 import pytest
 
-from ki.commands.rm import cmd_rm
+from ki.commands.drop import cmd_drop
 from ki.config import Config, Profile, save_config
 from ki.ingest.pipeline import IngestOptions, ingest_vault
 from ki.neo4j_client import driver_for
@@ -16,7 +16,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def indexed_vault(vault_dir, neo4j_profile, cleanup_vault, monkeypatch, tmp_path):
-    """Index the vault and write a Config so the rm command can resolve a profile."""
+    """Index the vault and write a Config so the drop command can resolve a profile."""
     res = ingest_vault(vault_dir, IngestOptions(profile=neo4j_profile, batch_size=64))
     cleanup_vault.append(res.vault_uri)
 
@@ -47,7 +47,7 @@ def _vault_doc_count(profile, vault_uri):
 # ---- Vault-only behavior: sub-vault targets error -------------------------
 
 
-def test_rm_file_target_errors_with_helpful_message(indexed_vault, vault_dir, neo4j_profile):
+def test_drop_file_target_errors_with_helpful_message(indexed_vault, vault_dir, neo4j_profile):
     """Passing a file path is the most common "I meant document-level rm" mistake.
 
     Should error with the canonical sub-vault message that points the user at
@@ -57,32 +57,32 @@ def test_rm_file_target_errors_with_helpful_message(indexed_vault, vault_dir, ne
     assert target.exists()
     before = _vault_doc_count(neo4j_profile, indexed_vault)
     with pytest.raises(click.ClickException) as exc_info:
-        cmd_rm(
+        cmd_drop(
             str(target), profile=None,
             dry_run=False, yes=True, keep_marker=False,
         )
     msg = exc_info.value.message
     assert "file" in msg.lower()
-    assert "ki rm only operates on vaults" in msg
+    assert "ki drop only operates on whole vaults" in msg
     assert "ki index" in msg
     # Graph state unchanged.
     after = _vault_doc_count(neo4j_profile, indexed_vault)
     assert after == before
 
 
-def test_rm_subdirectory_target_errors(indexed_vault, vault_dir, neo4j_profile):
+def test_drop_subdirectory_target_errors(indexed_vault, vault_dir, neo4j_profile):
     """Passing a subdirectory inside a vault errors — only vault roots are accepted."""
     target = vault_dir / "inbox"
     assert target.is_dir()
     before = _vault_doc_count(neo4j_profile, indexed_vault)
     with pytest.raises(click.ClickException) as exc_info:
-        cmd_rm(
+        cmd_drop(
             str(target), profile=None,
             dry_run=False, yes=True, keep_marker=False,
         )
     msg = exc_info.value.message
     assert "not a vault root" in msg
-    assert "ki rm only operates on vaults" in msg
+    assert "ki drop only operates on whole vaults" in msg
     after = _vault_doc_count(neo4j_profile, indexed_vault)
     assert after == before
 
@@ -90,9 +90,9 @@ def test_rm_subdirectory_target_errors(indexed_vault, vault_dir, neo4j_profile):
 # ---- Vault-level removal (path + slug forms) ------------------------------
 
 
-def test_rm_vault_path_removes_everything_and_marker(indexed_vault, vault_dir, neo4j_profile):
+def test_drop_vault_path_removes_everything_and_marker(indexed_vault, vault_dir, neo4j_profile):
     assert read_vault_uri(vault_dir) is not None
-    rc = cmd_rm(
+    rc = cmd_drop(
         str(vault_dir), profile=None,
         dry_run=False, yes=True, keep_marker=False,
     )
@@ -101,8 +101,8 @@ def test_rm_vault_path_removes_everything_and_marker(indexed_vault, vault_dir, n
     assert read_vault_uri(vault_dir) is None  # marker gone
 
 
-def test_rm_vault_keep_marker_preserves_yaml(indexed_vault, vault_dir, neo4j_profile):
-    rc = cmd_rm(
+def test_drop_vault_keep_marker_preserves_yaml(indexed_vault, vault_dir, neo4j_profile):
+    rc = cmd_drop(
         str(vault_dir), profile=None,
         dry_run=False, yes=True, keep_marker=True,
     )
@@ -111,9 +111,9 @@ def test_rm_vault_keep_marker_preserves_yaml(indexed_vault, vault_dir, neo4j_pro
     assert read_vault_uri(vault_dir) is not None  # marker preserved
 
 
-def test_rm_dry_run_makes_no_changes(indexed_vault, vault_dir, neo4j_profile):
+def test_drop_dry_run_makes_no_changes(indexed_vault, vault_dir, neo4j_profile):
     before = _vault_doc_count(neo4j_profile, indexed_vault)
-    rc = cmd_rm(
+    rc = cmd_drop(
         str(vault_dir), profile=None,
         dry_run=True, yes=True, keep_marker=False,
     )
@@ -122,10 +122,10 @@ def test_rm_dry_run_makes_no_changes(indexed_vault, vault_dir, neo4j_profile):
     assert read_vault_uri(vault_dir) is not None
 
 
-def test_rm_vault_by_slug_works(indexed_vault, vault_dir, neo4j_profile):
+def test_drop_vault_by_slug_works(indexed_vault, vault_dir, neo4j_profile):
     """Passing a Vault.uri slug (no on-disk path) removes the vault by URI."""
     slug = indexed_vault  # the slug IS the URI
-    rc = cmd_rm(
+    rc = cmd_drop(
         slug, profile=None,
         dry_run=False, yes=True, keep_marker=False,
     )
@@ -136,9 +136,9 @@ def test_rm_vault_by_slug_works(indexed_vault, vault_dir, neo4j_profile):
     assert read_vault_uri(vault_dir) is not None
 
 
-def test_rm_unknown_slug_errors(indexed_vault, neo4j_profile):
+def test_drop_unknown_slug_errors(indexed_vault, neo4j_profile):
     with pytest.raises(click.ClickException) as exc_info:
-        cmd_rm(
+        cmd_drop(
             "does-not-exist", profile=None,
             dry_run=False, yes=True, keep_marker=False,
         )
@@ -148,7 +148,7 @@ def test_rm_unknown_slug_errors(indexed_vault, neo4j_profile):
 # ---- LINKS_TO orphan GC (the one edge case) -------------------------------
 
 
-def test_rm_orphan_gc_removes_unresolved_wikilink_targets(
+def test_drop_orphan_gc_removes_unresolved_wikilink_targets(
     tmp_path, neo4j_profile, cleanup_vault, monkeypatch,
 ):
     """When the removed vault's only WIKILINK_UNRESOLVED stub is dropped with
@@ -165,7 +165,7 @@ def test_rm_orphan_gc_removes_unresolved_wikilink_targets(
     res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
     cleanup_vault.append(res.vault_uri)
 
-    # Set up config so cmd_rm runs cleanly.
+    # Set up config so cmd_drop runs cleanly.
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.delenv("KI_PROFILE", raising=False)
@@ -176,7 +176,7 @@ def test_rm_orphan_gc_removes_unresolved_wikilink_targets(
     ))
     save_config(cfg)
 
-    rc = cmd_rm(
+    rc = cmd_drop(
         str(vault), profile=None,
         dry_run=False, yes=True, keep_marker=False,
     )
@@ -199,9 +199,9 @@ def test_rm_orphan_gc_removes_unresolved_wikilink_targets(
 # ---- --chunk-size flag passes through -------------------------------------
 
 
-def test_rm_with_chunk_size_flag_works(indexed_vault, vault_dir, neo4j_profile):
+def test_drop_with_chunk_size_flag_works(indexed_vault, vault_dir, neo4j_profile):
     """--chunk-size is plumbed through to the batched-remove queries."""
-    rc = cmd_rm(
+    rc = cmd_drop(
         str(vault_dir), profile=None,
         dry_run=False, yes=True, keep_marker=False,
         chunk_size=128,

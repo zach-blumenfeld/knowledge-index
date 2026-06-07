@@ -207,7 +207,7 @@ def find_next_vault_slug(session, base: str) -> str:
     integer suffix on a *currently-present* slug in the family.
 
     **Reuse semantics.** The algorithm operates on the graph's current
-    state, so if a vault is removed (`ki rm --vault`), its slug becomes
+    state, so if a vault is removed (`ki drop <vault>`), its slug becomes
     eligible for reassignment. Concretely: if `base`, `base-1`, `base-3`
     exist (because `-2` was removed), the next assignment is `base-4`;
     but if `base-3` is also removed before the next ingest, the family is

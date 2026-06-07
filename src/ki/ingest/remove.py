@@ -1,4 +1,4 @@
-"""Shared vault-removal routines for `ki rm`, `ki index` (pre-ingest nuke),
+"""Shared vault-removal routines for `ki drop`, `ki index` (pre-ingest nuke),
 and `ki nuke`.
 
 The behavior here is the contract that `docs/index_rm_behavior.md` describes —
