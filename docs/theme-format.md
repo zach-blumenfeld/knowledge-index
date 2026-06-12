@@ -18,6 +18,7 @@ THEMES  <vault-name>   <N> docs · <G> grouped into <K> themes by wikilinks · <
 
 - **`by wikilinks`** is the method statement, in plain words. If the producer degrades (link-sparse vault, capability missing), the phrase changes — e.g. `grouped into 6 themes by folders` — so differently-derived clusters are never presented identically.
 - **`<U> ungrouped`** is always printed, even when 0 — it stops an agent from overclaiming coverage (`187 grouped` ≠ "the vault is about these K things"). `N = G + U` always reconciles; the reader can derive coverage % themselves, so none is printed.
+- **`· <E> excluded`** is appended only when the run excluded docs (hub pages like `CLAUDE.md` / `index.md` dropped from the whole analysis via `--exclude`). Excluded docs leave the `<N>` denominator entirely — the segment exists so that removal is visible, never silent.
 - Doc counts cover internal md docs only; stubs are excluded.
 
 Header is always printed, even with zero themes (`0 grouped into 0 themes · N ungrouped`).

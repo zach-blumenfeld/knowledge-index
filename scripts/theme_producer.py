@@ -22,23 +22,32 @@ from pathlib import Path
 
 import yaml
 
-PAIR_MATCH = """
+def _excluded(alias: str) -> str:
+    """Exclusion predicate: matches basename or vault-relative path, case-insensitive
+    ($exclude is lowercased client-side; ki URIs are already lowercase)."""
+    return (f"(toLower({alias}.name) IN $exclude"
+            f" OR substring({alias}.uri, size($vaultPrefix)) IN $exclude)")
+
+
+PAIR_MATCH = f"""
 MATCH (src)-[l:LINKS_TO]->(tgt)
 WHERE src.uri STARTS WITH $vaultPrefix AND tgt.uri STARTS WITH $vaultPrefix
-MATCH (s:Document {uri: split(src.uri, '#')[0]})
-MATCH (t:Document {uri: split(tgt.uri, '#')[0]})
+MATCH (s:Document {{uri: split(src.uri, '#')[0]}})
+MATCH (t:Document {{uri: split(tgt.uri, '#')[0]}})
 WHERE s.sourceType = 'LOCAL_FILE' AND t.sourceType = 'LOCAL_FILE' AND s <> t
+  AND NOT {_excluded('s')} AND NOT {_excluded('t')}
 """
 
 # Projection variant: target side also admits glue nodes (co-citation signal).
-PROJECTION_MATCH = """
+PROJECTION_MATCH = f"""
 MATCH (src)-[l:LINKS_TO]->(tgt)
 WHERE src.uri STARTS WITH $vaultPrefix AND tgt.uri STARTS WITH $vaultPrefix
-MATCH (s:Document {uri: split(src.uri, '#')[0]})
-MATCH (t:Document {uri: split(tgt.uri, '#')[0]})
+MATCH (s:Document {{uri: split(src.uri, '#')[0]}})
+MATCH (t:Document {{uri: split(tgt.uri, '#')[0]}})
 WHERE s.sourceType = 'LOCAL_FILE'
   AND t.sourceType IN ['LOCAL_FILE', 'LOCAL_STUB', 'WIKILINK_UNRESOLVED']
   AND s <> t
+  AND NOT {_excluded('s')} AND NOT {_excluded('t')}
 """
 
 COHESION_COND_TIGHT, COHESION_COND_LOOSE = 0.2, 0.5
@@ -68,9 +77,11 @@ def resolve_connection(vault_path: Path) -> tuple[str, str, str, str]:
     return vault["uri"], profile["uri"], profile["user"], profile["password"]
 
 
-def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int) -> dict:
+def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int,
+            exclude: list[str] | None = None) -> dict:
     vault_prefix = vault_uri.rstrip("/") + "/"
     graph_name = f"ki-theme-{vault_uri.replace('/', '-')}"
+    exclude = [e.lower().lstrip("./") for e in (exclude or [])]
 
     G, _ = gds.graph.cypher.project(
         PROJECTION_MATCH
@@ -84,6 +95,7 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int) -> dict
         """,
         graph_name=graph_name,
         vaultPrefix=vault_prefix,
+        exclude=exclude,
     )
 
     try:
@@ -107,7 +119,7 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int) -> dict
             WHERE d.uri STARTS WITH $vaultPrefix AND d.themeId IS NOT NULL
             REMOVE d.themeId
             """,
-            params={"vaultPrefix": vault_prefix},
+            params={"vaultPrefix": vault_prefix, "exclude": exclude},
         )
         gds.v2.graph.node_properties.write(G, ["themeId"])
     finally:
@@ -137,7 +149,7 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int) -> dict
         RETURN theme, d.uri AS uri, d.displayName AS displayName, withinThemeLinks
         ORDER BY theme, withinThemeLinks DESC, uri
         """,
-        params={"vaultPrefix": vault_prefix},
+        params={"vaultPrefix": vault_prefix, "exclude": exclude},
     )
     targets = gds.run_cypher(
         """
@@ -146,6 +158,8 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int) -> dict
         MATCH (s:Document {uri: split(src.uri, '#')[0]})
         WHERE s.sourceType = 'LOCAL_FILE' AND s.themeId IS NOT NULL
           AND split(tgt.uri, '#')[0] <> s.uri
+          AND NOT (toLower(last(split(split(tgt.uri, '#')[0], '/'))) IN $exclude
+                   OR substring(split(tgt.uri, '#')[0], size($vaultPrefix)) IN $exclude)
         WITH s.themeId AS theme, tgt, count(DISTINCT s) AS linkingDocs
         ORDER BY theme, linkingDocs DESC, tgt.uri
         WITH theme,
@@ -153,7 +167,7 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int) -> dict
                AS targets
         RETURN theme, targets
         """,
-        params={"vaultPrefix": vault_prefix},
+        params={"vaultPrefix": vault_prefix, "exclude": exclude},
     )
     crossovers = gds.run_cypher(
         PAIR_MATCH.replace("AND s <> t", "")
@@ -164,15 +178,19 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int) -> dict
         WITH theme, otherTheme, collect({uri: s.uri, displayName: s.displayName})[0] AS via
         RETURN theme, otherTheme, via
         """,
-        params={"vaultPrefix": vault_prefix},
+        params={"vaultPrefix": vault_prefix, "exclude": exclude},
     )
     header = gds.run_cypher(
         """
         MATCH (d:Document {sourceType: 'LOCAL_FILE'})
         WHERE d.uri STARTS WITH $vaultPrefix
-        RETURN count(d) AS totalDocs, count(d.themeId) AS groupedDocs
+        WITH d, (toLower(d.name) IN $exclude
+                 OR substring(d.uri, size($vaultPrefix)) IN $exclude) AS excluded
+        RETURN count(CASE WHEN NOT excluded THEN d END) AS totalDocs,
+               count(CASE WHEN NOT excluded THEN d.themeId END) AS groupedDocs,
+               count(CASE WHEN excluded THEN d END) AS excludedDocs
         """,
-        params={"vaultPrefix": vault_prefix},
+        params={"vaultPrefix": vault_prefix, "exclude": exclude},
     ).iloc[0]
 
     rows = []
@@ -197,6 +215,7 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int) -> dict
         "method": "links",
         "total_docs": int(header.totalDocs),
         "grouped_docs": int(header.groupedDocs),
+        "excluded_docs": int(header.excludedDocs),
         "rows": rows,
     }
 
@@ -218,8 +237,10 @@ def render(result: dict, vault_uri: str, per_theme: int = 3) -> str:
     order = sorted(themes.items(), key=lambda kv: (-len(kv[1]["members"]), kv[1]["members"][0]["uri"]))
     rank = {key: i + 1 for i, (key, _) in enumerate(order)}
     total, grouped = result["total_docs"], result["grouped_docs"]
+    excluded = result.get("excluded_docs", 0)
     out = [f"THEMES  {vault_uri}   {total} docs · {grouped} grouped into "
-           f"{len(order)} themes by wikilinks · {total - grouped} ungrouped"]
+           f"{len(order)} themes by wikilinks · {total - grouped} ungrouped"
+           + (f" · {excluded} excluded" if excluded else "")]
     for key, t in order:
         n = len(t["members"])
         out.append("")
@@ -247,6 +268,10 @@ def main() -> None:
                     help="Leiden resolution; >1 → more, smaller themes (default 1.0)")
     ap.add_argument("--min-docs", type=int, default=3,
                     help="themes with fewer member docs fold into ungrouped (default 3)")
+    ap.add_argument("--exclude", action="append", default=[], metavar="DOC",
+                    help="doc to drop from the entire analysis (projection, themes, "
+                         "targets, crossovers, counts); basename or vault-relative "
+                         "path, case-insensitive; repeatable — e.g. --exclude CLAUDE.md")
     ap.add_argument("--json", action="store_true", help="emit wire records instead of the rendered view")
     args = ap.parse_args()
 
@@ -267,7 +292,7 @@ def main() -> None:
                  "NEO4J_PLUGINS='[\"apoc\",\"genai\",\"graph-data-science\"]' "
                  "(the data volume survives the recreate).")
 
-    result = compute(gds, vault_uri, args.gamma, args.min_docs)
+    result = compute(gds, vault_uri, args.gamma, args.min_docs, exclude=args.exclude)
     print(json.dumps(result, indent=2) if args.json else render(result, vault_uri))
 
 

@@ -5,7 +5,7 @@
 Pipeline: **project doc-level link graph (docs + glue nodes) → Leiden (mutate `themeId`) → per-community conductance → write `themeId` → renderer queries → drop projection.**
 
 > **Runnable version: `scripts/theme_producer.py`** — same pipeline as the embedded script below, plus ki-style vault/profile resolution (`.ki/vault.yaml` → `~/.config/ki/config.yaml`), a friendly GDS-missing error, and a theme-format renderer (`--json` for raw wire records). Run from a vault directory:
-> `uv run --with graphdatascience python scripts/theme_producer.py [vault-path] [--gamma 1.0] [--min-docs 3] [--json]`
+> `uv run --with graphdatascience python scripts/theme_producer.py [vault-path] [--gamma 1.0] [--min-docs 3] [--exclude CLAUDE.md] [--json]`
 
 Design decisions baked in:
 
@@ -14,6 +14,7 @@ Design decisions baked in:
 - **Undirected, weighted.** GDS Leiden is defined on undirected graphs; weight = number of links between the doc pair (parallel `LINKS_TO` edges count).
 - **Leiden** for community detection (refinement of Louvain — guarantees well-connected communities). `random_seed` + `concurrency=1` for deterministic theme assignment within an index generation (theme-format.md stability contract).
 - **Theme floor:** `min_theme_doc_count` (default 3) — themes with fewer `LOCAL_FILE` member docs fold into ungrouped after write-back (§4c). Not delegated to Leiden's `minCommunitySize`, which counts projected nodes including glue.
+- **Exclusions:** `--exclude <doc>` (repeatable; basename or vault-relative path, case-insensitive) removes hub docs (`CLAUDE.md`, `index.md`, MOC pages) from the **entire universe** — projection, membership, binds targets, crossovers, and header denominators — not just from the display. Hub edges distort the communities themselves, so filtering must happen before Leiden, not after. Excluded docs surface honestly in the header (`· N excluded`), never silently. Predicate: `toLower(d.name) IN $exclude OR substring(d.uri, size($vaultPrefix)) IN $exclude`, applied to both ends of every match (see `scripts/theme_producer.py`).
 - **Cohesion word** (`tightly / moderately / loosely interlinked`) derives from per-community **conductance** (`gds.conductance` metric over the mutated `themeId` — the fraction of a theme's link mass that leaves the theme; low = tight). One in-memory metric call, no extra Cypher pass, not size-biased the way edge density is, and it sees glue edges so co-citation-held themes are measured fairly. Thresholds live here, never in the output. (An earlier draft blended per-community modularity with doc–doc edge density; dropped — both inputs were biased and the density query cost a second full pass over the vault's links.)
 
 ## 1. Doc-level pair query (renderer queries, §6)
@@ -445,7 +446,7 @@ Ran verbatim against `content-research-wiki` (91 docs, 940 links; local Podman N
 
 - **`Document.displayName` is the filename today** (per data-model "for now"), so the binds line renders `[[aip-paper.md]]` rather than pretty link text. Format survives; improves automatically if displayName ever carries H1/link text.
 - **No theme read `tight`** — T1–T3 moderate, T4–T5 loose. Thresholds plausibly need loosening (or this vault is genuinely diffuse); tune with more vaults.
-- **Hub docs dominate crossover picks** — `CLAUDE.md` / `index.md` are the "via" doc for most theme pairs. Honest but low-signal; candidate refinement: down-rank docs that bridge *many* themes when choosing the via-doc.
+- **Hub docs dominate crossover picks** — `CLAUDE.md` / `index.md` were the "via" doc for most theme pairs. **Resolved via `--exclude`:** rerunning with `--exclude CLAUDE.md --exclude index.md` produced meaningful via-docs *and* better communities (one theme grew 11→14 docs — the hub edges were distorting Leiden itself, which is why exclusion filters the projection, not just the output).
 - **Glue-node path untested here** — this vault has zero `LOCAL_STUB` / `WIKILINK_UNRESOLVED` nodes (every wikilink resolves). Needs a journal-style vault to validate co-citation clustering.
 
 ## Notes / open items
