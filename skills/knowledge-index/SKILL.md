@@ -132,16 +132,20 @@ Two complementary strategies — **do both** (fan out parallel sub-agents, or ru
    ki outline "<folder|doc|section uri>" --depth 2  # recurse into a branch (see --help for flags)
    ```
    Best when the question maps to a known area of the vault.
-2. **Full-text search with semantic expansion** — cast a wide net (fulltext over title + content + wikilink aliases; spans documents, sections & vaults by default — narrow with `--types`):
+
+2. **Full-text search with semantic expansion** — cast a wide net (fulltext over title + content + wikilink aliases + description):
    ```sh
-   ki search "token refresh" --types section --k 10
+   ki search "token refresh" --k 10
    ```
+   `ki search` works on the vault you're in by default and prints the profile + vault it used. See `ki search --help` if you need more options.
+
    Queries are **Lucene syntax** — `AND`/`OR`/`NOT` (or `+`/`-`), `"exact phrases"`, `()` grouping, `*` wildcards, `~` fuzzy. ([query syntax](https://lucene.apache.org/core/8_2_0/queryparser/org/apache/lucene/queryparser/classic/package-summary.html#package.description))
 
    **Semantic expansion** — the index only does lexical matching, so synonyms or semantically relevant content may be missed (e.g. search on "Darth Vader" misses "Anakin Skywalker"). Account for this by rewriting the term to a few alternates you know and running them as extra `ki search` calls or one OR-form query — either reactively (results look thin: few hits, low-score hits, or no hits) or pre-emptively when you already expect a mismatch:
    ```sh
    ki search 'Anakin OR "Darth Vader" OR Vader'   # world-knowledge synonyms the vault never spelled out
    ```
+   By default `ki search` searches over both documents and sections.  Generally recommended, since documents content in ki is just header/intro while other body goes to sections.  But can still narrow node types with `--types document|section`.
 
 Pull the actual content by URI:
 ```sh
