@@ -180,11 +180,17 @@ def status_cmd(
 
 @main.command(
     "search",
-    help="Fulltext search over documents and sections in the active vault. "
-         "Narrow node types with --types; widen scope with --all / --vault.",
+    help="Fulltext search over documents and sections. Requires a profile: "
+         "--profile, else the vault dir you are in (or -C <dir>), else error. "
+         "Scopes to that vault unless --profile (-> all vaults) or --vault. "
+         "Prints the resolved profile/vault to stderr.",
 )
 @click.argument("query")
-@click.option("--profile", default=None)
+@click.option(
+    "--profile", default=None,
+    help="Profile to search. Else read from the vault dir's .ki/vault.yaml; "
+         "passing it widens scope to all vaults (re-narrow with --vault).",
+)
 @_directory_option
 @click.option(
     "--types", "types_csv",
@@ -194,11 +200,8 @@ def status_cmd(
 )
 @click.option(
     "--vault", "vault_uri", default=None,
-    help="Scope to a specific vault uri (default: the vault you're in).",
-)
-@click.option(
-    "--all", "all_vaults", is_flag=True, default=False,
-    help="Search every vault in the profile (ignore vault scoping).",
+    help="Scope to a specific vault uri (default: the vault dir you are in, "
+         "or all vaults).",
 )
 @click.option(
     "--k", "k", type=int, default=10,
@@ -211,7 +214,6 @@ def search_cmd(
     directory: Path | None,
     types_csv: str,
     vault_uri: str | None,
-    all_vaults: bool,
     k: int,
     as_json: bool,
 ) -> None:
@@ -221,7 +223,6 @@ def search_cmd(
             profile=profile,
             types_csv=types_csv,
             vault_uri=vault_uri,
-            all_vaults=all_vaults,
             k=k,
             as_json=as_json,
             directory=directory,

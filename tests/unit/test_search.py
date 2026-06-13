@@ -1,6 +1,6 @@
 """Unit tests for `ki search` — pure-Python pieces of `ki.commands.search`.
 
-Covers --types CSV parsing, vault-scope prefix selection, run_search param
+Covers --types CSV parsing, profile+vault scope resolution, run_search param
 plumbing, and the table-render header. Integration tests against an ephemeral
 Neo4j live in tests/integration/test_search.py.
 """
@@ -17,9 +17,11 @@ from ki.commands.search import (
     TYPE_LETTER,
     VALID_TYPES,
     _parse_types,
-    _scope_prefix,
+    _resolve_scope,
 )
+from ki.config import Config, Profile
 from ki.search.queries import run_search
+from ki.vault import write_vault_marker
 
 # ---- _parse_types ----------------------------------------------------------
 
@@ -56,33 +58,96 @@ def test_parse_types_unknown_value_errors():
 
 
 def test_parse_types_rejects_vault_now():
-    # `vault` is no longer a search type.
     with pytest.raises(ClickException):
         _parse_types("vault")
 
 
-# ---- _scope_prefix ----------------------------------------------------------
+# ---- _resolve_scope --------------------------------------------------------
 
 
-def test_scope_prefix_all_vaults_is_none():
-    assert _scope_prefix(all_vaults=True, vault_uri="my-notes", start_dir=None) is None
-
-
-def test_scope_prefix_explicit_vault_gets_trailing_slash():
-    assert (
-        _scope_prefix(all_vaults=False, vault_uri="my-notes", start_dir=None)
-        == "my-notes/"
-    )
-    # Idempotent if the caller already added a slash.
-    assert (
-        _scope_prefix(all_vaults=False, vault_uri="my-notes/", start_dir=None)
-        == "my-notes/"
+def _cfg() -> Config:
+    return Config(
+        profiles={
+            "personal": Profile("personal", "bolt://h:7687", "neo4j", "pw", "local-podman"),
+            "work": Profile("work", "bolt://h:7688", "neo4j", "pw", "local-podman"),
+        },
+        default_profile="personal",
     )
 
 
-def test_scope_prefix_outside_a_vault_is_none(tmp_path):
-    # A dir with no .ki marker above it → no scope (search the whole profile).
-    assert _scope_prefix(all_vaults=False, vault_uri=None, start_dir=tmp_path) is None
+def _vault_dir(tmp_path, *, uri="my-notes", profile="personal"):
+    write_vault_marker(tmp_path, uri=uri, profile=profile)
+    return tmp_path
+
+
+def test_resolve_requires_a_profile_outside_a_vault(tmp_path):
+    with pytest.raises(ClickException) as e:
+        _resolve_scope(_cfg(), profile_flag=None, vault_flag=None, start_dir=tmp_path)
+    assert "profile" in str(e.value).lower()
+
+
+def test_resolve_profile_flag_means_all_vaults(tmp_path):
+    prof, prefix, banner = _resolve_scope(
+        _cfg(), profile_flag="work", vault_flag=None, start_dir=tmp_path
+    )
+    assert prof.name == "work"
+    assert prefix is None
+    assert "all vaults" in banner
+
+
+def test_resolve_profile_and_vault(tmp_path):
+    prof, prefix, _ = _resolve_scope(
+        _cfg(), profile_flag="work", vault_flag="notes", start_dir=tmp_path
+    )
+    assert prof.name == "work"
+    assert prefix == "notes/"
+
+
+def test_resolve_vault_flag_trailing_slash_idempotent(tmp_path):
+    _, prefix, _ = _resolve_scope(
+        _cfg(), profile_flag="work", vault_flag="notes/", start_dir=tmp_path
+    )
+    assert prefix == "notes/"
+
+
+def test_resolve_unknown_profile_errors(tmp_path):
+    with pytest.raises(ClickException):
+        _resolve_scope(_cfg(), profile_flag="nope", vault_flag=None, start_dir=tmp_path)
+
+
+def test_resolve_in_vault_default_uses_bound_profile_and_vault(tmp_path):
+    vd = _vault_dir(tmp_path)
+    prof, prefix, banner = _resolve_scope(
+        _cfg(), profile_flag=None, vault_flag=None, start_dir=vd
+    )
+    assert prof.name == "personal"
+    assert prefix == "my-notes/"
+    assert "my-notes" in banner
+
+
+def test_resolve_in_vault_profile_override_resets_to_all(tmp_path):
+    vd = _vault_dir(tmp_path)
+    prof, prefix, _ = _resolve_scope(
+        _cfg(), profile_flag="work", vault_flag=None, start_dir=vd
+    )
+    assert prof.name == "work"
+    assert prefix is None  # override drops the .ki vault scope
+
+
+def test_resolve_in_vault_vault_override(tmp_path):
+    vd = _vault_dir(tmp_path)
+    prof, prefix, _ = _resolve_scope(
+        _cfg(), profile_flag=None, vault_flag="other", start_dir=vd
+    )
+    assert prof.name == "personal"  # still the bound profile
+    assert prefix == "other/"
+
+
+def test_resolve_bound_profile_missing_from_config_errors(tmp_path):
+    vd = _vault_dir(tmp_path, profile="ghost")  # not in cfg
+    with pytest.raises(ClickException) as e:
+        _resolve_scope(_cfg(), profile_flag=None, vault_flag=None, start_dir=vd)
+    assert "ghost" in str(e.value)
 
 
 # ---- run_search param plumbing ---------------------------------------------
@@ -123,10 +188,15 @@ def test_search_help_shows_types_flag():
         assert t in res.output
 
 
-def test_search_help_has_vault_and_all_flags():
+def test_search_help_has_vault_and_profile_flags():
     res = CliRunner().invoke(main, ["search", "--help"])
     assert "--vault" in res.output
-    assert "--all" in res.output
+    assert "--profile" in res.output
+
+
+def test_search_help_no_longer_has_all_flag():
+    res = CliRunner().invoke(main, ["search", "--help"])
+    assert "--all" not in res.output
 
 
 def test_search_help_no_singular_type_flag():

@@ -375,8 +375,8 @@ def test_cmd_search_default_returns_mixed_types(
 
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
-        "retrieval", profile=None,
-        types_csv="document,section", all_vaults=True, k=20, as_json=True,
+        "retrieval", profile=neo4j_profile.name,
+        types_csv="document,section", k=20, as_json=True,
     )
     assert rc == 0
     rows = json.loads(capsys.readouterr().out)
@@ -396,8 +396,8 @@ def test_cmd_search_types_filter_excludes_other_types(
 
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
-        "retrieval", profile=None,
-        types_csv="section", all_vaults=True, k=20, as_json=True,
+        "retrieval", profile=neo4j_profile.name,
+        types_csv="section", k=20, as_json=True,
     )
     assert rc == 0
     rows = json.loads(capsys.readouterr().out)
@@ -416,8 +416,8 @@ def test_cmd_search_k_caps_total_results(
 
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
-        "retrieval", profile=None,
-        types_csv="document,section", all_vaults=True, k=2, as_json=True,
+        "retrieval", profile=neo4j_profile.name,
+        types_csv="document,section", k=2, as_json=True,
     )
     assert rc == 0
     rows = json.loads(capsys.readouterr().out)
@@ -434,8 +434,8 @@ def test_cmd_search_rows_are_score_sorted(
 
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
-        "retrieval", profile=None,
-        types_csv="document,section", all_vaults=True, k=10, as_json=True,
+        "retrieval", profile=neo4j_profile.name,
+        types_csv="document,section", k=10, as_json=True,
     )
     assert rc == 0
     rows = json.loads(capsys.readouterr().out)
@@ -451,8 +451,8 @@ def test_cmd_search_plain_text_includes_key_header(
 
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
-        "retrieval", profile=None,
-        types_csv="document,section", all_vaults=True, k=10, as_json=False,
+        "retrieval", profile=neo4j_profile.name,
+        types_csv="document,section", k=10, as_json=False,
     )
     assert rc == 0
     out = capsys.readouterr().out

@@ -1,14 +1,21 @@
 """`ki search <query>` — fulltext retrieval over documents and sections.
 
 One sweep over the shared `content_search` index (which covers
-displayName + content + aliases + description at once). By default it searches
-the vault you're standing in; widen with `--all` (whole profile) or target
-another with `--vault <uri>`.
+displayName + content + aliases + description at once).
+
+Scope resolution:
+  - Profile is REQUIRED: `--profile`, else the `.ki/vault.yaml` of the
+    resolution dir (cwd, or `-C <dir>`), else error. No `default_profile`
+    fallback — `ki search` always tells you which profile it hit.
+  - Vault is optional: `--vault`, else (when `--profile` overrides) all vaults,
+    else the resolution dir's `.ki` vault, else all vaults.
+
+Every run prints a one-line scope banner to stderr so the resolved
+profile/vault is never a silent guess.
 
 Flags:
   --types <csv>   Subset of {document,section} (default: both).
-  --vault <uri>   Scope to a specific vault (default: the active/cwd vault).
-  --all           Search across every vault in the profile.
+  --vault <uri>   Scope to a specific vault.
   --k N           Result cap (default: 10).
   --json          Emit machine-readable JSON rows.
 """
@@ -24,11 +31,10 @@ from neo4j.exceptions import ClientError
 from rich.console import Console
 from rich.table import Table
 
-from ..config import find_config_path, load_config
+from ..config import Config, Profile, find_config_path, load_config
 from ..neo4j_client import driver_for
-from ..profile_resolve import resolve_profile
 from ..search.queries import run_search
-from ..vault import find_vault_root, read_vault_uri
+from ..vault import find_vault_root, read_vault_profile, read_vault_uri
 
 console = Console()
 
@@ -54,25 +60,73 @@ def _parse_types(types_csv: str) -> list[str]:
     return [t for t in VALID_TYPES if t in seen]
 
 
-def _scope_prefix(
-    *, all_vaults: bool, vault_uri: str | None, start_dir: Path | None
-) -> str | None:
-    """The `<vault-uri>/` prefix to scope the search to, or None for whole-profile.
+def _resolve_scope(
+    cfg: Config,
+    *,
+    profile_flag: str | None,
+    vault_flag: str | None,
+    start_dir: Path | None,
+) -> tuple[Profile, str | None, str]:
+    """Resolve (profile, vault-prefix, banner) for `ki search`.
 
-    Precedence: `--all` (None) → explicit `--vault` → the vault we're standing
-    in (walked up from start_dir / cwd). The trailing `/` makes it an exact
-    subtree match and stops `my-notes` from also matching `my-notes-2`.
+    Profile is REQUIRED (see module docstring). Vault scope precedence:
+    `--vault` → (profile overridden → all vaults) → the resolution dir's `.ki`
+    vault → all vaults. The trailing `/` on the prefix makes it an exact
+    subtree match (so `my-notes` doesn't also match `my-notes-2`).
     """
-    if all_vaults:
-        return None
-    if vault_uri:
-        return vault_uri.rstrip("/") + "/"
-    root = find_vault_root(start_dir or Path.cwd())
-    if root is not None:
-        uri = read_vault_uri(root)
-        if uri:
-            return uri.rstrip("/") + "/"
-    return None
+    search_dir = start_dir or Path.cwd()
+    root = find_vault_root(search_dir)
+    via_c = start_dir is not None  # the dir was pointed at with -C
+
+    # --- profile (required) ---
+    if profile_flag:
+        try:
+            prof = cfg.get_profile(profile_flag)
+        except KeyError as exc:
+            raise click.ClickException(str(exc)) from exc
+        prof_from = None
+    elif root is not None and read_vault_profile(root):
+        bound = read_vault_profile(root)
+        if bound not in cfg.profiles:
+            raise click.ClickException(
+                f"vault at {root} is bound to profile {bound!r}, which is not in "
+                f"your config. Re-bind with `ki use <profile>`, or create it with "
+                f"`ki configure --profile {bound}`."
+            )
+        prof = cfg.profiles[bound]
+        prof_from = root
+    else:
+        raise click.ClickException(
+            "ki search needs a profile. Run inside a vault directory, point at "
+            "one with -C <dir>, or pass --profile <name> (optionally --vault <uri>)."
+        )
+
+    # --- vault scope (optional) ---
+    if vault_flag:
+        scope_uri: str | None = vault_flag.rstrip("/")
+        vault_from = None
+    elif profile_flag:
+        # Overriding the profile drops the .ki vault auto-scope: a vault lives
+        # in one profile, so the dir's vault is meaningless under a new one.
+        scope_uri = None
+        vault_from = None
+    elif root is not None and read_vault_uri(root):
+        scope_uri = read_vault_uri(root)
+        vault_from = root
+    else:
+        scope_uri = None
+        vault_from = None
+
+    prefix = f"{scope_uri}/" if scope_uri else None
+
+    # --- banner (stderr) ---
+    vault_part = f"vault '{scope_uri}'" if scope_uri else "all vaults"
+    src = prof_from or vault_from
+    tag = ""
+    if src is not None:
+        tag = f"  (-C {src})" if via_c else "  (from .ki)"
+    banner = f"ki: profile '{prof.name}' · {vault_part}{tag}"
+    return prof, prefix, banner
 
 
 def cmd_search(
@@ -81,7 +135,6 @@ def cmd_search(
     profile: str | None,
     types_csv: str,
     vault_uri: str | None = None,
-    all_vaults: bool = False,
     k: int,
     as_json: bool,
     directory: Path | None = None,
@@ -96,11 +149,11 @@ def cmd_search(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = resolve_profile(cfg, profile, start_dir=directory)
 
-    prefix = _scope_prefix(
-        all_vaults=all_vaults, vault_uri=vault_uri, start_dir=directory
+    prof, prefix, banner = _resolve_scope(
+        cfg, profile_flag=profile, vault_flag=vault_uri, start_dir=directory
     )
+    click.echo(banner, err=True)
 
     with driver_for(prof) as driver, driver.session() as session:
         try:

@@ -49,8 +49,9 @@ def test_search_directory_relocates_to_bound_profile(vault_with_broken_default):
 
 
 def test_search_without_directory_hits_broken_default(vault_with_broken_default):
-    # cwd (repo) isn't a vault, so resolution falls to the bogus default → fails.
-    with pytest.raises(Exception):  # noqa: B017 — any connect failure proves the point
+    # cwd (repo) isn't a vault and no --profile → search refuses to run
+    # (it requires an explicit profile; no default_profile fallback).
+    with pytest.raises(Exception):  # noqa: B017 — any error proves it refused
         cmd_search(
             "the", profile=None, types_csv="document",
             k=5, as_json=True, directory=None,
