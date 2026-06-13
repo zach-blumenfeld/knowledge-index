@@ -42,7 +42,7 @@ def vault_with_broken_default(vault_dir, neo4j_profile, cleanup_vault, tmp_path,
 def test_search_directory_relocates_to_bound_profile(vault_with_broken_default):
     vault_dir, _ = vault_with_broken_default
     rc = cmd_search(
-        "the", profile=None, types_csv="document,section,vault",
+        "the", profile=None, types_csv="document,section",
         k=5, as_json=True, directory=vault_dir,
     )
     assert rc == 0  # resolved the vault's bound profile, not the bogus default

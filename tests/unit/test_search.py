@@ -1,8 +1,8 @@
 """Unit tests for `ki search` — pure-Python pieces of `ki.commands.search`.
 
-Covers --types CSV parsing, label tagging via `_unify`, and table-render
-header. Integration tests against an ephemeral Neo4j live in
-`tests/integration/test_search.py`.
+Covers --types CSV parsing, vault-scope prefix selection, run_search param
+plumbing, and the table-render header. Integration tests against an ephemeral
+Neo4j live in tests/integration/test_search.py.
 """
 
 from __future__ import annotations
@@ -17,13 +17,14 @@ from ki.commands.search import (
     TYPE_LETTER,
     VALID_TYPES,
     _parse_types,
-    _unify,
+    _scope_prefix,
 )
+from ki.search.queries import run_search
 
 # ---- _parse_types ----------------------------------------------------------
 
 
-def test_parse_types_default_is_all_three():
+def test_parse_types_default_is_both():
     assert _parse_types(DEFAULT_TYPES) == list(VALID_TYPES)
 
 
@@ -32,8 +33,7 @@ def test_parse_types_single():
 
 
 def test_parse_types_csv_preserves_canonical_order():
-    """User-provided order is normalized to VALID_TYPES order for determinism."""
-    assert _parse_types("vault,document") == ["document", "vault"]
+    assert _parse_types("section,document") == ["document", "section"]
 
 
 def test_parse_types_strips_whitespace_and_lowercases():
@@ -55,105 +55,93 @@ def test_parse_types_unknown_value_errors():
     assert "bogus" in str(excinfo.value)
 
 
-# ---- _unify (per-label display field extraction) ---------------------------
+def test_parse_types_rejects_vault_now():
+    # `vault` is no longer a search type.
+    with pytest.raises(ClickException):
+        _parse_types("vault")
 
 
-def test_unify_document_row():
-    row = {
-        "label": "Document",
-        "score": 4.2,
-        "document_uri": "vault://v/foo.md",
-        "title": "foo.md",
-        "path": "/tmp/foo.md",
-    }
-    u = _unify(row)
-    assert u["label"] == "Document"
-    assert u["displayName"] == "foo.md"
-    assert u["uri"] == "vault://v/foo.md"
-    assert u["score"] == 4.2
+# ---- _scope_prefix ----------------------------------------------------------
 
 
-def test_unify_section_row_uses_heading_as_display_name():
-    row = {
-        "label": "Section",
-        "score": 3.1,
-        "section_uri": "vault://v/foo.md#background",
-        "heading": "Background",
-        "heading_level": 2,
-    }
-    u = _unify(row)
-    assert u["label"] == "Section"
-    # Per design: displayName is the heading text, NO `##` prefix.
-    assert u["displayName"] == "Background"
-    assert u["uri"] == "vault://v/foo.md#background"
+def test_scope_prefix_all_vaults_is_none():
+    assert _scope_prefix(all_vaults=True, vault_uri="my-notes", start_dir=None) is None
 
 
-def test_unify_vault_row_prefers_display_name_over_name():
-    row = {
-        "label": "Vault",
-        "score": 2.5,
-        "vault_uri": "vault://abc",
-        "display_name": "My Blog",
-        "name": "blog",
-    }
-    u = _unify(row)
-    assert u["displayName"] == "My Blog"
-    assert u["uri"] == "vault://abc"
+def test_scope_prefix_explicit_vault_gets_trailing_slash():
+    assert (
+        _scope_prefix(all_vaults=False, vault_uri="my-notes", start_dir=None)
+        == "my-notes/"
+    )
+    # Idempotent if the caller already added a slash.
+    assert (
+        _scope_prefix(all_vaults=False, vault_uri="my-notes/", start_dir=None)
+        == "my-notes/"
+    )
 
 
-def test_unify_vault_row_falls_back_to_name_if_display_name_missing():
-    row = {
-        "label": "Vault",
-        "score": 2.5,
-        "vault_uri": "vault://abc",
-        "name": "blog",
-    }
-    u = _unify(row)
-    assert u["displayName"] == "blog"
+def test_scope_prefix_outside_a_vault_is_none(tmp_path):
+    # A dir with no .ki marker above it → no scope (search the whole profile).
+    assert _scope_prefix(all_vaults=False, vault_uri=None, start_dir=tmp_path) is None
 
 
-def test_type_letter_mapping_covers_all_valid_labels():
-    """Regression guard: each label has a single-character T column letter."""
-    assert TYPE_LETTER["Vault"] == "V"
-    assert TYPE_LETTER["Document"] == "D"
-    assert TYPE_LETTER["Section"] == "S"
+# ---- run_search param plumbing ---------------------------------------------
+
+
+class _FakeSession:
+    def __init__(self):
+        self.params = None
+
+    def run(self, _query, parameters=None):
+        self.params = parameters
+        return []
+
+
+def test_run_search_threads_prefix_labels_k():
+    s = _FakeSession()
+    run_search(s, "q", vault_prefix="my-notes/", labels=["Section"], k=7)
+    assert s.params["prefix"] == "my-notes/"
+    assert s.params["labels"] == ["Section"]
+    assert s.params["k"] == 7
+
+
+# ---- render ----------------------------------------------------------------
+
+
+def test_type_letter_mapping():
+    assert TYPE_LETTER == {"Document": "D", "Section": "S"}
 
 
 # ---- CLI surface -----------------------------------------------------------
 
 
 def test_search_help_shows_types_flag():
-    runner = CliRunner()
-    res = runner.invoke(main, ["search", "--help"])
+    res = CliRunner().invoke(main, ["search", "--help"])
     assert res.exit_code == 0
     assert "--types" in res.output
     for t in VALID_TYPES:
         assert t in res.output
 
 
-def test_search_help_no_longer_has_singular_type_flag():
-    """`--type` (singular) was renamed to `--types` (plural) in this PR.
+def test_search_help_has_vault_and_all_flags():
+    res = CliRunner().invoke(main, ["search", "--help"])
+    assert "--vault" in res.output
+    assert "--all" in res.output
 
-    Confirm the singular form isn't lingering in help — `ki get` still uses
-    `--type` for its own flag, but `ki search` should not.
-    """
-    runner = CliRunner()
-    res = runner.invoke(main, ["search", "--help"])
-    # Plural is present; singular '--type ' (with trailing space) should not be.
+
+def test_search_help_no_singular_type_flag():
+    res = CliRunner().invoke(main, ["search", "--help"])
     assert "--types" in res.output
     assert "--type " not in res.output
 
 
 def test_search_rejects_bogus_types_value():
-    runner = CliRunner()
-    res = runner.invoke(main, ["search", "foo", "--types", "bogus"])
+    res = CliRunner().invoke(main, ["search", "foo", "--types", "bogus"])
     assert res.exit_code != 0
     assert "bogus" in res.output
 
 
-def test_search_help_documents_default_is_all_types():
-    """The flag's default value should be visible in --help."""
-    runner = CliRunner()
-    res = runner.invoke(main, ["search", "--help"])
+def test_search_help_documents_default_types():
+    res = CliRunner().invoke(main, ["search", "--help"])
     assert res.exit_code == 0
     assert DEFAULT_TYPES in res.output

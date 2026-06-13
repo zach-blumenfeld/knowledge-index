@@ -180,22 +180,29 @@ def status_cmd(
 
 @main.command(
     "search",
-    help="Fulltext search across documents, sections, and vaults. "
-         "By default returns all three types; narrow with --types.",
+    help="Fulltext search over documents and sections in the active vault. "
+         "Narrow node types with --types; widen scope with --all / --vault.",
 )
 @click.argument("query")
 @click.option("--profile", default=None)
 @_directory_option
 @click.option(
     "--types", "types_csv",
-    default="document,section,vault",
+    default="document,section",
     show_default=True,
-    help="Comma-separated subset of {document,section,vault}. "
-         "Default: all three. Examples: --types section / --types section,document.",
+    help="Comma-separated subset of {document,section} (default: both).",
+)
+@click.option(
+    "--vault", "vault_uri", default=None,
+    help="Scope to a specific vault uri (default: the vault you're in).",
+)
+@click.option(
+    "--all", "all_vaults", is_flag=True, default=False,
+    help="Search every vault in the profile (ignore vault scoping).",
 )
 @click.option(
     "--k", "k", type=int, default=10,
-    help="Total result cap across all selected types (default: 10).",
+    help="Result cap (default: 10).",
 )
 @click.option("--json", "as_json", is_flag=True, default=False)
 def search_cmd(
@@ -203,6 +210,8 @@ def search_cmd(
     profile: str | None,
     directory: Path | None,
     types_csv: str,
+    vault_uri: str | None,
+    all_vaults: bool,
     k: int,
     as_json: bool,
 ) -> None:
@@ -211,6 +220,8 @@ def search_cmd(
             query,
             profile=profile,
             types_csv=types_csv,
+            vault_uri=vault_uri,
+            all_vaults=all_vaults,
             k=k,
             as_json=as_json,
             directory=directory,

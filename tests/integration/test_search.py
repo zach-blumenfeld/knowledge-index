@@ -185,47 +185,6 @@ def test_vault_search_finds_by_description(tmp_path, neo4j_profile, cleanup_vaul
     assert "Cypher" in (matched.get("description") or "")
 
 
-def test_vault_search_warns_on_missing_description(tmp_path, neo4j_profile, cleanup_vault, capsys):
-    """`ki search --types vault` emits a stderr warning per Vault row with null/empty description.
-
-    The merged-search helper now keys off the `label` field (rows in the
-    unified result list each carry one), and only warns for `Vault` rows.
-    """
-    from ki.commands.search import _warn_missing_vault_description
-
-    vault = tmp_path / "blank-vault"
-    vault.mkdir()
-    (vault / "n.md").write_text("# N\n\nbody.\n")
-    res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
-    cleanup_vault.append(res.vault_uri)
-    _await_index_population(neo4j_profile, vault_uri=res.vault_uri)
-
-    # Vault has no description — feed the renderer the row directly and assert
-    # the stderr warning fires.
-    rows = [{
-        "label": "Vault",
-        "vault_uri": res.vault_uri,
-        "name": vault.name,
-        "description": None,
-    }]
-    _warn_missing_vault_description(rows)
-    captured = capsys.readouterr()
-    assert "no description set" in captured.err
-
-
-def test_warn_missing_vault_description_skips_non_vault_rows():
-    """Mixed-type search results: only Vault rows are eligible to warn."""
-    from ki.commands.search import _warn_missing_vault_description
-
-    rows = [
-        {"label": "Document", "document_uri": "vault://v/foo.md", "description": None},
-        {"label": "Section", "section_uri": "vault://v/foo.md#bar", "description": None},
-    ]
-    # Should not raise and should not warn — these rows are non-Vault.
-    _warn_missing_vault_description(rows)
-    # Test passes if no AssertionError; this is the regression guard.
-
-
 def test_search_b12_accepts_parameterized_depth(tmp_path, neo4j_profile, cleanup_vault):
     """B.12 must accept an arbitrary `depth` at runtime.
 
@@ -409,7 +368,7 @@ def search_corpus(tmp_path, neo4j_profile, cleanup_vault):
 def test_cmd_search_default_returns_mixed_types(
     search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
 ):
-    """Default invocation runs B.1 + B.2 + B.11 and merges into one JSON list."""
+    """Default invocation sweeps documents + sections into one JSON list."""
     import json
 
     from ki.commands.search import cmd_search
@@ -417,21 +376,20 @@ def test_cmd_search_default_returns_mixed_types(
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
         "retrieval", profile=None,
-        types_csv="document,section,vault", k=20, as_json=True,
+        types_csv="document,section", all_vaults=True, k=20, as_json=True,
     )
     assert rc == 0
     rows = json.loads(capsys.readouterr().out)
     labels = {r.get("label") for r in rows}
-    # The corpus is constructed so a single 'retrieval' query hits all three.
+    # The corpus is constructed so a single 'retrieval' query hits both.
     assert "Document" in labels
     assert "Section" in labels
-    assert "Vault" in labels
 
 
 def test_cmd_search_types_filter_excludes_other_types(
     search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
 ):
-    """`--types section,document` must not return Vault rows."""
+    """`--types section` narrows to Section rows only."""
     import json
 
     from ki.commands.search import cmd_search
@@ -439,20 +397,19 @@ def test_cmd_search_types_filter_excludes_other_types(
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
         "retrieval", profile=None,
-        types_csv="section,document", k=20, as_json=True,
+        types_csv="section", all_vaults=True, k=20, as_json=True,
     )
     assert rc == 0
     rows = json.loads(capsys.readouterr().out)
     labels = {r.get("label") for r in rows}
-    assert "Vault" not in labels
-    # And at least one of the requested types is present.
-    assert labels & {"Document", "Section"}
+    assert "Document" not in labels
+    assert "Section" in labels
 
 
 def test_cmd_search_k_caps_total_results(
     search_corpus, neo4j_profile, tmp_path, monkeypatch, capsys,
 ):
-    """`--k N` is the TOTAL cap across all types, not per-type."""
+    """`--k N` is the TOTAL cap across both types, not per-type."""
     import json
 
     from ki.commands.search import cmd_search
@@ -460,7 +417,7 @@ def test_cmd_search_k_caps_total_results(
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
         "retrieval", profile=None,
-        types_csv="document,section,vault", k=2, as_json=True,
+        types_csv="document,section", all_vaults=True, k=2, as_json=True,
     )
     assert rc == 0
     rows = json.loads(capsys.readouterr().out)
@@ -478,7 +435,7 @@ def test_cmd_search_rows_are_score_sorted(
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
         "retrieval", profile=None,
-        types_csv="document,section,vault", k=10, as_json=True,
+        types_csv="document,section", all_vaults=True, k=10, as_json=True,
     )
     assert rc == 0
     rows = json.loads(capsys.readouterr().out)
@@ -495,11 +452,10 @@ def test_cmd_search_plain_text_includes_key_header(
     _write_test_config(tmp_path, neo4j_profile, monkeypatch)
     rc = cmd_search(
         "retrieval", profile=None,
-        types_csv="document,section,vault", k=10, as_json=False,
+        types_csv="document,section", all_vaults=True, k=10, as_json=False,
     )
     assert rc == 0
     out = capsys.readouterr().out
     assert "Key:" in out
-    assert "V Vault" in out
     assert "D Document" in out
     assert "S Section" in out

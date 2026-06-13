@@ -128,6 +128,64 @@ def run_vault_search(session, query: str, k: int = 10) -> list[dict]:
     return [dict(r) for r in res]
 
 
+# Unified content search over Document + Section — the `ki search` default.
+# Uses the same shared `content_search` index, which searches ALL indexed
+# fields at once (displayName + content + aliases + description); the B1/B2
+# constants above are *not* title-only / content-only despite their names.
+# Optional structural filters, both controlled by us (not the user's query):
+#   - $labels: restrict to a subset of {"Document","Section"} (the --types flag)
+#   - $prefix: a `<Vault.uri>/` prefix to scope to one vault's subtree.
+# The uri scope is a Cypher property predicate (exact path prefix), NOT a
+# Lucene clause: `content_search` uses the standard analyzer, which would
+# tokenize/shred a uri, so prefix-matching must run here on the stored value.
+SEARCH_DOC_SECTION = """
+CALL db.index.fulltext.queryNodes($index_name, $query) YIELD node, score
+WHERE (node:Document OR node:Section)
+  AND ($labels IS NULL OR any(l IN labels(node) WHERE l IN $labels))
+  AND ($prefix IS NULL OR node.uri STARTS WITH $prefix)
+WITH node, score
+ORDER BY score DESC
+LIMIT toInteger($k)
+OPTIONAL MATCH (doc:Document)-[:HAS*]->(node)
+RETURN
+  CASE WHEN node:Section THEN 'Section' ELSE 'Document' END AS label,
+  node.uri          AS uri,
+  node.displayName  AS display_name,
+  node.path         AS path,
+  node.content      AS content,
+  doc.uri           AS document_uri,
+  doc.displayName   AS document_title,
+  score
+""".strip()
+
+
+def run_search(
+    session,
+    query: str,
+    *,
+    vault_prefix: str | None = None,
+    labels: list[str] | None = None,
+    k: int = 10,
+) -> list[dict]:
+    """Unified fulltext over Document + Section, optionally scoped.
+
+    `labels` restricts to a subset of {"Document", "Section"} (None = both).
+    `vault_prefix` (e.g. "my-notes/") scopes results to one vault's subtree.
+    Sections carry their owning Document's uri/title; Documents leave those null.
+    """
+    res = session.run(
+        SEARCH_DOC_SECTION,
+        parameters={
+            "index_name": INDEX_NAME,
+            "query": query,
+            "labels": labels,
+            "prefix": vault_prefix,
+            "k": k,
+        },
+    )
+    return [dict(r) for r in res]
+
+
 # B.12 — Containment tree (HAS walk). `ki outline`'s hierarchy producer.
 #
 # Emits the wire record format defined in docs/outline-format.md *Wire record
