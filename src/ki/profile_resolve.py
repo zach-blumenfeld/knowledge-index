@@ -26,14 +26,14 @@ class BoundProfileMissing(KeyError):
     """The vault names a profile that isn't in config (renamed / cloned machine).
 
     Carries the vault root and bound name so the caller can tell the user to
-    re-bind (``ki use <profile>``) or re-create the profile.
+    add the profile to config, or re-bind by re-indexing with one they have.
     """
 
     def __init__(self, vault_root: Path, bound: str) -> None:
         super().__init__(
             f"vault at {vault_root} is bound to profile {bound!r}, which is not "
-            f"in your config. Re-bind it with `ki use <profile>`, or re-create "
-            f"the {bound!r} profile with `ki configure --profile {bound}`."
+            f"in your config. Add it with `ki configure`, or re-bind to an "
+            f"existing profile by re-indexing: `ki index . --profile <p>`."
         )
         self.vault_root = vault_root
         self.bound = bound

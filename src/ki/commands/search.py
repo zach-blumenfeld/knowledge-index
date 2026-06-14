@@ -90,8 +90,8 @@ def _resolve_scope(
         if bound not in cfg.profiles:
             raise click.ClickException(
                 f"vault at {root} is bound to profile {bound!r}, which is not in "
-                f"your config. Re-bind with `ki use <profile>`, or create it with "
-                f"`ki configure --profile {bound}`."
+                f"your config. Add it with `ki configure`, or re-bind to an "
+                f"existing profile by re-indexing: `ki index . --profile <p>`."
             )
         prof = cfg.profiles[bound]
         prof_from = root

@@ -96,7 +96,7 @@ Act on the reported state, then re-run until READY:
 Layers 1–2 work even when Neo4j is down (that's how `ki status` reports the Neo4j rows at all). The graph rows below require a reachable Neo4j.
 
 Edges:
-- Bound profile missing from `config.yaml` (renamed / cloned to another machine) → surface to user, re-bind (`ki use <profile>`).
+- Bound profile missing from `config.yaml` (renamed / cloned to another machine) → surface to user; add it with `ki configure` or re-bind by re-indexing (`ki index . --profile <p>`).
 - Source dir moved → `cd` to the new path and `ki index .`.
 
 ### Step 3 — Use it
@@ -220,7 +220,6 @@ During indexing, the entire vault is removed from Neo4j then rebuilt to reflect 
 
 - `ki configure` / `ki profile list` — manage Neo4j connection profiles.
 - `ki vault list` — inspect indexed vaults (uri, description).
-- `ki use <profile>` — set / change the vault's profile binding.
 - `ki init <path>` — (advanced) write `.ki/vault.yaml` without indexing.
 - `ki drop <vault>` — remove a whole vault from the index; typed confirmation. Source files untouched.
 - `ki nuke` — reset the entire graph (all vaults); typed confirmation, last resort.

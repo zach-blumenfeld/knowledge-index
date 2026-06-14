@@ -53,8 +53,9 @@ def _action(r: StatusResult) -> str:
         )
     if r.state == PROFILE_MISSING:
         return (
-            "Re-bind with `ki use <profile>`, or re-create it with "
-            "`ki configure`. (references/configure-profile.md)"
+            "Add the profile with `ki configure`, or re-bind to an existing one "
+            "by re-indexing: `ki index . --profile <p>`. "
+            "(references/configure-profile.md)"
         )
     if r.state == NEO4J_DOWN:
         return "Start Neo4j → references/neo4j-troubleshoot.md."
