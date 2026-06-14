@@ -106,19 +106,15 @@ Two removal verbs, no per-doc / subtree granularity (v0.4.0 vault-level sync mod
 
 ## Two read paths
 
-`src/ki/search/queries.py` holds five wired retrieval queries. The full Cypher for each is in `docs/retrieval-queries.md`.
+`src/ki/search/queries.py` holds the wired retrieval queries (full Cypher in `docs/retrieval-queries.md`; the user-facing search model in `docs/search.md`).
 
 ### `ki search "query" [--types]`
 
-The default merges three fulltext queries by score:
+**One** ranked fulltext sweep over Documents **and** Sections at once (`SEARCH_DOC_SECTION` over the `content_search` index) — not a per-type merge. A Document's `content` is just its header/intro; the body lives in its Sections, so sweeping both is the default.
 
-- **B.1** — Document title fulltext.
-- **B.2** — Section content fulltext (joins back to the owning Document for ancestry).
-- **B.11** — Vault fulltext (over `name + displayName + description`, the cross-vault routing query).
+`--types <subset>` narrows to one or both of `{document, section}` — there is no `vault` type (vaults are matched only via their `description` for routing, never returned as results). `--k N` caps the result set; `--json` emits rows with a `label` field. Document hits span all three Document kinds — internal markdown, internal non-md stubs, and external URLs — so *"launch blog"* can surface an externally-linked URL by the link text the user wrote (stub nodes themselves are post-filtered; the citing doc surfaces — see `docs/search.md` §6).
 
-`--types <subset>` narrows to one or two of `{document, section, vault}`. `--k N` is a *total* cap across the merged result set (not per-type). `--json` emits a heterogeneous list with a `label` field per row. `--types document` surfaces all three Document kinds — internal markdown, internal non-md stubs (PDFs, decks), and external URLs — so a search for *"launch blog"* can return the externally-linked URL by the link text the user wrote.
-
-**Cross-type score caveat:** fulltext scores aren't strictly comparable across queries because of term-frequency normalization. Merge is a heuristic — re-run with `--types <one>` if the ranking looks off.
+Scope follows the local/remote model (`docs/scoping.md`, `docs/search.md`): the vault you're in by default, `--under` to narrow locally, `--profile` / `--vault` to reach a profile remotely. (`--under` and the multi-uri scope predicate are the next build step.)
 
 ### `ki outline ["<uri>"]`
 
@@ -168,9 +164,9 @@ A reading order if you want to get up to speed:
 
 1. **This doc** — the connect-the-dots overview you're reading.
 2. **`AGENTS.md`** — design principles, project map, the *Don't* list.
-3. **`docs/requirements_v01_mvp.md`** — the full design spec. Normative on CLI shape, scalability envelopes, auto-mode rules.
+3. **`docs/scoping.md`** — profiles, vaults, config, the command surface, and the local/remote scoping model. **`docs/general-philosophy.md`** — the design principles. (The original `docs/requirements_v01_mvp.md` is historical — read these instead.)
 4. **`docs/data-model.md`** — the schema. Normative on node properties, edge directions, content-construction rules.
-5. **`docs/ingest-cypher.md`** + **`docs/retrieval-queries.md`** — the working Cypher. `src/ki/ingest/queries.py` and `src/ki/search/queries.py` lift from these.
+5. **`docs/search.md`** + **`docs/get.md`** + **`docs/outline-format.md`** — the read-surface depth docs (search, get, outline). **`docs/ingest-cypher.md`** + **`docs/retrieval-queries.md`** — the working Cypher that `src/ki/ingest/queries.py` and `src/ki/search/queries.py` lift from.
 6. **`docs/index_rm_behavior.md`** + **`docs/link_capture.md`** — the v0.4.0 sync model (`ki drop` vault-only, `ki index` re-index = nuke + rebuild) and the link-capture matrix (three Document kinds). Newest specs; not in the original requirements doc.
 7. **`skills/knowledge-index/SKILL.md`** — the agent-as-user contract. When changing CLI shape, update this in the same PR.
 8. **`skills/knowledge-index/references/neo4j-podman.md`** — the Local Neo4j runbook. Source of truth for the Podman container/volume/image/plugin choices that `src/ki/neo4j_podman.py` mirrors.
@@ -179,14 +175,14 @@ A reading order if you want to get up to speed:
 
 - **Vector search / embeddings** — v2. Fulltext (`content_search`) is the v1 substrate. The `genai` plugin is enabled in the Podman setup so existing vaults won't need re-ingest when this lands.
 - **Backlinks** ("what links *to* this?") — #35. No wired alternative; Cypher exists in `retrieval-queries.md` for a one-shot.
-- **Subtree-scoped search** (`--under <vault|folder|doc>`) — #36. Workaround: cross-vault search, filter results client-side by `document_uri` prefix.
+- **Subtree-scoped search** (`--under`) and remote `--vault` scoping — #36. Designed in `docs/scoping.md` / `docs/search.md`; not yet wired. Workaround: search the vault you're in, then filter by uri prefix.
 - **MCP server** for chat-app integration — roadmap. Use a coding agent on the same machine in the meantime.
 - **Native non-markdown ingest** (PDF, docx, HTML) — roadmap. Agent-side `PREPARE` handles this today: convert to `.md`, save to a user-approved folder, `ki index` it.
 - **OS keyring credential storage** — v2. Plaintext + mode `0600` in `~/.config/ki/config.yaml` for v1.
 
 ## Scalability envelopes
 
-From `docs/requirements_v01_mvp.md` *Scalability*:
+Scalability envelopes (also enforced by `scripts/gen_test_vault.py`):
 
 | Size     | Files  | Bytes   | Initial index target               |
 |----------|--------|---------|------------------------------------|

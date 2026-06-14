@@ -103,7 +103,7 @@ Internal non-md stubs are discovered link-driven (`[Slides](./deck.pptx)`) — t
 | `lastLoadedAt`         | datetime | yes      | updated on each ingest for vault.                                                                                                                                                               |
 
 #### `Section`
-Inherits §3. `Section.uri` is globally unique by virtue of including `Vault.uri` (which is itself globally unique via the marker-file UUID).
+Inherits §3. `Section.uri` is globally unique by virtue of including `Vault.uri` (which is itself globally unique — a slug from the `.ki/vault.yaml` marker, with a `-N` suffix on collision).
 
 | Property        | Type | Required | Description                                                                                                                                                                                                                                                                                                                      |
 |-----------------|------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|

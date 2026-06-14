@@ -24,9 +24,9 @@ Same query *shapes* as [docs/research](research-data-model/research-retrieval-qu
 > rather than tree gymnastics. See `target-data-model-cypher.md` §4.3 step 4.
 
 ### Parameters
-- `$uri` — the `Document.uri` (UUID-prefixed slugified path, see §4.3).
+- `$uri` — the `Document.uri` (slugified `<vault-slug>/<path>`, see §4.3).
 - `$section_uri`, `$section_uris` — same convention for sections.
-- `$folder_uri` — a `Folder.uri` (UUID-prefixed slugified directory path) used as a prefix in `--under` scoping for B.1/B.2/B.11 — see *Scoping* below.
+- `$folder_uri` — a `Folder.uri` (slugified `<vault-slug>/<dir-path>`) used as a prefix in `--under` scoping for B.1/B.2/B.11 — see *Scoping* below.
 - `$root_uri` — for B.12 / `ki outline`; URI of any node to start the tree walk from (`:Vault`, `:Folder`, `:Document`, or `:Section`). When `null` / absent, B.12 falls back to matching every `:Vault` in the graph — see B.12 below.
 - `$source_uris` — for B.12-links / `ki outline`; list of `:Document` and `:Section` URIs to fetch outbound `:LINKS_TO` edges from. Populated by the renderer from the B.12 result.
 - `$index_name` — `'content_search'` (the fulltext index from §4.4).
