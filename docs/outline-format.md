@@ -4,9 +4,23 @@ The default output of `ki outline` is a table-of-contents-style render of the va
 
 > The command was previously `ki tree`. `ki tree` is now a permanent alias for `ki outline` — same flags, same output. The format spec below uses `ki outline` throughout; replace mentally with `ki tree` if you're reading older transcripts.
 
-This document defines the format only. Flag semantics (positional `<uri>`, `--depth`, back-compat `--at`) and the underlying Cypher (`B.12`) live in `docs/requirements_v01_mvp.md` and `docs/retrieval-queries.md` respectively.
+This document defines the rendered format. **Scope and flag semantics** (which profile/vault, the positional `<uri>`, `--profile`, `--depth`, back-compat `--at`) follow `docs/scoping.md` and the *Scoping* section just below; the underlying Cypher (`B.12`) lives in `docs/retrieval-queries.md`.
 
 `ki outline` writes the rendered format to stdout. To save it to a file, pipe (`ki outline > outline.txt`) — there is no separate output-format flag.
+
+## Scoping
+
+`ki outline` resolves which **profile** and **vault(s)** to render the same way the other read commands do (see `docs/scoping.md`). The **positional `<uri>`** is its *render root* — outline renders that node and everything under it. (This is outline's analog to `ki search --under`, but it selects the root to render *from*, not a filter applied to matches.)
+
+- **Local (default)** — in a vault, no flags: profile + vault come from the working dir (cwd, or `-C <dir>`).
+  - `ki outline <uri>` → render that vault / folder / document / section subtree.
+  - `ki outline` (no uri) → render **the vault you're in**.
+- **Remote (`--profile`)** — reach a profile you're not standing in:
+  - `ki outline --profile P` → render **all vaults** in P (multi-root; see *Multi-root* below).
+  - `ki outline --profile P <uri>` → render that subtree (the uri names the vault).
+- **`-C <dir>`** relocates the working dir for resolution; **`--at <uri>`** is a back-compat alias for the positional `<uri>`.
+
+> **Alignment note (pending).** Today a bare `ki outline` (no uri) renders *all* vaults in the resolved profile, regardless of whether you're in a vault — the pre-scoping-model behavior. The target above (bare = the vault you're in; all vaults only under `--profile`) is the alignment to `docs/scoping.md`, not yet wired. Until then, pass the vault uri explicitly: `ki outline <vault-uri>`.
 
 ## Quick example
 
@@ -204,9 +218,9 @@ A parent's children always partition cleanly into at most two of these groups:
 
 This partitioning is a consequence of the data model, not a renderer rule — Folders/Vaults never source LINKS_TO; Documents/Sections never directly parent Folders.
 
-### Multi-root (no `--at`)
+### Multi-root (all vaults)
 
-When `ki outline` is invoked without a positional URI (or back-compat `--at`), there is no single root URI. The query falls back to matching **every `:Vault` in the graph** as a root, and the walk fans out from each. The wire format is unchanged — multiple rows arrive with `depth = 0, parent_uri = null`.
+When the scope is **all vaults** (remote `--profile` with no uri — see *Scoping*), there is no single root URI. The query matches **every `:Vault` in the resolved profile** as a root, and the walk fans out from each. The wire format is unchanged — multiple rows arrive with `depth = 0, parent_uri = null`. (Until the *Scoping* alignment note lands, a bare `ki outline` also takes this path.)
 
 The renderer treats the `parent_uri = null` group as the implicit "root group," sorts alphabetically by `name`, and DFS-emits each vault tree in turn. There is no separator between vaults in the rendered output — the `V` row at depth 0 is the visual boundary.
 
@@ -347,7 +361,7 @@ Surfacing these inline would force every row to wrap or grow vertically, breakin
 
 ### Backlinks
 
-`ki outline` shows only **outbound** `:LINKS_TO` edges. Inbound links (backlinks) are a known gap — `ki search --type neighbors` is being removed in 0.4.0 and there is no CLI surface for B.9 yet. Tracked in #35.
+`ki outline` shows only **outbound** `:LINKS_TO` edges. Inbound links (backlinks) are a known gap — there is no CLI surface for B.9 yet (`ki search --type neighbors` was removed in 0.4.0). Tracked in #35.
 
 ## Open questions tracked elsewhere
 
