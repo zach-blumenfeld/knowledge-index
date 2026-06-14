@@ -1,11 +1,13 @@
 """Theme producer (standalone) — Leiden over a vault's doc-level wikilink graph.
 
-Prototype for `ki theme`; see docs/theme-format.md (output) and
-docs/theme-queries.md (pipeline). Not wired into the CLI yet.
+⚠️  DRAFT — not yet implemented as a command. This is a standalone prototype
+for a future `ki theme`; `ki theme` does not exist yet and this script is not
+wired into the CLI. See docs/theme-format.md (output) and docs/theme-queries.md
+(pipeline) for the design — both also marked DRAFT.
 
 Usage (from a vault directory, or pass a path):
     uv run --with graphdatascience python scripts/theme_producer.py [vault-path]
-        [--gamma 1.0] [--min-docs 3] [--json]
+        [--gamma 1.0] [--min-docs 3] [--exclude CLAUDE.md] [--top-k 5] [--json]
 
 Resolves the vault uri + profile from <vault>/.ki/vault.yaml and credentials
 from ~/.config/ki/config.yaml — same resolution ki itself uses.
@@ -220,7 +222,8 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int,
     }
 
 
-def render(result: dict, vault_uri: str, per_theme: int = 3) -> str:
+def render(result: dict, vault_uri: str, per_theme: int = 3,
+           top_k: int | None = None) -> str:
     """Theme blocks per docs/theme-format.md."""
     themes: dict = {}
     for r in result["rows"]:
@@ -238,10 +241,17 @@ def render(result: dict, vault_uri: str, per_theme: int = 3) -> str:
     rank = {key: i + 1 for i, (key, _) in enumerate(order)}
     total, grouped = result["total_docs"], result["grouped_docs"]
     excluded = result.get("excluded_docs", 0)
+    shown = order if top_k is None else order[:top_k]
+    hidden = order[len(shown):]
+    hidden_note = ""
+    if hidden:
+        hidden_docs = sum(len(t["members"]) for _, t in hidden)
+        hidden_note = (f" (showing top {len(shown)} — {len(hidden)} smaller "
+                       f"themes cover {hidden_docs} more docs)")
     out = [f"THEMES  {vault_uri}   {total} docs · {grouped} grouped into "
            f"{len(order)} themes by wikilinks · {total - grouped} ungrouped"
-           + (f" · {excluded} excluded" if excluded else "")]
-    for key, t in order:
+           + (f" · {excluded} excluded" if excluded else "") + hidden_note]
+    for key, t in shown:
         n = len(t["members"])
         out.append("")
         out.append(f"T{rank[key]}  {n} docs ({round(100 * n / total)}%) · "
@@ -255,7 +265,9 @@ def render(result: dict, vault_uri: str, per_theme: int = 3) -> str:
             label = " " * len(label)
         if n > per_theme:
             out.append(f"{label}(+{n - per_theme} more docs)")
-        for c in sorted(t["cross"], key=lambda c: rank.get(c["other_cluster_key"], 99)):
+        shown_keys = {key for key, _ in shown}
+        cross = [c for c in t["cross"] if c["other_cluster_key"] in shown_keys]
+        for c in sorted(cross, key=lambda c: rank.get(c["other_cluster_key"], 99)):
             out.append(f"    links into T{rank.get(c['other_cluster_key'], '?')} via    "
                        f"{c['displayName']:<37} {c['uri']}")
     return "\n".join(out)
@@ -268,6 +280,9 @@ def main() -> None:
                     help="Leiden resolution; >1 → more, smaller themes (default 1.0)")
     ap.add_argument("--min-docs", type=int, default=3,
                     help="themes with fewer member docs fold into ungrouped (default 3)")
+    ap.add_argument("--top-k", type=int, default=None, metavar="K",
+                    help="render only the K biggest themes (header still accounts for "
+                         "the rest); display-only — all themeIds stay in the graph")
     ap.add_argument("--exclude", action="append", default=[], metavar="DOC",
                     help="doc to drop from the entire analysis (projection, themes, "
                          "targets, crossovers, counts); basename or vault-relative "
@@ -293,7 +308,8 @@ def main() -> None:
                  "(the data volume survives the recreate).")
 
     result = compute(gds, vault_uri, args.gamma, args.min_docs, exclude=args.exclude)
-    print(json.dumps(result, indent=2) if args.json else render(result, vault_uri))
+    print(json.dumps(result, indent=2) if args.json
+          else render(result, vault_uri, top_k=args.top_k))
 
 
 if __name__ == "__main__":
