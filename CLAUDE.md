@@ -7,7 +7,7 @@ See `AGENTS.md` for the canonical contributor instructions — everything in the
 - **At the start of every session, read `AGENTS.md` end-to-end before doing anything substantial.** It contains the design principles, project map, conventions, and "Don't" list that constrain every change. Don't ask the user "want me to look around?" — just do it.
 - This repo uses `uv`, not `pip`. Always run via `uv run …` so the locked environment is honored.
 - When modifying the tool's external behavior (CLI flags, command names, output shape), update **all three** in the same change:
-  1. `docs/requirements_v01_mvp.md` (design spec)
+  1. `docs/scoping.md` (the command surface + scoping model) — plus the relevant `docs/commands/` depth doc when output shape changes
   2. `skills/knowledge-base/SKILL.md` (agent-as-user routing rules)
   3. The implementation under `src/ki/`
   Drift between these is the #1 source of agent-routing bugs.
