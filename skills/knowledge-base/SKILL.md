@@ -169,7 +169,7 @@ Two strategies:
    - Use the neo4j credentials from the ki profile
    - To scope queries to the vault uri (or any folder, document, section therein) know that **ki URIs are hierarchical**, so filtering `uri` with `STARTS WITH '<uri>/'` filters to the subtree — everything under that vault / folder / document / section. Keep the trailing `/`: `STARTS WITH 'my-notes'` would also match the sibling vault `my-notes-2`.
 
-<!-- req: install.sh installs neo4j-cli + its Cypher skills, but ki must still bridge the active profile's creds → neo4j-cli env (NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD) so delegated Cypher hits the right database. Not yet wired — see docs/v0_3_1_introspect_dedup. -->
+<!-- req: install.sh installs neo4j-cli + its Cypher skills, but ki must still bridge the active profile's creds → neo4j-cli env (NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD) so delegated Cypher hits the right database. Not yet wired — see docs/archive/v0_3_1_introspect_dedup. -->
 
 ### Making Inferences
 
@@ -201,7 +201,7 @@ ki mv <old uri/path> <new path>    # rename / move a document or folder — upda
 
 <!-- impl note for add/rm/mv (all must be incremental, NOT full-vault rebuilds):
   - `ki add <doc|folder>`: incremental upsert of one document or folder.
-  - `ki rm <doc|folder>`: document- and folder-level removal (whole-vault removal is `ki drop`; see docs/index_rm_behavior.md).
+  - `ki rm <doc|folder>`: document- and folder-level removal (whole-vault removal is `ki drop`; see docs/data-model/index_rm_behavior.md).
   - `ki mv <old> <new>`: re-key the moved node + descendant section URIs, re-attach HAS to the new parent, re-resolve the moved file's outbound links. Inbound LINKS_TO survive only if the existing node is mutated in place — a rm+reindex drops them and would need referrer re-resolution. Keep it scoped to the moved subtree, not a full rebuild. -->
 
 ### Re-Indexing Entire Vaults

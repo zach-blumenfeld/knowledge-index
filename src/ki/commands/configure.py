@@ -7,7 +7,7 @@ Three paths:
   3) Existing   → prompt for URI + credentials.
 
 On `--yes` (agent auto-mode escape hatch), pick the default (Local) and run
-non-interactively. *Aura is never auto-picked* per docs/requirements_v01_mvp.md
+non-interactively. *Aura is never auto-picked* per docs/archive/requirements_v01_mvp.md
 *Agent auto-mode behavior* — it creates billable resources.
 """
 

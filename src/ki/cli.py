@@ -7,7 +7,7 @@ User-visible commands:
   ki search <query>         fulltext across {Document,Section,Vault} (B.1 / B.2 / B.11)
   ki outline [<uri>]        render the containment tree (B.12). `ki tree` is a kept alias.
   ki get <uri> ...          fetch metadata + content for a Document / Section URI
-  ki drop <vault>           remove an entire vault from the index (vault-only — see docs/index_rm_behavior.md)
+  ki drop <vault>           remove an entire vault from the index (vault-only — see docs/data-model/index_rm_behavior.md)
   ki nuke                   reset the entire graph and drop all schema (typed confirmation required)
   ki profile list           list every connection profile in config.yaml (no Neo4j)
   ki vault list             list every indexed vault with its description
@@ -272,7 +272,7 @@ def _run_outline(
     "outline",
     help="Render the containment outline of indexed vaults (Vault → Folder → "
          "Document → Section). `ki tree` is a kept alias. "
-         "See docs/outline-format.md for the rendered format.",
+         "See docs/commands/outline.md for the rendered format.",
 )
 @_outline_options
 def outline_cmd(
@@ -342,7 +342,7 @@ def get_cmd(
 @main.command(
     "drop",
     help="Remove an entire vault from the index. Source files untouched. "
-         "Sub-vault granularity is not supported — see `docs/index_rm_behavior.md`.",
+         "Sub-vault granularity is not supported — see `docs/data-model/index_rm_behavior.md`.",
 )
 @click.argument("target")
 @click.option("--profile", default=None)

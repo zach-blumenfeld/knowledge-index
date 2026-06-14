@@ -17,7 +17,7 @@ never reused once assigned — see `find_next_vault_slug` for the algorithm.
 The marker is the only state `ki` writes inside the vault; everything else
 lives in `~/.config/ki/` or in Neo4j.
 
-URI conventions (from docs/data-model.md *Path conventions*):
+URI conventions (from docs/data-model/schema.md *Path conventions*):
   - Document.uri = "<vaultUri>/<file path within vault>"     (slugified, '/' kept)
   - Section.uri  = "<vaultUri>/<file path within vault>#<slugified heading path>"
 
@@ -387,7 +387,7 @@ def section_uri(doc_uri: str, heading_path: list[str]) -> str:
 
     `heading_path` is a list of disambiguated heading slugs (already
     post-processed for duplicate-at-same-level disambiguation per
-    docs/data-model.md *Content Construction Rules* Rule 3).
+    docs/data-model/schema.md *Content Construction Rules* Rule 3).
     """
     return f"{doc_uri}#{'/'.join(heading_path)}"
 

@@ -34,9 +34,9 @@ Order of operations per ingest run:
      incoming HAS edge.
   7. Resolve wikilinks/markdown-links against the resolver; emit LINKS_TO.
   8. Aggregate piped-wikilink display texts per target URI, normalize, and
-     union into the target's `aliases` (docs/ingest-cypher.md §4.3 step 7).
+     union into the target's `aliases` (docs/data-model/ingest-cypher.md §4.3 step 7).
 
-Scalability levers (docs/requirements_v01_mvp.md):
+Scalability levers (docs/archive/requirements_v01_mvp.md):
   1. fileHash skip                    — implemented in step 5
   2. configurable batch size          — `batch_size` (default 1000)
   3. concurrent file reads            — `concurrency` (default 16)
@@ -156,7 +156,7 @@ def _stream_file_bytes(
 
     This is the symmetric counterpart to the per-doc write loop: both sides
     process one file/doc at a time end-to-end, so the documented "process
-    one document at a time" lever (`docs/requirements_v01_mvp.md`
+    one document at a time" lever (`docs/archive/requirements_v01_mvp.md`
     § Scalability lever 4) now holds on the read side too.
     """
     if not paths:
@@ -366,7 +366,7 @@ class IngestOptions:
     force_description: bool = False
     # Rows per batched DETACH DELETE transaction during the pre-ingest
     # vault-nuke step (only relevant when re-indexing an existing vault).
-    # See `docs/index_rm_behavior.md` *Batched DETACH DELETE*.
+    # See `docs/data-model/index_rm_behavior.md` *Batched DETACH DELETE*.
     chunk_size: int = 1000
     # Progress reporter hooked at phase boundaries. CLI installs a rich-backed
     # implementation on TTY runs; tests and non-TTY runs pass None. See #53.
@@ -530,7 +530,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                                 candidate,
                             )
 
-                # 3a.5 — vault-level sync. Per `docs/index_rm_behavior.md`, an
+                # 3a.5 — vault-level sync. Per `docs/data-model/index_rm_behavior.md`, an
                 # existing vault is fully removed before re-ingest so stale docs /
                 # sections / folders / wikilinks don't linger. Fresh vaults
                 # (no marker existed before) skip this step — there's nothing to
@@ -794,7 +794,7 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                 )
                 result.links_written = written
 
-                # 11. Display-text → target aliases (docs/ingest-cypher.md
+                # 11. Display-text → target aliases (docs/data-model/ingest-cypher.md
                 # §4.3 step 7). Runs after LINKS_TO so we can read the target's
                 # current displayName + aliases for normalization, then union the
                 # derived aliases without clobbering frontmatter.

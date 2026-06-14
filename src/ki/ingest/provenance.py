@@ -1,7 +1,7 @@
 """Build the User and LOADED-edge provenance bags for an ingest.
 
 Everything is best-effort: anything we can't detect becomes `null`. The
-philosophy (docs/data-model.md *Provenance philosophy*) is: detect from things
+philosophy (docs/data-model/schema.md *Provenance philosophy*) is: detect from things
 the user has already shared with their OS / git config / agent; never prompt.
 """
 

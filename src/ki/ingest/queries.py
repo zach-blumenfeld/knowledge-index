@@ -1,4 +1,4 @@
-"""Cypher for ingest, lifted verbatim from docs/ingest-cypher.md.
+"""Cypher for ingest, lifted verbatim from docs/data-model/ingest-cypher.md.
 
 If a query here drifts from the docs, fix the docs first then update the
 implementation to match — the docs are the source of truth (see AGENTS.md
@@ -145,7 +145,7 @@ SET s.path = row.path
 
 # 4.3 step 3 — section-tree HAS edges (Document|Section → Section).
 # Same `:HAS` relationship type as the vault/folder/document tree (step 1c
-# in docs/ingest-cypher.md); kept in its own step here because section
+# in docs/data-model/ingest-cypher.md); kept in its own step here because section
 # trees are constructed per-document alongside section node writes, while
 # folder trees are constructed per-vault.
 WRITE_SECTION_EDGES = """
@@ -260,7 +260,7 @@ SET n.aliases = existing + toAdd
 """.strip()
 
 
-# --- Vault-level removal queries. See `docs/index_rm_behavior.md` for the
+# --- Vault-level removal queries. See `docs/data-model/index_rm_behavior.md` for the
 # full design (vault-level sync model, three-step removal routine, batched
 # DETACH DELETE rationale).
 #

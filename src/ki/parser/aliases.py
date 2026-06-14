@@ -15,7 +15,7 @@ Frontmatter aliases are the user's hand-authored ground truth; this module
 only produces derived display-text aliases and never overwrites or reorders
 the existing list. The caller (ingest pipeline) is responsible for the union.
 
-Spec: `docs/v0_3_0_semantic_search/requirements.md` *Normalization rules*.
+Spec: `docs/archive/v0_3_0_semantic_search/requirements.md` *Normalization rules*.
 """
 
 from __future__ import annotations

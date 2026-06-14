@@ -1,6 +1,6 @@
 """`ki nuke` — reset the entire graph and remove every `.ki/vault.yaml` ki knows about.
 
-See `docs/index_rm_behavior.md` *ki nuke* for the full spec. Behavior:
+See `docs/data-model/index_rm_behavior.md` *ki nuke* for the full spec. Behavior:
   1. Snapshot every Vault's (uri, path) from the graph.
   2. Typed-confirmation prompt (unless --yes).
   3. Batched DETACH DELETE every node.

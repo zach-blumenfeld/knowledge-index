@@ -1,7 +1,7 @@
 """Shared vault-removal routines for `ki drop`, `ki index` (pre-ingest nuke),
 and `ki nuke`.
 
-The behavior here is the contract that `docs/index_rm_behavior.md` describes —
+The behavior here is the contract that `docs/data-model/index_rm_behavior.md` describes —
 read that doc first if you're touching anything in this module. We say
 **remove** (not delete) in user-facing strings and code comments; Cypher
 keywords (`DELETE`, `DETACH DELETE`) stay verbatim as language tokens.

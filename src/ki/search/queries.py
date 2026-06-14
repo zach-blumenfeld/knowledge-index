@@ -1,4 +1,4 @@
-"""Retrieval queries, lifted from docs/retrieval-queries.md.
+"""Retrieval queries, lifted from docs/data-model/retrieval-queries.md.
 
 v1 sign-off requires B.1, B.2, B.3 to be reachable via `ki search` flags.
 B.4–B.10 ship as constants so they're easy to wire up later.
@@ -188,7 +188,7 @@ def run_search(
 
 # B.12 — Containment tree (HAS walk). `ki outline`'s hierarchy producer.
 #
-# Emits the wire record format defined in docs/outline-format.md *Wire record
+# Emits the wire record format defined in docs/commands/outline.md *Wire record
 # format*: {depth, inrel, label, name, displayName, uri, parent_uri,
 # sort_pos}. Sections carry sort_pos (NEXT_SECTION position in the parent
 # doc) so the renderer can order sibling sections by reading order.

@@ -32,7 +32,7 @@ PLUGINS_ENV = '["apoc","genai"]'
 # personal-laptop tool — total Neo4j footprint (heap + pagecache + native
 # overhead) lands around ~2 GB so `ki` is a good citizen alongside the
 # user's other apps. Covers the documented v1 envelope (10k docs / 1 GB
-# per vault, ingest-dominated; see docs/requirements_v01_mvp.md
+# per vault, ingest-dominated; see docs/archive/requirements_v01_mvp.md
 # § Scalability) because the batcher's existing OOM auto-recovery
 # (halve-and-retry at floor 16) absorbs the occasional fat transaction.
 # Users hitting "batch size shrunk to N" warnings on huge vaults can

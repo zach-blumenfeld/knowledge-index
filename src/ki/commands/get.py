@@ -11,7 +11,7 @@ with a hint pointing at `ki outline` / `ki vault list`.
   full     → reconstructed reading-order body via B.4 (Documents) or B.14
              (Sections). One Neo4j query, no client-side recursion.
 
-See `docs/retrieval-queries.md` (B.4 / B.13 / B.14) for the queries.
+See `docs/data-model/retrieval-queries.md` (B.4 / B.13 / B.14) for the queries.
 """
 
 from __future__ import annotations
