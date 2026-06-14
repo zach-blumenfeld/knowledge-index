@@ -11,6 +11,8 @@ Neo4j knowledge graph. This is the docs index — start at the top.
   the local/remote scoping model. The keystone doc.
 - [architecture.md](architecture.md) — end-to-end overview: layers, the graph,
   write/read paths. Read this first.
+- [skills.md](skills.md) — the agent skill(s): the shipped `knowledge-base` skill
+  and the planned `knowledge-base-reader`.
 
 ## Commands — [`commands/`](commands/)
 

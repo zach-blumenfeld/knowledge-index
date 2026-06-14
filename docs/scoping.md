@@ -122,6 +122,12 @@ what keeps `ki` correct and private. The surface is optimized for the common cas
 takes you out of the default is **`--profile`**: passing it means *"I'm not working
 on the vault I'm standing in."*
 
+> **Agent-skill coverage.** The bundled `knowledge-base` agent skill (`SKILL.md`)
+> routes **mode 1 only** (local, single vault — the 95% case). Modes 2 and 3 are
+> **CLI-only** today; agent-skill coverage for them is deferred to a future
+> `knowledge-base-reader` skill ([#66](https://github.com/zach-blumenfeld/knowledge-index/issues/66)).
+> See `docs/skills.md`.
+
 #### 3.2.1 The usual path — a local vault, one at a time
 
 You have the markdown on your filesystem and work one KB at a time.
