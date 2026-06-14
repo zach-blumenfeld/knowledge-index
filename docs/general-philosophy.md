@@ -21,4 +21,4 @@ Consequences of core tenets and general philosophy. These are open to change If 
 
    If you are seeking these things…No harm in trying `ki` first and seeing if it works (it is safe, easy, fast, and free)  but consider advancing to using [Neo4j and its AI]([Neo4j database](https://neo4j.com/)) features directly. 
 
-2. **No embeddings:** This makes `ki` AI-vendor neutral and instance to set up without having to worry about 3rd party integrations.  Read the blog (link TBD) to see how `ki` accomplishes semantic search without vectors.   
+3. **No embeddings:** This makes `ki` AI-vendor neutral and instant to set up without having to worry about 3rd party integrations.  Read the blog (link TBD) to see how `ki` accomplishes semantic search without vectors.   
