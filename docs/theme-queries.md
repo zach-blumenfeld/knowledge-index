@@ -1,11 +1,11 @@
 # Theme producer — GDS queries + pipeline script
 
-**Status: draft — producer side of `docs/theme-format.md`. No CLI integration yet.** This documents the Cypher + GDS pipeline that emits the wire records the theme renderer consumes. Requires the **GDS plugin** (Leiden ships in GDS ≥ 2.x; not available on Aura Free) and the `graphdatascience` Python client (`uv add graphdatascience`).
+> **⚠️ Status: DRAFT — not yet implemented.** Producer side of `docs/theme-format.md`. No CLI integration yet — there is no `ki theme` command; the pipeline below runs only via the standalone `scripts/theme_producer.py`. This documents the Cypher + GDS pipeline that emits the wire records the theme renderer consumes. Requires the **GDS plugin** (Leiden ships in GDS ≥ 2.x; not available on Aura Free) and the `graphdatascience` Python client (`uv add graphdatascience`).
 
 Pipeline: **project doc-level link graph (docs + glue nodes) → Leiden (mutate `themeId`) → per-community conductance → write `themeId` → renderer queries → drop projection.**
 
 > **Runnable version: `scripts/theme_producer.py`** — same pipeline as the embedded script below, plus ki-style vault/profile resolution (`.ki/vault.yaml` → `~/.config/ki/config.yaml`), a friendly GDS-missing error, and a theme-format renderer (`--json` for raw wire records). Run from a vault directory:
-> `uv run --with graphdatascience python scripts/theme_producer.py [vault-path] [--gamma 1.0] [--min-docs 3] [--exclude CLAUDE.md] [--json]`
+> `uv run --with graphdatascience python scripts/theme_producer.py [vault-path] [--gamma 1.0] [--min-docs 3] [--exclude CLAUDE.md] [--top-k 5] [--json]`
 
 Design decisions baked in:
 
@@ -14,6 +14,7 @@ Design decisions baked in:
 - **Undirected, weighted.** GDS Leiden is defined on undirected graphs; weight = number of links between the doc pair (parallel `LINKS_TO` edges count).
 - **Leiden** for community detection (refinement of Louvain — guarantees well-connected communities). `random_seed` + `concurrency=1` for deterministic theme assignment within an index generation (theme-format.md stability contract).
 - **Theme floor:** `min_theme_doc_count` (default 3) — themes with fewer `LOCAL_FILE` member docs fold into ungrouped after write-back (§4c). Not delegated to Leiden's `minCommunitySize`, which counts projected nodes including glue.
+- **Top-k cut:** `--top-k K` renders only the K biggest themes for first-use lay-of-the-land at minimal context cost. **Display-only, after Leiden** — unlike the floor, hidden themes are real: they keep their `themeId`s and stay counted as grouped; the header accounts for them (`showing top K — H smaller themes cover D more docs`) and crossovers into hidden themes are suppressed.
 - **Exclusions:** `--exclude <doc>` (repeatable; basename or vault-relative path, case-insensitive) removes hub docs (`CLAUDE.md`, `index.md`, MOC pages) from the **entire universe** — projection, membership, binds targets, crossovers, and header denominators — not just from the display. Hub edges distort the communities themselves, so filtering must happen before Leiden, not after. Excluded docs surface honestly in the header (`· N excluded`), never silently. Predicate: `toLower(d.name) IN $exclude OR substring(d.uri, size($vaultPrefix)) IN $exclude`, applied to both ends of every match (see `scripts/theme_producer.py`).
 - **Cohesion word** (`tightly / moderately / loosely interlinked`) derives from per-community **conductance** (`gds.conductance` metric over the mutated `themeId` — the fraction of a theme's link mass that leaves the theme; low = tight). One in-memory metric call, no extra Cypher pass, not size-biased the way edge density is, and it sees glue edges so co-citation-held themes are measured fairly. Thresholds live here, never in the output. (An earlier draft blended per-community modularity with doc–doc edge density; dropped — both inputs were biased and the density query cost a second full pass over the vault's links.)
 

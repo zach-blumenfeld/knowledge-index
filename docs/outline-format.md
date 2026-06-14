@@ -8,6 +8,35 @@ This document defines the format only. Flag semantics (positional `<uri>`, `--de
 
 `ki outline` writes the rendered format to stdout. To save it to a file, pipe (`ki outline > outline.txt`) — there is no separate output-format flag.
 
+## Quick example
+
+A complete `ki outline` render for a small vault:
+
+```
+Key:  V Vault   F Folder   D Document   S Section   L Links-to
+
+NAME                                              T   URI
+my-knowledge-base ............................... V   abc-123
+  ideas/ ........................................ F   abc-123/ideas
+    big-idea.md ................................. D   abc-123/ideas/big-idea.md
+      Big Idea .................................. S   abc-123/ideas/big-idea.md#big-idea
+        Background .............................. S   abc-123/ideas/big-idea.md#big-idea/background
+        Origins ................................. S   abc-123/ideas/big-idea.md#big-idea/origins
+          → Early Draft ......................... L   abc-123/refs/birth.md#early-draft
+  refs/ ......................................... F   abc-123/refs
+    birth.md .................................... D   abc-123/refs/birth.md
+      Early Draft ............................... S   abc-123/refs/birth.md#early-draft
+```
+
+Reading it:
+
+- The two-line header (key + column header) is always printed — see *Header*.
+- `ideas/` and `refs/` sort alphabetically under the vault; `Background` and `Origins` follow the document's reading order, not the alphabet — see *Ordering*.
+- The `→ Early Draft` row is an outbound `:LINKS_TO` edge from `Origins`, rendered as a child row with type `L`. Its target is not expanded inline — see *LINKS_TO rendering*.
+- Every URI is full and verbatim: copy any of them straight into `ki outline <uri>` or `ki get <uri>`.
+
+The sections below define each of these pieces precisely.
+
 ## Layout
 
 ### Header
@@ -89,9 +118,9 @@ The `B.12` Cypher in `docs/retrieval-queries.md` is responsible for surfacing `N
 Outbound `:LINKS_TO` edges from a section render as **child rows of the source section**, prefixed with `→` and one extra indent step.
 
 ```
-        Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
-          → Early Draft .......................... L   my-notes/refs/birth.md#big-idea/early-draft
-        Implementation ........................... S   vault://abc-123/ideas/big-idea.md#big-idea/implementation
+        Origins .................................. S   abc-123/ideas/big-idea.md#big-idea/origins
+          → Early Draft .......................... L   abc-123/refs/birth.md#early-draft
+        Implementation ........................... S   abc-123/ideas/big-idea.md#big-idea/implementation
 ```
 
 - The left-side hint is the target's `displayName` — heading text for Section targets, filename for Document targets, the markdown link text (e.g. `[Launch blog](https://...)` → `Launch blog`) for #37 external / stub targets. The full URI lives in the URI column on the same row, so the hint never needs to repeat any of it. Falls back to the literal `links_to` when no displayName is recorded (defensive — should be rare; surfaces as a visible breadcrumb that the target is missing a label).
@@ -105,10 +134,10 @@ Rendering LINKS_TO inline rather than cross-branching is a deliberate v1 simplif
 Section URIs in the URI column show the **full URI**, including the doc URI and the full heading-path fragment:
 
 ```
-    big-idea.md .................................. D   vault://abc-123/ideas/big-idea.md
-      Big Idea ................................... S   vault://abc-123/ideas/big-idea.md#big-idea
-        Background ............................... S   vault://abc-123/ideas/big-idea.md#big-idea/background
-        Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
+    big-idea.md .................................. D   abc-123/ideas/big-idea.md
+      Big Idea ................................... S   abc-123/ideas/big-idea.md#big-idea
+        Background ............................... S   abc-123/ideas/big-idea.md#big-idea/background
+        Origins .................................. S   abc-123/ideas/big-idea.md#big-idea/origins
 ```
 
 The fragment for a nested heading is the **full heading path** (`<h1-slug>/<h2-slug>/...`), not just the leaf — this matches the on-disk `Section.uri` exactly. This means deeply nested sections under a long heading produce long URIs. We accept the verbosity because:
@@ -122,7 +151,7 @@ The fragment for a nested heading is the **full heading path** (`<h1-slug>/<h2-s
 The name column has a hard cap (default 48 characters, including indent). Any row whose `indent + name` would exceed the cap is truncated with a trailing `…`:
 
 ```
-    exploring-multi-modal-retrieval-and-rerank…    D   vault://abc-123/ideas/exploring-multi-modal-retrieval-and-rerankers.md
+    exploring-multi-modal-retrieval-and-rerank…    D   abc-123/ideas/exploring-multi-modal-retrieval-and-rerankers.md
       Implementation details for the section-tr…   S   #implementation-details-for-the-section-tree-builder
 ```
 
@@ -182,13 +211,13 @@ When `ki outline` is invoked without a positional URI (or back-compat `--at`), t
 The renderer treats the `parent_uri = null` group as the implicit "root group," sorts alphabetically by `name`, and DFS-emits each vault tree in turn. There is no separator between vaults in the rendered output — the `V` row at depth 0 is the visual boundary.
 
 ```
-vault-one ........................... V   vault://abc
-  ideas/ ............................. F   vault://abc/ideas
-    big-idea.md ...................... D   vault://abc/ideas/big-idea.md
+vault-one ........................... V   abc
+  ideas/ ............................. F   abc/ideas
+    big-idea.md ...................... D   abc/ideas/big-idea.md
       ...
-vault-two ........................... V   vault://def
-  research/ .......................... F   vault://def/research
-    notes.md ......................... D   vault://def/research/notes.md
+vault-two ........................... V   def
+  research/ .......................... F   def/research
+    notes.md ......................... D   def/research/notes.md
       ...
 ```
 
@@ -262,23 +291,23 @@ Key points:
 For the rendered output:
 
 ```
-my-knowledge-base ............................... V   vault://abc-123
-  ideas/ ......................................... F   vault://abc-123/ideas
-    big-idea.md .................................. D   vault://abc-123/ideas/big-idea.md
-      Big Idea ................................... S   vault://abc-123/ideas/big-idea.md#big-idea
-        Origins .................................. S   vault://abc-123/ideas/big-idea.md#big-idea/origins
-          → Early Draft .......................... L   my-notes/refs/birth.md#big-idea/early-draft
+my-knowledge-base ............................... V   abc-123
+  ideas/ ......................................... F   abc-123/ideas
+    big-idea.md .................................. D   abc-123/ideas/big-idea.md
+      Big Idea ................................... S   abc-123/ideas/big-idea.md#big-idea
+        Origins .................................. S   abc-123/ideas/big-idea.md#big-idea/origins
+          → Early Draft .......................... L   abc-123/refs/birth.md#early-draft
 ```
 
 the wire rows are (in render order):
 
 ```
-{depth: 0, inrel: null,       label: "Vault",    name: "my-knowledge-base", displayName: "my-knowledge-base", uri: "vault://abc-123",                                              parent_uri: null,                                       sort_pos: null}
-{depth: 1, inrel: "HAS",      label: "Folder",   name: "ideas",             displayName: "ideas",             uri: "vault://abc-123/ideas",                                         parent_uri: "vault://abc-123",                          sort_pos: null}
-{depth: 2, inrel: "HAS",      label: "Document", name: "big-idea.md",       displayName: "Big Idea",          uri: "vault://abc-123/ideas/big-idea.md",                             parent_uri: "vault://abc-123/ideas",                    sort_pos: null}
-{depth: 3, inrel: "HAS",      label: "Section",  name: "big-idea",          displayName: "Big Idea",          uri: "vault://abc-123/ideas/big-idea.md#big-idea",                    parent_uri: "vault://abc-123/ideas/big-idea.md",        sort_pos: 0}
-{depth: 4, inrel: "HAS",      label: "Section",  name: "big-idea/origins",  displayName: "Origins",           uri: "vault://abc-123/ideas/big-idea.md#big-idea/origins",            parent_uri: "vault://abc-123/ideas/big-idea.md#big-idea", sort_pos: 2}
-{depth: 5, inrel: "LINKS_TO", label: "Section",  name: "early-draft",       displayName: "Early Draft",       uri: "vault://abc-123/refs/birth.md#early-draft",                     parent_uri: "vault://abc-123/ideas/big-idea.md#big-idea/origins", sort_pos: null}
+{depth: 0, inrel: null,       label: "Vault",    name: "my-knowledge-base", displayName: "my-knowledge-base", uri: "abc-123",                                              parent_uri: null,                                       sort_pos: null}
+{depth: 1, inrel: "HAS",      label: "Folder",   name: "ideas",             displayName: "ideas",             uri: "abc-123/ideas",                                         parent_uri: "abc-123",                          sort_pos: null}
+{depth: 2, inrel: "HAS",      label: "Document", name: "big-idea.md",       displayName: "Big Idea",          uri: "abc-123/ideas/big-idea.md",                             parent_uri: "abc-123/ideas",                    sort_pos: null}
+{depth: 3, inrel: "HAS",      label: "Section",  name: "big-idea",          displayName: "Big Idea",          uri: "abc-123/ideas/big-idea.md#big-idea",                    parent_uri: "abc-123/ideas/big-idea.md",        sort_pos: 0}
+{depth: 4, inrel: "HAS",      label: "Section",  name: "big-idea/origins",  displayName: "Origins",           uri: "abc-123/ideas/big-idea.md#big-idea/origins",            parent_uri: "abc-123/ideas/big-idea.md#big-idea", sort_pos: 2}
+{depth: 5, inrel: "LINKS_TO", label: "Section",  name: "early-draft",       displayName: "Early Draft",       uri: "abc-123/refs/birth.md#early-draft",                     parent_uri: "abc-123/ideas/big-idea.md#big-idea/origins", sort_pos: null}
 ```
 
 Notes on the example:
@@ -292,9 +321,9 @@ Notes on the example:
 `--full` adds a description sub-line under each **Vault** row:
 
 ```
-my-knowledge-base ............................... V   vault://abc-123
+my-knowledge-base ............................... V   abc-123
     > My personal knowledge base for ideas, research, and projects.
-  ideas/ ......................................... F   vault://abc-123/ideas
+  ideas/ ......................................... F   abc-123/ideas
 ```
 
 - The sub-line is indented one extra level past the parent name and prefixed with `>`.

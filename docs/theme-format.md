@@ -1,6 +1,6 @@
 # Theme format for `ki theme`
 
-**Status: draft — format only.** How themes are computed (clustering, GDS vs not, ingest vs read time) is out of scope; this pins down what the output looks like in a context window. Companion to `docs/outline-format.md`; reuses its row conventions.
+> **⚠️ Status: DRAFT — not yet implemented.** `ki theme` does not exist as a command yet; this is a design doc, not a description of shipping behavior. Format only — how themes are computed (clustering, GDS vs not, ingest vs read time) is out of scope; this pins down what the output looks like in a context window. Companion to `docs/outline-format.md`; reuses its row conventions.
 
 **Design rule: self-explanatory like outline.** No jargon labels that need a guide. Every label is a plain-English phrase that defines its own content, and every count carries its unit inline (`in 31 docs`, never `×31`). A reader (human or agent) seeing the output cold should have no open questions about what a line means.
 
@@ -19,6 +19,7 @@ THEMES  <vault-name>   <N> docs · <G> grouped into <K> themes by wikilinks · <
 - **`by wikilinks`** is the method statement, in plain words. If the producer degrades (link-sparse vault, capability missing), the phrase changes — e.g. `grouped into 6 themes by folders` — so differently-derived clusters are never presented identically.
 - **`<U> ungrouped`** is always printed, even when 0 — it stops an agent from overclaiming coverage (`187 grouped` ≠ "the vault is about these K things"). `N = G + U` always reconciles; the reader can derive coverage % themselves, so none is printed.
 - **`· <E> excluded`** is appended only when the run excluded docs (hub pages like `CLAUDE.md` / `index.md` dropped from the whole analysis via `--exclude`). Excluded docs leave the `<N>` denominator entirely — the segment exists so that removal is visible, never silent.
+- **`(showing top <K> — <H> smaller themes cover <D> more docs)`** is appended when a `top_k` cut is active. The cut is **display-only**: the hidden themes remain real (and keep their `themeId`s in the graph) — they are *not* folded into ungrouped, so `<G>` still counts them. Crossover lines pointing at hidden themes are suppressed (no dangling `T<j>` references). Intended first-use pattern: an agent wanting a lay-of-the-land asks for a small `top_k`, reads the header to see how much theme mass is below the cut, and widens only if needed.
 - Doc counts cover internal md docs only; stubs are excluded.
 
 Header is always printed, even with zero themes (`0 grouped into 0 themes · N ungrouped`).
