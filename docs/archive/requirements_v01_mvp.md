@@ -1,3 +1,10 @@
+> **⚠️ ARCHIVED — historical, not current truth.** This is the original v0.1 MVP
+> design spec, kept for provenance. Its role is now split across the live canon:
+> [`docs/scoping.md`](../scoping.md) (profiles/vaults/config/command surface),
+> [`docs/general-philosophy.md`](../general-philosophy.md) (design principles),
+> [`docs/data-model/schema.md`](../data-model/schema.md) (schema), and
+> [`docs/commands/`](../commands/) (per-command behavior). Read those for anything current.
+
 # Knowledge Index (`ki`)
 > Search index for agent memory — knowledge graph index for your documents
 

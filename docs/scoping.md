@@ -261,6 +261,6 @@ the Neo4j rows at all.
 
 ## See also
 
-- `docs/search.md` — the full `ki search` model (Lucene, `--under`, the scope
+- `docs/commands/search.md` — the full `ki search` model (Lucene, `--under`, the scope
   predicate, stubs).
-- `docs/data-model.md` — node labels, uri conventions, containment.
+- `docs/data-model/schema.md` — node labels, uri conventions, containment.

@@ -1,6 +1,6 @@
 ## Retrieval queries for the new data model
 
-Same query *shapes* as [docs/research](research-data-model/research-retrieval-queries.md), ported to the new
+Same query *shapes* as [docs/research](../archive/research-data-model/research-retrieval-queries.md), ported to the new
 `(User)–(Vault)–(Folder)–(Document)–(Section)` schema.
 
 ### Mapping cheatsheet
@@ -10,7 +10,7 @@ Same query *shapes* as [docs/research](research-data-model/research-retrieval-qu
 | `:Section`                                 | `:Section (uri, displayName, headingLevel, content)`                               |
 | `:Paragraph (text)`                        | — folded into `Section.content`                                                    |
 | `:Chunk (text, embedding)`                 | — deferred (v1 has no embeddings)                                                  |
-| `:HAS_SECTION` / `:HAS_PARAGRAPH` (linear) | `:HAS` (universal containment edge — `Vault\|Folder\|Document\|Section` → `Folder\|Document\|Section`; see `docs/data-model.md` §4.2) |
+| `:HAS_SECTION` / `:HAS_PARAGRAPH` (linear) | `:HAS` (universal containment edge — `Vault\|Folder\|Document\|Section` → `Folder\|Document\|Section`; see `docs/data-model/schema.md` §4.2) |
 | `:NEXT_SECTION` / `:NEXT_PARAGRAPH`        | `:NEXT_SECTION` — threads ALL sections of a document in DFS reading order          |
 | `:MENTIONS` (article-to-article projected) | `:LINKS_TO` (`Document`\|`Section` → `Document`\|`Section`)                        |
 | `:REDIRECTS_TO`                            | `Document.aliases` (wikilinks resolved at ingest time)                             |
@@ -58,8 +58,8 @@ The same idea works for any of B.1 / B.2 / B.11 (with `:Vault`-scope `folder_uri
 - **B.9 / B.10** — straightforward `LINKS_TO` ports with endpoint-projection (any section endpoint → its owning `Document`) so the result shape stays at document granularity like the originals.
 - **B.11 Vault fulltext** — see *Per-query* notes above; same shared `content_search` index, filtered to `:Vault`. Powers `ki search --type vault` for cross-vault routing.
 - **B.12 / B.12-links Containment tree** — `ki outline`'s engine. Two queries:
-  - **B.12** walks `:HAS` from `$root_uri` up to `$depth` steps, depth-capped via a quantified path pattern (`{1,$depth}`) so the bound prunes during traversal rather than as a post-filter (same trick as B.3). Returns one row per node — root + HAS descendants — in the wire format defined by `docs/outline-format.md` *Wire record format*: `{depth, inrel, label, name, displayName, uri, parent_uri, sort_pos}`. Sections carry `sort_pos` (NEXT_SECTION position in their parent document) so the renderer can order sibling sections by reading order, not alphabetically. When `$root_uri` is `null` / absent, B.12 matches every `:Vault` as a root and fans out — the renderer treats them as a multi-root sibling group at `parent_uri = null`, sorted alphabetically by `name`. Multi-user scoping via `:USES_VAULT` is a follow-up; single-user makes "all vaults" unambiguous today.
-  - **B.12-links** is the LINKS_TO sub-pass: given a list of D/S URIs (`$source_uris`), returns their outbound `:LINKS_TO` edges. The renderer combines B.12 + B.12-links output, groups by `parent_uri`, sorts per the rules in `docs/outline-format.md` *Sibling ordering*, and DFS-emits.
+  - **B.12** walks `:HAS` from `$root_uri` up to `$depth` steps, depth-capped via a quantified path pattern (`{1,$depth}`) so the bound prunes during traversal rather than as a post-filter (same trick as B.3). Returns one row per node — root + HAS descendants — in the wire format defined by `docs/commands/outline.md` *Wire record format*: `{depth, inrel, label, name, displayName, uri, parent_uri, sort_pos}`. Sections carry `sort_pos` (NEXT_SECTION position in their parent document) so the renderer can order sibling sections by reading order, not alphabetically. When `$root_uri` is `null` / absent, B.12 matches every `:Vault` as a root and fans out — the renderer treats them as a multi-root sibling group at `parent_uri = null`, sorted alphabetically by `name`. Multi-user scoping via `:USES_VAULT` is a follow-up; single-user makes "all vaults" unambiguous today.
+  - **B.12-links** is the LINKS_TO sub-pass: given a list of D/S URIs (`$source_uris`), returns their outbound `:LINKS_TO` edges. The renderer combines B.12 + B.12-links output, groups by `parent_uri`, sorts per the rules in `docs/commands/outline.md` *Sibling ordering*, and DFS-emits.
   - Splitting hierarchy and LINKS_TO into two queries keeps each small. The cost is one extra round trip, paid every `ki outline` invocation.
 - **B.13 / B.14 `ki get`** — fetch a node's metadata and content by URI. Two queries:
   - **B.13** is a single-node lookup that returns the union of properties across `:Document` and `:Section` (Neo4j returns `null` for missing properties, so one query covers both). The dispatcher in `src/ki/commands/get.py` keys off `label` to pick the relevant subset for output. `ki get` rejects `:Folder` and `:Vault` URIs with a hint pointing at `ki outline` / `ki vault list` — text retrieval isn't what those nodes represent. B.13 is the metadata "shell" returned for every `ki get` row regardless of `--type`.
@@ -360,7 +360,7 @@ B.12 Containment tree (hierarchy walk)
 ```cypher
 // New in v0.4.0. `ki outline`'s HAS walker (formerly `ki tree`). Returns the root row + one row per
 // HAS-descendant up to $depth steps. The full wire format is defined in
-// `docs/outline-format.md` *Wire record format* — this query is its only producer.
+// `docs/commands/outline.md` *Wire record format* — this query is its only producer.
 //
 // Sections additionally carry `sort_pos` (their index in the parent document's
 // NEXT_SECTION chain) so the renderer can order sibling sections by reading
@@ -435,7 +435,7 @@ B.12-links Outbound LINKS_TO sub-pass
 //
 // The renderer combines these rows with the B.12 hierarchy rows, sets
 // `depth = source_depth + 1` and `inrel = 'LINKS_TO'`, and sorts L siblings
-// alphabetically by target uri. See `docs/outline-format.md` *Renderer pseudocode*.
+// alphabetically by target uri. See `docs/commands/outline.md` *Renderer pseudocode*.
 //
 // $source_uris — list of :Document and :Section URIs from the B.12 result.
 UNWIND $source_uris AS source_uri

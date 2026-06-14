@@ -3,7 +3,7 @@
 `ki get <uri> [<uri> …]` fetches a node's **metadata and content by uri**. It's the
 retrieval end of the loop: `ki search` and `ki outline` hand you uris (and optionally some content in the case of `ki search`); `ki get`
 turns a uri into the actual text. For the profile/vault model it shares with the
-other read commands, see `docs/scoping.md`; for `search`, `docs/search.md`.
+other read commands, see `docs/scoping.md`; for `search`, `docs/commands/search.md`.
 
 ---
 
@@ -35,7 +35,7 @@ Use `ki outline` to enumerate a folder/vault; `ki vault list` to see vaults.
 | `full` | the **reconstructed reading-order body** of the whole subtree | you want everything under the node in one shot |
 
 The **`content`** level reflects ki's *Content Construction Rules* (see
-`docs/data-model.md`): a node stores only the body text directly under its own
+`docs/data-model/schema.md`): a node stores only the body text directly under its own
 heading, followed by `uri:` pointer lines to its direct children. So `--type
 content` is shallow by design — child body text isn't included; you see pointers
 and can `ki get` those next.
@@ -102,7 +102,7 @@ echoed so you can fall back to reading the file directly.
 A stub Document (an external URL or non-`.md` link target — `sourceType =
 URL_LINK`) has **no `content`**. `ki get` on a stub returns just its metadata
 (`path`/`displayName`); `--type content`/`full` come back empty. That's expected —
-the stub exists as a link target, not as indexed text (see `docs/search.md` §6).
+the stub exists as a link target, not as indexed text (see `docs/commands/search.md` §6).
 
 ---
 
@@ -125,7 +125,7 @@ in the resolved profile** — there's no per-call vault lock.
 ## See also
 
 - `docs/scoping.md` — profiles, vaults, and how the read commands resolve them.
-- `docs/search.md` — `ki search` (returns the uris you feed here).
-- `docs/outline-format.md` — `ki outline` (the other uri source).
-- `docs/data-model.md` — *Content Construction Rules* (the `content` + `uri:`
+- `docs/commands/search.md` — `ki search` (returns the uris you feed here).
+- `docs/commands/outline.md` — `ki outline` (the other uri source).
+- `docs/data-model/schema.md` — *Content Construction Rules* (the `content` + `uri:`
   pointer model that `--type content`/`full` read and reconstruct).

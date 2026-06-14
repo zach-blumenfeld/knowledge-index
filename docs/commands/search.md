@@ -282,7 +282,7 @@ ki search "incident" --profile work --vault api-docs,runbooks  # two vaults
 
 - `docs/scoping.md` — the foundational profile / vault / scoping model (this doc is
   the search-specific deep dive on top of it).
-- `docs/data-model.md` — node labels, uri conventions, containment.
+- `docs/data-model/schema.md` — node labels, uri conventions, containment.
 
 ---
 

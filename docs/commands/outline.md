@@ -4,7 +4,7 @@ The default output of `ki outline` is a table-of-contents-style render of the va
 
 > The command was previously `ki tree`. `ki tree` is now a permanent alias for `ki outline` — same flags, same output. The format spec below uses `ki outline` throughout; replace mentally with `ki tree` if you're reading older transcripts.
 
-This document defines the rendered format. **Scope and flag semantics** (which profile/vault, the positional `<uri>`, `--profile`, `--depth`, back-compat `--at`) follow `docs/scoping.md` and the *Scoping* section just below; the underlying Cypher (`B.12`) lives in `docs/retrieval-queries.md`.
+This document defines the rendered format. **Scope and flag semantics** (which profile/vault, the positional `<uri>`, `--profile`, `--depth`, back-compat `--at`) follow `docs/scoping.md` and the *Scoping* section just below; the underlying Cypher (`B.12`) lives in `docs/data-model/retrieval-queries.md`.
 
 `ki outline` writes the rendered format to stdout. To save it to a file, pipe (`ki outline > outline.txt`) — there is no separate output-format flag.
 
@@ -102,7 +102,7 @@ The name column carries enough information to identify the node without consulti
 |----------|---------------------------------------------------------------------------------------|
 | Vault    | `name` (the vault directory basename).                                                |
 | Folder   | `name + "/"`. Trailing slash is a visual hint, not part of the URI.                   |
-| Document | `displayName`. For internal md docs that's the filename (same as `name` after #28). For #37 stubs and external URLs it's the link-text label written on first ingest — see `docs/data-model.md` *Three Document kinds*. The URI column carries the on-disk filename or URL alongside. |
+| Document | `displayName`. For internal md docs that's the filename (same as `name` after #28). For #37 stubs and external URLs it's the link-text label written on first ingest — see `docs/data-model/schema.md` *Three Document kinds*. The URI column carries the on-disk filename or URL alongside. |
 | Section  | `displayName` (the heading text, not the slug).                                       |
 | Links-to | `→ <relative-target-hint>` — see *LINKS_TO rendering* below.                          |
 
@@ -125,7 +125,7 @@ Sibling rows are sorted in this order:
 | Sections under another Section        | `NEXT_SECTION` chain order.                                         |
 | `:LINKS_TO` edges from a single source | Alphabetical by target URI. Stable across runs.                     |
 
-The `B.12` Cypher in `docs/retrieval-queries.md` is responsible for surfacing `NEXT_SECTION` position; the renderer applies it as the sort key.
+The `B.12` Cypher in `docs/data-model/retrieval-queries.md` is responsible for surfacing `NEXT_SECTION` position; the renderer applies it as the sort key.
 
 ## LINKS_TO rendering
 
@@ -182,7 +182,7 @@ The name column width is computed once per render as `min(48, max(indent + name_
 
 ## Wire record format (B.12 → renderer)
 
-`ki outline` is built on `B.12` from `docs/retrieval-queries.md`. B.12 returns a flat row stream; the renderer assembles the tree client-side. The row schema is the contract between the two.
+`ki outline` is built on `B.12` from `docs/data-model/retrieval-queries.md`. B.12 returns a flat row stream; the renderer assembles the tree client-side. The row schema is the contract between the two.
 
 | Field         | Type                                  | Notes                                                                                                                              |
 |---------------|---------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|

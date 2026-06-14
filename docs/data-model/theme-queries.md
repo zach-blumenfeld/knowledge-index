@@ -1,6 +1,6 @@
 # Theme producer — GDS queries + pipeline script
 
-> **⚠️ Status: DRAFT — not yet implemented.** Producer side of `docs/theme-format.md`. No CLI integration yet — there is no `ki theme` command; the pipeline below runs only via the standalone `scripts/theme_producer.py`. This documents the Cypher + GDS pipeline that emits the wire records the theme renderer consumes. Requires the **GDS plugin** (Leiden ships in GDS ≥ 2.x; not available on Aura Free) and the `graphdatascience` Python client (`uv add graphdatascience`).
+> **⚠️ Status: DRAFT — not yet implemented.** Producer side of `docs/commands/theme-format.md`. No CLI integration yet — there is no `ki theme` command; the pipeline below runs only via the standalone `scripts/theme_producer.py`. This documents the Cypher + GDS pipeline that emits the wire records the theme renderer consumes. Requires the **GDS plugin** (Leiden ships in GDS ≥ 2.x; not available on Aura Free) and the `graphdatascience` Python client (`uv add graphdatascience`).
 
 Pipeline: **project doc-level link graph (docs + glue nodes) → Leiden (mutate `themeId`) → per-community conductance → write `themeId` → renderer queries → drop projection.**
 
@@ -249,7 +249,7 @@ Usage:  uv run python theme_producer.py <vault-uri> [gamma] [min-theme-doc-count
         gamma: Leiden resolution, default 1.0 — >1 → more, smaller themes
         min-theme-doc-count: themes with fewer member docs fold into ungrouped (default 3)
 Env:    NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD  (the vault's ki profile)
-Output: wire records per docs/theme-format.md, as JSON on stdout.
+Output: wire records per docs/commands/theme-format.md, as JSON on stdout.
 """
 
 import json

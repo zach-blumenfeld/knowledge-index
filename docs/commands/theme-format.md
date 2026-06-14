@@ -1,6 +1,6 @@
 # Theme format for `ki theme`
 
-> **⚠️ Status: DRAFT — not yet implemented.** `ki theme` does not exist as a command yet; this is a design doc, not a description of shipping behavior. Format only — how themes are computed (clustering, GDS vs not, ingest vs read time) is out of scope; this pins down what the output looks like in a context window. Companion to `docs/outline-format.md`; reuses its row conventions.
+> **⚠️ Status: DRAFT — not yet implemented.** `ki theme` does not exist as a command yet; this is a design doc, not a description of shipping behavior. Format only — how themes are computed (clustering, GDS vs not, ingest vs read time) is out of scope; this pins down what the output looks like in a context window. Companion to `docs/commands/outline.md`; reuses its row conventions.
 
 **Design rule: self-explanatory like outline.** No jargon labels that need a guide. Every label is a plain-English phrase that defines its own content, and every count carries its unit inline (`in 31 docs`, never `×31`). A reader (human or agent) seeing the output cold should have no open questions about what a line means.
 

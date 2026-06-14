@@ -3,9 +3,9 @@
 How `ki` turns markdown links into graph edges and target nodes. This page is the behavior reference — if a link form doesn't appear here, ki either drops it silently (rare; see *What ki does not capture* below) or it falls into one of the documented buckets.
 
 Related docs:
-- `docs/data-model.md` *Three Document kinds* — the node shapes that target nodes take.
-- `docs/index_rm_behavior.md` — what happens to link targets on re-index and `ki drop`.
-- `docs/ingest-cypher.md` §4.3 step 5.5 / 5.6 — the underlying MERGE Cypher.
+- `docs/data-model/schema.md` *Three Document kinds* — the node shapes that target nodes take.
+- `docs/data-model/index_rm_behavior.md` — what happens to link targets on re-index and `ki drop`.
+- `docs/data-model/ingest-cypher.md` §4.3 step 5.5 / 5.6 — the underlying MERGE Cypher.
 
 ## What `ki` recognizes
 
@@ -80,7 +80,7 @@ External Documents have:
 - `displayName = the markdown link text` from the first source that introduced this URL (`ON CREATE SET` — sticky across re-ingests)
 - No `path`, no `fileHash`, no incoming `:HAS` edge
 
-The single-parent `:HAS` invariant explicitly **does not apply** to external Documents (see `docs/data-model.md` §4.2). External Documents live outside the containment tree and are reachable only via `:LINKS_TO`.
+The single-parent `:HAS` invariant explicitly **does not apply** to external Documents (see `docs/data-model/schema.md` §4.2). External Documents live outside the containment tree and are reachable only via `:LINKS_TO`.
 
 Cross-vault collapse comes for free: two vaults that link the same URL share one external `:Document` node with `:LINKS_TO` edges from both.
 
@@ -109,11 +109,11 @@ For internal `.md` Documents the displayName always equals the filename (per #28
 | `ki search --types document` | Yes — external Documents are in the `content_search` fulltext index via `displayName + aliases`. | Yes. |
 | `ki search --types section` | LINKS_TO edges affect ranking indirectly via section content (which still contains the raw markdown), but external Documents themselves are not sections. | Same. |
 | `ki get <uri>` | Yes — pass an external URL and get the Document's metadata. | Yes — pass the stub's URI. `--type full` and `--type content` are no-ops for stubs and externals since they have no `content`. |
-| `ki drop <vault>` | Survives if any other vault still links to it. Otherwise GC'd by the orphan-sweep step in the remove routine (see `docs/index_rm_behavior.md` *Removal routine* step 3). | Removed with the vault (HAS-attached). |
+| `ki drop <vault>` | Survives if any other vault still links to it. Otherwise GC'd by the orphan-sweep step in the remove routine (see `docs/data-model/index_rm_behavior.md` *Removal routine* step 3). | Removed with the vault (HAS-attached). |
 
 ## Re-ingest behavior
 
-Re-indexing a vault nukes the vault's content first and re-ingests from scratch (`docs/index_rm_behavior.md`). For links:
+Re-indexing a vault nukes the vault's content first and re-ingests from scratch (`docs/data-model/index_rm_behavior.md`). For links:
 
 - **Wikilinks / md_links** to other content in the same vault: resolver is rebuilt from the surviving graph, so resolution is consistent.
 - **Internal non-md stubs** in the re-indexed vault: removed during the nuke step (they were HAS-attached to the vault). Re-created on the new ingest if the markdown link is still present.
@@ -139,7 +139,7 @@ This is a deliberate v1 punt — every normalization rule is a fresh debate (str
 - **Wikilinks to non-md files.** `[[some-file.pdf]]` is treated as a wikilink and tries to resolve via name/alias; if the resolver doesn't find a Document by that name, the link is silently dropped. To pull a non-md file into the graph, link it with markdown syntax: `[Spec](./spec.pdf)`.
 - **Auto-fetched titles or descriptions for external URLs.** ki does not hit the network at ingest. The link text is the only displayName signal.
 - **Backlinks.** ki captures outbound `:LINKS_TO` edges only. Backlinks (`who links TO this?`) are tracked in [#35](https://github.com/zach-blumenfeld/knowledge-index/issues/35).
-- **Persistent never-reuse for external Documents.** When an external Document loses all its LINKS_TO edges (orphan), the next removal-routine pass GC's it. If the URL is later re-linked, a fresh `:Document` is created — there's no tombstone history (matches the slug-reuse behavior documented in `docs/data-model.md`).
+- **Persistent never-reuse for external Documents.** When an external Document loses all its LINKS_TO edges (orphan), the next removal-routine pass GC's it. If the URL is later re-linked, a fresh `:Document` is created — there's no tombstone history (matches the slug-reuse behavior documented in `docs/data-model/schema.md`).
 
 ## Worked example
 
@@ -175,6 +175,6 @@ Five `:LINKS_TO` edges total, four target Documents created (one already existed
 | `src/ki/parser/markdown.py` | `_LINK_RE`, `_WIKILINK_RE`, `_EMBED_RE`; `_classify_link`; `_extract_links` builds `ParsedLink` rows. |
 | `src/ki/ingest/pipeline.py` | `_build_links_to_rows`, `_process_link`, `_resolve_non_md_link`, `_record_external`. Threads the source file's on-disk Path through `pending_links` so relative paths resolve. |
 | `src/ki/ingest/queries.py` | `WRITE_STUB_DOCUMENTS`, `WRITE_EXTERNAL_DOCUMENTS`, `WRITE_LINKS_TO`, `WRITE_DISPLAY_TEXT_ALIASES`. |
-| `docs/data-model.md` | Document kinds matrix; HAS-invariant amendment; displayName precedence rule. |
-| `docs/ingest-cypher.md` | Write-order narrative for steps 5.5 / 5.6 / 6 / 7. |
-| `docs/index_rm_behavior.md` | What happens to internal stubs vs external Documents on re-index and `ki drop`. |
+| `docs/data-model/schema.md` | Document kinds matrix; HAS-invariant amendment; displayName precedence rule. |
+| `docs/data-model/ingest-cypher.md` | Write-order narrative for steps 5.5 / 5.6 / 6 / 7. |
+| `docs/data-model/index_rm_behavior.md` | What happens to internal stubs vs external Documents on re-index and `ki drop`. |
