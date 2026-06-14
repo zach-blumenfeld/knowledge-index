@@ -93,29 +93,120 @@ reused on every re-index. **The basename is not always the uri** (because of `-N
 
 ---
 
-## 3. How a command finds its profile
+## 3. Working with `ki`: the command surface and how it scopes
 
-Most commands resolve the profile with one shared rule (`resolve_profile`),
-highest precedence first:
+### 3.1 The command surface
+
+`ki` commands fall into four groups. **`ki` only reads and indexes your markdown —
+it never edits your source files.** "Remove" commands remove *index* entries; the
+files on disk are untouched. (See `docs/general-philosophy.md`.)
+
+| Group | Commands | What they do |
+|---|---|---|
+| **Index & update (write)** | `index`, `add`\*, `rm`\*, `mv`\* | Build/refresh the graph from source markdown. `index` = full (re)build of a vault; `add`/`rm`/`mv` = incremental per-target. (\* planned) |
+| **Search & retrieval (read)** | `search`, `outline`, `get`, `status` | Query and read the index. No source files needed. |
+| **Remove from index** | `drop`, `nuke` | `drop` = one vault; `nuke` = a whole profile. Index only — source files stay. |
+| **Admin & info** | `configure`, `profile list`, `vault list`, `init`, `skill` | Manage profiles, inspect what exists, install the agent skill. |
+
+### 3.2 How `ki` scopes profiles and vaults
+
+Resolving the right **profile** (which Neo4j) and **vault(s)** (which subtree) is
+what keeps `ki` correct and private. The surface is optimized for the common case —
+**one local vault at a time** — and generalizes from there. The single lever that
+takes you out of the default is **`--profile`**: passing it means *"I'm not working
+on the vault I'm standing in."*
+
+#### 3.2.1 The usual path — a local vault, one at a time
+
+You have the markdown on your filesystem and work one KB at a time.
+
+- **Profile and vault both come from where you are** — the `.ki/vault.yaml` at or
+  above your working dir (cwd, or `-C <dir>`). No `--profile`/`--vault`.
+- **First index binds the profile**: `ki index . --profile <p>` — chosen once (a
+  privacy boundary; never defaulted) and written into the marker. Every later
+  command reads that binding.
+- **The full lifecycle is available** — index/update, search/retrieve, drop.
+
+```sh
+cd ~/my-notes
+ki status                                   # NOT_A_VAULT? → first index:
+ki index . --profile personal --description "..."
+ki outline my-notes --full                  # get oriented
+ki search "..."                             # find the right slice
+ki get --type full "<uri>"                  # retrieve full content
+# ...edit files...
+ki index .                                  # resync (or `ki add <target>` once built)
+```
+
+#### 3.2.2 Remote vaults — the index without the source
+
+A vault is indexed in Neo4j but you **don't have its source files locally** (someone
+else indexed it; or it's a shared/production instance). `ki` supports **full search
+and retrieval** here — useful for giving many users (often read-only) access to a KB,
+and for powering production systems and apps.
+
+- **Name the target explicitly** — there's no local `.ki` to resolve from: pass
+  **`--profile`** (always) and identify the vault with **`--vault <uri>`** (search)
+  or the **uri argument** (`outline`/`get`).
+- **Reads work; source-dependent writes don't.** `search`/`outline`/`get` are fine.
+  `index`/`add`/`mv` need the source files, so **you can't update data in this
+  mode**. `drop`/`nuke` (index removal) *are* allowed — they don't need source.
+- **Read-only is enforced by Neo4j, not `ki`.** For true read-only access, use the
+  instance's [role-based access controls](https://neo4j.com/docs/operations-manual/current/authentication-authorization/manage-privileges/).
+
+> "Remote" means *you lack the source files* — independent of where Neo4j runs.
+> Local Podman and remote Aura are both reachable in any pattern here.
+
+#### 3.2.3 Cross-vault search — many vaults in one profile
+
+Not a primary use case, but searching across **multiple vaults in the same profile**
+is supported. Only meaningful for the **navigation/read** commands — `search`,
+`outline`, `get`:
+
+- **`--profile P`** alone → all vaults in P (global).
+- **`--profile P --vault a,b`** → just those vaults.
+
+Two caveats:
+1. **Indexing is per-vault**, so there are **no internal links across vaults**. The
+   only cross-vault connection is a shared *external* target (e.g. two vaults linking
+   the same URL → the same stub).
+2. **Cross-profile search is not supported** — only cross-vault *within* one profile
+   (one Neo4j database).
+
+#### 3.2.4 Special cases
+
+- **`nuke`** ignores vault scope — it wipes a whole **profile** (all its vaults).
+  Last resort; typed confirmation.
+- **`configure` / `profile list`** are **config-only** — no vault, no Neo4j
+  connection (they work before any vault exists).
+- **`init`** writes a `.ki/vault.yaml` marker without indexing (advanced).
+
+---
+
+## 4. How a command resolves its profile
+
+§4 and §5 are the *mechanism* behind §3 — how `ki` actually computes the profile and
+vault from your inputs.
+
+Most commands resolve the profile with one shared rule (`resolve_profile`), highest
+precedence first:
 
 1. **`--profile <name>`** — explicit override, wins over everything.
-2. **The vault's binding** — walk up from the working dir (the shell's cwd, or **`-C <dir>`** if passed) to `.ki/vault.yaml`, use
-   its `profile`. **This is the normal path: each vault owns its profile.**
-3. `$KI_PROFILE` if set.
+2. **The vault's binding** — walk up from the working dir (cwd, or `-C <dir>`) to
+   `.ki/vault.yaml`, and use its `profile`. **The normal path: each vault owns its
+   profile.**
+3. **`$KI_PROFILE`** if set.
 
-`-C <dir>` just means "resolve as if I were working in `<dir>`." That's the single
-lever for pointing `ki` at a vault you're not cd'd into.
-
-`profile` is never assumed by default. 
+`profile` is never assumed by default.
 
 If the vault names a profile that isn't in `config.yaml` (renamed, or cloned to a
 new machine), that's a clear error → add the profile with `ki configure`, or
 re-bind to an existing one by re-indexing: `ki index . --profile <p>`.
 
-> **`ki search` is stricter** — see §5. It never silently falls back to a default,
+> **`ki search` is stricter** — see §3.2. It never silently falls back to a default,
 > because *which database you searched* should never be a guess.
 
-## 4. How a command finds its vault
+## 5. How a command resolves its vault
 
 Same walk-up everywhere — there is **no stored "current vault."** It's computed
 from *where you run the command*:
@@ -124,58 +215,9 @@ from *where you run the command*:
 - walk **up** to the nearest `.ki/vault.yaml` (`find_vault_root`),
 - first hit wins; none found → not in a vault.
 
-
-
----
-
-## 5. Scoping by operation class
-
-### Index ops — `ki index`, `ki drop`, `ki nuke`
-
-Operate on **the directory you point at** (positional path or cwd).
-
-- **`ki index <dir>`** — first index **binds** the profile: you must choose it
-  (`--profile`), and it's written into the new `.ki/vault.yaml`. Never defaulted —
-  the profile is a privacy boundary. Re-index **honors the marker's** uri + binding
-  (so a synced vault keeps its identity across machines). Indexing fully rebuilds
-  that vault's graph.
-- **`ki drop <vault>`** — removes one whole vault from the index (source files
-  untouched). Profile resolved as in §3.
-- **`ki nuke`** — wipes an entire profile's graph (all vaults). Last resort.
-
-### Read ops — `ki status`, `ki outline`, `ki get`, `ki search`
-
-- **Profile** via §3 (`ki search` stricter, below).
-- **Vault** via §4 (cwd / `-C`).
-- **`ki outline <uri>` / `ki get <uri>`** take a uri to address *what* to read; the
-  profile/vault still resolve from where you are (or `-C`).
-- **`ki search`** has its own scope model (the reason this doc exists):
-
-  - **Local mode (default)** — profile *and* vault both come from the dir you're in
-    (cwd or `-C`). Narrow within it using **`--under <path-or-uri>`**. You never
-    type `--profile`/`--vault`. This is the 95% path.
-  - **Remote mode (explicit)** — opt in with `--profile`:
-    - `--profile P` → **global** search across all vaults in P.
-    - `--profile P --vault <uri,…>` → just those vaults.
-
-  So `--profile` is the *mode switch into remote*, not a silent scope-changer.
-  `--under` is the local filter; `--vault` is the remote selector. (See
-  `docs/search.md` for the full search picture.)
-
-### Write ops — incremental edits
-
-Keep the index in step with the filesystem **per target**, scoped to the vault you're
-in, without a full rebuild:
-
-- `ki add <doc|folder>` — upsert one document or folder.
-- `ki rm <doc|folder>` — remove one document or folder (not a whole vault — that's
-  `ki drop`).
-- `ki mv <old> <new>` — rename/move, updating the graph in place.
-
-Profile + vault resolve exactly as for read ops (§3/§4); the target is addressed by
-path or uri within that vault. *(Status: `index`/`drop`/`nuke` are built; the
-incremental `add`/`rm`/`mv` are the planned write surface — until then, re-`index`
-the vault.)*
+`-C <dir>` just means "resolve as if I were working in `<dir>`" — the single lever
+for pointing `ki` at a vault you're not cd'd into. (Remote / cross-vault work names
+the target explicitly instead; see §3.2.)
 
 ---
 
@@ -216,60 +258,3 @@ the Neo4j rows at all.
 - `docs/search.md` — the full `ki search` model (Lucene, `--under`, the scope
   predicate, stubs).
 - `docs/data-model.md` — node labels, uri conventions, containment.
-
-<!--
-
-## `ki` commands
-...quick overview of them broken out by type
-### Indexing and Updates (Write)
-
-### Search & Retrieval (Read)
-
-### Droping & Removing
-
-** reminder here that `ki` does not edit source data it is just an index.  see docs/general-phylosophy (spelled worng)
-
-### Managment/Admin /Info (not sure on right name..but basically all those)
-
-## How ki commands scope profiles and vaults
-
-Scoping to the right profile and vault(s) is critical for all `ki` commands to maintain correctness and security.
-We expect that most users will want to work with personal local KBs so the command surface prioritizes that use case, but as stated earlier this generalizes
-
-### The Usual Path: Vault on Local File System w/ One Vault at a time
-
-...specified in working dir or with -C
-for index on first binding profile is required, etc. 
-....explain the working process here. 
-
-### Working with Remote Vaults
-
-...specifically vaults not located on the local file system (Neo4j instace can be remote or not in any of these modes)
-....soecify --profile and --vault
-Note that some `ki` indexing commands (`index`) need source files so this mode doesn't allow updating data
-....
-
-### Cross-Vault Search & Retrieval
-
-While not a primary use case at the moment, searching across multple vaults within a profile is possible.
-
-This is only relevand for search and navigation commands: search, outline, and get 
-
-passing --profile by itself to search & outline overrides both profile and any vault setting, it implies retrieval over all vaults
-
-Important Caveats: 
-1. Indexing is done per vault so cross-vault linking is only possible for some external links,  i.e. url-links. 
-2. cross-profile search is not supported. Only cross-vaults within the same profile
-
-### Spoecial Considerations: Nuke, configure,...etc. 
-
-
-
-### Working with one local vault
-
-### Working with a Remote Vault
-
-### Cross-Vault Searches
-
-
--->
