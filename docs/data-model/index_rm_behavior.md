@@ -70,7 +70,7 @@ Reset the entire graph and remove every `.ki/vault.yaml` ki knows about.
 
 - `--yes`, `--keep-marker`, `--chunk-size N` — same semantics as `ki drop`.
 
-`ki nuke` is intentionally not exposed via auto-mode without explicit user consent (touches every vault, drops schema). See the safe-by-default principle in `docs/general-philosophy.md` and the agent auto-mode rules in `skills/knowledge-index/SKILL.md`.
+`ki nuke` is intentionally not exposed via auto-mode without explicit user consent (touches every vault, drops schema). See the safe-by-default principle in `docs/general-philosophy.md` and the agent auto-mode rules in `skills/knowledge-base/SKILL.md`.
 
 ## Removal routine
 

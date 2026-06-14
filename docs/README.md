@@ -5,12 +5,12 @@ Neo4j knowledge graph. This is the docs index — start at the top.
 
 ## Start here
 
-- [architecture.md](architecture.md) — end-to-end overview: layers, the graph,
-  write/read paths. Read this first.
 - [general-philosophy.md](general-philosophy.md) — the non-negotiable design
   principles (an index, not a document store; safe by default).
 - [scoping.md](scoping.md) — profiles, vaults, config, the command surface, and
   the local/remote scoping model. The keystone doc.
+- [architecture.md](architecture.md) — end-to-end overview: layers, the graph,
+  write/read paths. Read this first.
 
 ## Commands — [`commands/`](commands/)
 

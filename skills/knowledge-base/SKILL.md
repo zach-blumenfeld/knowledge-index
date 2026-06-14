@@ -1,5 +1,5 @@
 ---
-name: knowledge-index
+name: knowledge-base
 description: Search, navigate, and read a markdown knowledge base — a directory of notes, docs, or a wiki — via an auto-built knowledge-graph index over documents, their sections, and the wikilinks between them, retrieving the right slice instead of grepping and reading whole files. Use when working in a folder of markdown — setting up or maintaining a knowledge base, finding or retrieving content, summarizing it, or answering questions grounded in the notes.
 ---
 <!-- TODO

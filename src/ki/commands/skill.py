@@ -1,6 +1,6 @@
 """`ki skill <install|remove|list|print>` — manage the agent-skill bundle.
 
-The skill bundle is the markdown file at `skills/knowledge-index/SKILL.md` (shipped inside
+The skill bundle is the markdown file at `skills/knowledge-base/SKILL.md` (shipped inside
 the wheel as `ki/_resources/SKILL.md`). It tells AI agents when to invoke
 `ki` and how. `ki skill install` drops it into each supported agent's
 well-known config path so the agent picks it up without the user copying
@@ -18,7 +18,7 @@ UX shape mirrors `neo4j-cli skill` and the supported-agent catalog
 Adding a new agent is a one-line append to `AGENTS` below. Paths follow
 `<detect_dir>` (the marker we check for the agent's presence) and
 `<skills_dir>` (where bundles live). The actual file written is
-`<skills_dir>/ki/SKILL.md`.
+`<skills_dir>/knowledge-base/SKILL.md`.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ console = Console()
 SKILL_RESOURCE_PACKAGE = "ki._resources"
 SKILL_RESOURCE_NAME = "SKILL.md"
 SKILL_RESOURCE_REFERENCES = "references"  # bundled reference-doc subdir
-TOOL_NAME = "knowledge-index"
+TOOL_NAME = "knowledge-base"
 
 
 # --- agent catalog ----------------------------------------------------------
@@ -137,7 +137,7 @@ def read_bundled_skill() -> str:
     `ki/_resources/SKILL.md` so `importlib.resources` finds it.
 
     In a dev checkout (editable install): the wheel hasn't been built, so
-    fall back to the canonical repo path `skills/knowledge-index/SKILL.md`, located by
+    fall back to the canonical repo path `skills/knowledge-base/SKILL.md`, located by
     walking up from this module to the repo root. The fallback never fires
     in production.
     """
@@ -150,7 +150,7 @@ def read_bundled_skill() -> str:
 
     # Dev fallback: src/ki/commands/skill.py → src/ki/commands → src/ki → src → <repo>.
     repo_root = Path(__file__).resolve().parents[3]
-    candidate = repo_root / "skills" / "knowledge-index" / "SKILL.md"
+    candidate = repo_root / "skills" / "knowledge-base" / "SKILL.md"
     if candidate.is_file():
         return candidate.read_text(encoding="utf-8")
     raise FileNotFoundError(
@@ -164,7 +164,7 @@ def read_bundled_references() -> dict[str, str]:
 
     Mirror of :func:`read_bundled_skill`: prefer the wheel resource dir
     (`ki/_resources/references/`), fall back to the canonical repo dir
-    `skills/knowledge-index/references/` in a dev checkout. Returns an empty
+    `skills/knowledge-base/references/` in a dev checkout. Returns an empty
     dict if neither exists (older wheels predating the references bundle).
     """
     out: dict[str, str] = {}
@@ -179,7 +179,7 @@ def read_bundled_references() -> dict[str, str]:
         pass
 
     repo_root = Path(__file__).resolve().parents[3]
-    refs_dir = repo_root / "skills" / "knowledge-index" / SKILL_RESOURCE_REFERENCES
+    refs_dir = repo_root / "skills" / "knowledge-base" / SKILL_RESOURCE_REFERENCES
     if refs_dir.is_dir():
         for entry in sorted(refs_dir.glob("*.md")):
             out[entry.name] = entry.read_text(encoding="utf-8")

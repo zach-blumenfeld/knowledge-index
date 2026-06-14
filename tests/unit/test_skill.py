@@ -22,14 +22,14 @@ from ki.commands import skill as skill_mod
 def test_read_bundled_skill_returns_canonical_text():
     body = skill_mod.read_bundled_skill()
     assert "knowledge graph index" in body
-    assert "Trigger When" in body  # routing-rule heading from skills/knowledge-index/SKILL.md
+    assert "Trigger When" in body  # routing-rule heading from skills/knowledge-base/SKILL.md
 
 
 def test_read_bundled_skill_dev_fallback_resolves_to_repo_path():
     """In an editable / dev checkout there's no `_resources/SKILL.md`, so the
-    fallback should walk up to `<repo>/skills/knowledge-index/SKILL.md` and read it."""
+    fallback should walk up to `<repo>/skills/knowledge-base/SKILL.md` and read it."""
     repo_root = Path(skill_mod.__file__).resolve().parents[3]
-    canonical = repo_root / "skills" / "knowledge-index" / "SKILL.md"
+    canonical = repo_root / "skills" / "knowledge-base" / "SKILL.md"
     assert canonical.is_file()
     assert skill_mod.read_bundled_skill() == canonical.read_text(encoding="utf-8")
 
@@ -137,7 +137,7 @@ def test_remove_deletes_file_and_empty_per_tool_dir(fake_home):
     assert rc == 0
     target = _expected_skill_path(fake_home, "claude-code")
     assert not target.exists()
-    # Per-tool dir (`~/.claude/skills/knowledge-index/`) is cleaned up; the per-agent
+    # Per-tool dir (`~/.claude/skills/knowledge-base/`) is cleaned up; the per-agent
     # `skills/` dir is left alone (other tools may live in it).
     assert not target.parent.exists()
 

@@ -1,7 +1,7 @@
 """Integration-test plumbing.
 
 The suite needs a reachable Neo4j. To run it, point at any Neo4j you have
-(local Podman per `skills/knowledge-index/references/neo4j-podman.md`, Aura, anything Bolt-reachable):
+(local Podman per `skills/knowledge-base/references/neo4j-podman.md`, Aura, anything Bolt-reachable):
 
     export KI_TEST_NEO4J_URI=bolt://localhost:7687
     export KI_TEST_NEO4J_USER=neo4j
@@ -51,7 +51,7 @@ def neo4j_profile() -> Iterator[Profile]:
         pytest.skip(
             "integration tests need KI_TEST_NEO4J_URI / KI_TEST_NEO4J_USER / "
             "KI_TEST_NEO4J_PASSWORD env vars set. To bring up a local Neo4j, "
-            "see skills/knowledge-index/references/neo4j-podman.md."
+            "see skills/knowledge-base/references/neo4j-podman.md."
         )
 
     profile = Profile(

@@ -118,7 +118,7 @@ def _render_service_unavailable(
     """Render a Profile.source-aware recovery hint block for an ingest crash.
 
     #54 Fix 3. `local-podman` profiles get the canonical `neo4j-ki` container
-    commands and a pointer to `skills/knowledge-index/references/neo4j-podman.md` *Recovery*; other
+    commands and a pointer to `skills/knowledge-base/references/neo4j-podman.md` *Recovery*; other
     profiles get generic heap/batch/split guidance since we don't know their
     container shape.
     """
@@ -142,7 +142,7 @@ def _render_service_unavailable(
         )
         console.print(
             "[bold]Then retry the index.[/bold] Full recovery flow + heap "
-            "tuning notes live in [cyan]skills/knowledge-index/references/neo4j-podman.md[/cyan] "
+            "tuning notes live in [cyan]skills/knowledge-base/references/neo4j-podman.md[/cyan] "
             "(Recovery — graph went away)."
         )
     else:

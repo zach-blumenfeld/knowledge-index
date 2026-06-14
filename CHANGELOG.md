@@ -17,8 +17,8 @@ exact pattern. Editorial prose is fine; just don't change the heading.
 
 ### Changed
 
-- **Agent skill renamed `ki` → `knowledge-index`.** The bundled skill's frontmatter `name` is now `knowledge-index`, and `ki skill install` writes it to `<agent-config>/skills/knowledge-index/SKILL.md` (previously `.../skills/ki/SKILL.md`) — aligning the skill with the package name and the sibling `neo4j-cli` skill. The `ki` CLI command and the `ki` Python import package are unchanged.
-  - **Migration:** a prior `ki skill install` left the skill at the old `skills/ki/` path. After upgrading, re-run `ki skill install` to write the new `knowledge-index/` skill, then delete the stale `skills/ki/` directory in each agent's config by hand — `ki skill remove` now targets the new path and won't clean up the old one.
+- **Agent skill renamed `ki` → `knowledge-base`.** The bundled skill's frontmatter `name` is now `knowledge-base`, and `ki skill install` writes it to `<agent-config>/skills/knowledge-base/SKILL.md` (previously `.../skills/ki/SKILL.md`) — a use-case-descriptive name (the skill builds and searches a *knowledge base*), sitting alongside the sibling `neo4j-cli` skill. The `ki` CLI command and the `knowledge-index` Python package are unchanged.
+  - **Migration:** a prior `ki skill install` left the skill at the old `skills/ki/` path. After upgrading, re-run `ki skill install` to write the new `knowledge-base/` skill, then delete the stale `skills/ki/` directory in each agent's config by hand — `ki skill remove` now targets the new path and won't clean up the old one.
 
 ## [0.5.0] — 2026-05-22
 

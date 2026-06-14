@@ -2,7 +2,7 @@
 
 Three paths:
   1) Local      → wraps `podman` to run `neo4j:latest` locally.
-                  See skills/knowledge-index/references/neo4j-podman.md for the full runbook.
+                  See skills/knowledge-base/references/neo4j-podman.md for the full runbook.
   2) Aura       → wraps `neo4j-cli aura create` (cloud — billable).
   3) Existing   → prompt for URI + credentials.
 
@@ -117,7 +117,7 @@ def configure(
 def _configure_local(name: str) -> Profile:
     if not neo4j_podman.is_installed():
         raise click.ClickException(
-            "`podman` is not installed. See skills/knowledge-index/references/neo4j-podman.md "
+            "`podman` is not installed. See skills/knowledge-base/references/neo4j-podman.md "
             "(Preflight) for install steps — on macOS: `brew install podman` "
             "then `podman machine init && podman machine start`."
         )

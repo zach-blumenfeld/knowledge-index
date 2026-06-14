@@ -1,7 +1,7 @@
 """Thin wrapper around `podman` for the `ki configure → Local` path.
 
 The full runbook (commands, recovery, teardown) lives in
-`skills/knowledge-index/references/neo4j-podman.md` — this module mirrors the same canonical values
+`skills/knowledge-base/references/neo4j-podman.md` — this module mirrors the same canonical values
 (container name, volume, image, plugins, auth) so the doc and the code agree.
 
 Surface kept intentionally narrow:
@@ -72,7 +72,7 @@ def is_installed() -> bool:
 def _require() -> None:
     if not is_installed():
         raise PodmanNotInstalled(
-            "`podman` is not installed. See skills/knowledge-index/references/neo4j-podman.md "
+            "`podman` is not installed. See skills/knowledge-base/references/neo4j-podman.md "
             "(Preflight) for install steps — on macOS: `brew install podman` "
             "then `podman machine init && podman machine start`."
         )
@@ -183,7 +183,7 @@ def _wait_for_ready(bolt_port: int, timeout: int = 90) -> None:
     else:
         raise PodmanError(
             f"Neo4j did not open :{bolt_port} within {timeout}s. "
-            "Check `podman logs neo4j-ki` and skills/knowledge-index/references/neo4j-podman.md."
+            "Check `podman logs neo4j-ki` and skills/knowledge-base/references/neo4j-podman.md."
         )
     # Phase 2: wait for actual query readiness.
     while time.monotonic() < deadline:
@@ -193,7 +193,7 @@ def _wait_for_ready(bolt_port: int, timeout: int = 90) -> None:
     raise PodmanError(
         f"Neo4j opened :{bolt_port} but is not yet serving queries after "
         f"{timeout}s. Check `podman logs neo4j-ki` and "
-        "skills/knowledge-index/references/neo4j-podman.md."
+        "skills/knowledge-base/references/neo4j-podman.md."
     )
 
 
