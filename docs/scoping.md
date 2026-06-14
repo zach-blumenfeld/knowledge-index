@@ -5,23 +5,29 @@ and status docs assume it.
 
 ---
 
-## 0. Mental Model
-`ki` is a command line tool for searching and analyzing knowledge bases (KB)s.
-for `ki`, a KB is defined as a directory of markdown documents on a file system (capabilities may expand in the future, but this is what it is for now)
+## 0. Mental model
 
-We call this directory of markdown docs a **vault**.  
+`ki` is a command-line tool for searching and analyzing knowledge bases (KBs). For
+`ki`, a KB is a directory of markdown documents on a filesystem — capabilities may
+expand in the future, but that's what it is for now. We call that directory a
+**vault**.
 
-Most `ki` usage patterns target working with one local vault at a time. Though they generalize to working with remote vaults and cross vault searches. 
+Most `ki` usage targets one local vault at a time, but it generalizes to remote
+vaults and cross-vault searches.
 
-To maintain scope and privacy boundaries, `ki` has the concept of a **profile** which has its own access credentials. Each vault belongs to exactly one profile, and a profile can contain multiple vaults. Profiles are backed by [Neo4j](https://neo4j.com) instances explained in more detail below. 
+To maintain scope and privacy boundaries, `ki` groups vaults under a **profile**,
+which carries its own access credentials. Each vault belongs to exactly one profile,
+and a profile can hold multiple vaults. Profiles are backed by
+[Neo4j](https://neo4j.com) instances (detailed below).
 
 ## 1. The three nouns
 
 - **Profile** — a named **Neo4j connection** (uri + credentials, in `config.yaml`).
   It's the database, and it's a **privacy/isolation boundary**: "personal" vs
   "work" are different profiles pointing at different Neo4j instances/databases.
-- **Vault** — a **directory of markdown** that `ki` has marked and indexed. Conceptually a single vault maps to a single knowledge base (KB). A vault is the
-  unit of indexing and search. Identified by a slug **uri**.
+- **Vault** — a **directory of markdown** that `ki` has marked and indexed; one
+  vault maps to one knowledge base. It's the unit of indexing and search, and is
+  identified by a slug **uri**.
 - **The binding** — each vault is **bound to exactly one profile** (recorded in
   the vault's `.ki/vault.yaml`). That binding is how a vault knows which database
   it lives in, with no global registry and no prompting.
