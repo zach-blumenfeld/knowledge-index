@@ -81,7 +81,7 @@ def test_vault_list_help_works():
 
 
 def test_drop_help_lists_safety_flags():
-    """`ki drop` is vault-only in 0.4.0 — see docs/index_rm_behavior.md.
+    """`ki drop` is vault-only in 0.4.0 — see docs/data-model/index_rm_behavior.md.
 
     Removed flag: `--vault` (the command is vault-only now; flag is redundant).
     """

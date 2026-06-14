@@ -1,4 +1,4 @@
-"""Integration tests for `ki drop` — vault-only model (see docs/index_rm_behavior.md)."""
+"""Integration tests for `ki drop` — vault-only model (see docs/data-model/index_rm_behavior.md)."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """Integration tests for `ki nuke` — full graph reset.
 
-See `docs/index_rm_behavior.md` *ki nuke* for the design.
+See `docs/data-model/index_rm_behavior.md` *ki nuke* for the design.
 """
 
 from __future__ import annotations

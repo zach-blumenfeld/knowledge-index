@@ -1,4 +1,4 @@
-"""Slugification matches the docs/data-model.md *Path conventions* examples."""
+"""Slugification matches the docs/data-model/schema.md *Path conventions* examples."""
 
 import pytest
 
@@ -24,7 +24,7 @@ def test_slugify_segment_empty_fallback():
 
 
 def test_slugify_path_preserves_directory_separator():
-    # From docs/data-model.md Path conventions table.
+    # From docs/data-model/schema.md Path conventions table.
     assert slugify_path("notes/My Projects/Big Idea.md") == "notes/my-projects/big-idea.md"
 
 
@@ -74,7 +74,7 @@ def test_folder_uri_accepts_list_segments():
 
 def test_folder_uri_no_trailing_slash():
     # Folder.uri is a strict prefix of any Document.uri under it but never
-    # ends in '/' — see docs/data-model.md §Folder.
+    # ends in '/' — see docs/data-model/schema.md §Folder.
     assert not folder_uri("v", ("a", "b")).endswith("/")
 
 

@@ -106,7 +106,7 @@ def test_first_index_creates_nodes_and_edges(vault_dir, neo4j_profile, cleanup_v
 
 
 def test_reindex_is_full_rebuild(vault_dir, neo4j_profile, cleanup_vault):
-    """Per `docs/index_rm_behavior.md`, re-indexing an existing vault nukes
+    """Per `docs/data-model/index_rm_behavior.md`, re-indexing an existing vault nukes
     the vault contents first, then re-ingests everything. Every doc is
     counted as "added" on the second pass — the incremental fileHash-skip
     optimization no longer fires because there's nothing to skip-against.
@@ -536,7 +536,7 @@ def test_folder_layer_nasty_structure(tmp_path, neo4j_profile, cleanup_vault):
 def test_folder_layer_reindex_is_idempotent(tmp_path, neo4j_profile, cleanup_vault):
     """A second ingest with no filesystem changes lands in the same graph shape.
 
-    With vault-level sync (docs/index_rm_behavior.md), re-index nukes and
+    With vault-level sync (docs/data-model/index_rm_behavior.md), re-index nukes and
     re-creates everything — so we assert the *post-state* is identical
     (same folder count, no duplicates) rather than the "doc was skipped"
     counters that the old fileHash-skip model surfaced.
@@ -689,7 +689,7 @@ def test_path_property_is_set_on_every_node(tmp_path, neo4j_profile, cleanup_vau
     a `path` property pointing at its on-disk location.
 
     Sections share their owning Document's path (intentional redundancy — see
-    docs/data-model.md §Section). Folders point at their on-disk directory.
+    docs/data-model/schema.md §Section). Folders point at their on-disk directory.
     Documents point at their on-disk file.
     """
     import os

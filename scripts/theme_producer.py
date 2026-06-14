@@ -2,7 +2,7 @@
 
 ⚠️  DRAFT — not yet implemented as a command. This is a standalone prototype
 for a future `ki theme`; `ki theme` does not exist yet and this script is not
-wired into the CLI. See docs/theme-format.md (output) and docs/theme-queries.md
+wired into the CLI. See docs/commands/theme-format.md (output) and docs/data-model/theme-queries.md
 (pipeline) for the design — both also marked DRAFT.
 
 Usage (from a vault directory, or pass a path):
@@ -224,7 +224,7 @@ def compute(gds, vault_uri: str, gamma: float, min_theme_doc_count: int,
 
 def render(result: dict, vault_uri: str, per_theme: int = 3,
            top_k: int | None = None) -> str:
-    """Theme blocks per docs/theme-format.md."""
+    """Theme blocks per docs/commands/theme-format.md."""
     themes: dict = {}
     for r in result["rows"]:
         t = themes.setdefault(r["cluster_key"],
