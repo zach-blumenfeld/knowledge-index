@@ -117,7 +117,6 @@ def _render(r: StatusResult, *, verbose: bool = False) -> None:
 def cmd_status(
     directory: Path | None,
     *,
-    profile: str | None,
     as_json: bool,
     verbose: bool = False,
     conn_timeout: float = 5.0,
@@ -128,9 +127,7 @@ def cmd_status(
     cfg = load_config(cfg_path)
 
     start = Path(directory).expanduser().resolve() if directory else Path.cwd()
-    result = compute_status(
-        cfg, start, profile_flag=profile, conn_timeout=conn_timeout
-    )
+    result = compute_status(cfg, start, conn_timeout=conn_timeout)
 
     if as_json:
         payload = {

@@ -127,10 +127,14 @@ def compute_status(
     cfg: Config,
     start_dir: Path,
     *,
-    profile_flag: str | None = None,
     conn_timeout: float = 5.0,
 ) -> StatusResult:
-    """Walk the layers and return the first blocking state."""
+    """Walk the layers and return the first blocking state.
+
+    Status is **walk-up only** — it reads local files (disk-vs-index diff), so
+    the profile always comes from the vault's binding; there is no `--profile`
+    override (see scoping.md §4).
+    """
     start = Path(start_dir).expanduser().resolve()
 
     # Layer 1 — disk marker.
@@ -142,9 +146,9 @@ def compute_status(
 
     # Layer 2 — profile binding. resolve_profile raises ClickException
     # (incl. BoundProfileMissing) for any unresolvable profile; status turns
-    # that into a state instead of aborting.
+    # that into a state instead of aborting. No flag override — binding only.
     try:
-        prof = resolve_profile(cfg, profile_flag, start_dir=root)
+        prof = resolve_profile(cfg, None, start_dir=root)
     except click.ClickException as exc:
         return StatusResult(
             state=PROFILE_MISSING, path=start, vault_root=root,

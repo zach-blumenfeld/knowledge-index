@@ -148,7 +148,6 @@ def index_cmd(
          "Exit 0 only when READY.",
 )
 @_directory_option
-@click.option("--profile", default=None, help="Override the vault's bound profile.")
 @click.option("--json", "as_json", is_flag=True, default=False)
 @click.option(
     "-v", "--verbose", "verbose", is_flag=True, default=False,
@@ -160,15 +159,15 @@ def index_cmd(
 )
 def status_cmd(
     directory: Path | None,
-    profile: str | None,
     as_json: bool,
     verbose: bool,
     conn_timeout: float,
 ) -> None:
+    # No --profile: status reads local files (disk-vs-index diff), so it's
+    # walk-up only — the profile comes from the vault's binding. See scoping.md §4.
     sys.exit(
         cmd_status(
             directory,
-            profile=profile,
             as_json=as_json,
             verbose=verbose,
             conn_timeout=conn_timeout,

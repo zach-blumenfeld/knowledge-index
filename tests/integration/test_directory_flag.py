@@ -78,7 +78,7 @@ def test_status_directory_relocates(vault_with_broken_default):
     vault_dir, _ = vault_with_broken_default
     # -C resolves the vault's bound profile (not the bogus default); freshly
     # indexed → READY → exit 0.
-    rc = cmd_status(vault_dir, profile=None, as_json=True, verbose=False)
+    rc = cmd_status(vault_dir, as_json=True, verbose=False)
     assert rc == 0
 
 

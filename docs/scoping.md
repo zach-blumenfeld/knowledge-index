@@ -202,45 +202,68 @@ Two caveats:
 
 ---
 
-## 4. How a command resolves its profile
+## 4. How a command resolves its profile and vault
 
-§4 and §5 are the *mechanism* behind §3 — how `ki` actually computes the profile and
-vault from your inputs.
+This section covers the mechanism behind §3.2. Each `ki` command invocation resolves the **profile** (which
+Neo4j) and — for commands that act on a specific vault — the **vault**.
 
-Most commands resolve the profile with one shared rule (`resolve_profile`), highest
-precedence first:
+### The default — the local walk-up
 
-1. **`--profile <name>`** — explicit override, wins over everything.
-2. **The vault's binding** — walk up from the working dir (cwd, or `-C <dir>`) to
-   `.ki/vault.yaml`, and use its `profile`. **The normal path: each vault owns its
-   profile.**
-3. **`$KI_PROFILE`** if set.
+`ki` walks **up** from the working dir (the shell's cwd, or **`-C <dir>`**) to the
+nearest `.ki/vault.yaml`; first hit wins; none found → **not in a vault**. It's
+recomputed every invocation.
 
-`profile` is never assumed by default.
+`.ki/vault.yaml` provides:
+- **profile** = its bound `profile`,
+- **vault** = this vault
 
-If the vault names a profile that isn't in `config.yaml` (renamed, or cloned to a
-new machine), that's a clear error → add the profile with `ki configure`, or
-re-bind to an existing one by re-indexing: `ki index . --profile <p>`.
+`-C <dir>` just means "resolve as if you were working in `<dir>`" — the lever for
+pointing `ki` at a local vault you're not cd'd into.
 
-> **`ki search` is stricter** — see §3.2. It never silently falls back to a default,
-> because *which database you searched* should never be a guess.
+### The override — `--profile <name>` (voids the walk-up)
 
-## 5. How a command resolves its vault
+Almost every command that talks to Neo4j accepts `--profile`. 
+It names the profile explicitly and **voids the walk-up** — `ki` reads **no**
+local `.ki/vault.yaml`, even if you're sitting in one. The walk-up was what handed you
+a vault, so **if the command needs a specific vault, you supply it** alongside
+`--profile`:
 
-Same walk-up everywhere — there is **no stored "current vault."** It's computed
-from *where you run the command*:
+| Command | how the vault is supplied under `--profile` |
+|---|---|
+| `search` | `--vault <uri,…>` (comma-separated; omit → **all vaults**) or `--under <uri>` for a subtree |
+| `outline` | the positional `<uri>`; omit → **all vaults** |
+| `get` | the `<uri…>` you're fetching (self-addressing) |
+| `drop` | the slug or path target (required — the target *is* the vault) |
+| `index` / `init` | the positional `<path>` — and `--profile` (re)binds that vault's marker |
+| `nuke` / `vault list` | — nothing: they act on the **whole** profile |
 
-- start at the working dir (the shell's cwd, or **`-C <dir>`** if passed),
-- walk **up** to the nearest `.ki/vault.yaml` (`find_vault_root`),
-- first hit wins; none found → not in a vault.
+If a command needs a vault and you pass `--profile` **without** supplying one, it
+**errors** — it never falls back to the voided walk-up.
 
-`-C <dir>` just means "resolve as if I were working in `<dir>`" — the single lever
-for pointing `ki` at a vault you're not cd'd into. (Remote / cross-vault work names
-the target explicitly instead; see §3.2.)
+**The exception — `ki status` has no `--profile`.** It's the only command that strictly 
+depends on an existing local vault (it hashes local files to diff disk against the index for `STALE`). Its
+three inputs — source, profile, vault — *all* come from the walk-up and are
+inseparable. To ask "is some vault indexed in profile P?"
+without local source, use `ki vault list --profile P`.
+
+### `$KI_PROFILE` and "no default"
+
+Profile precedence, highest first: **`--profile P`** → **vault binding** (the walk-up)
+→ **`$KI_PROFILE`** → **error**. `$KI_PROFILE` fills in *only* when there's no
+`--profile` and no binding (you're not in a vault); it never overrides a binding. `ki`
+has **no default profile** and never auto-picks one (not even a sole profile).
+
+If the vault names a profile that isn't in `config.yaml` (renamed, or cloned to a new
+machine), that's a clear error → add it with `ki configure`, or re-bind by re-indexing:
+`ki index . --profile <p>`.
+
+> **`ki search` is stricter on the fallback** — with no `--profile` and no vault
+> binding it *errors* rather than falling to `$KI_PROFILE`, because *which database you
+> searched* should never be a silent guess.
 
 ---
 
-## 6. `ki status` — is this directory ready?
+## 5. `ki status` — is this directory ready?
 
 `ki status` (cwd, or `-C <dir>`) answers "can I use `ki` here, and if not, what's
 the one next step?" It resolves in **layers**, each needing the one above to pass,
