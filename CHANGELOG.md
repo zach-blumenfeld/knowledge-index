@@ -20,6 +20,10 @@ exact pattern. Editorial prose is fine; just don't change the heading.
 - **`ki search --under <uri-or-path>`** — scope a search to a containment subtree (folder / document / section). Takes a **uri** (works in either mode) or a **filesystem path** (local mode only — `-N`-safe, resolved through the on-disk marker). See [#67](https://github.com/zach-blumenfeld/knowledge-index/issues/67), `docs/commands/search.md` §5.2.
 - **`ki search --profile P [--vault a,b]`** — remote mode: search a profile you're not standing in (`--profile` alone → all its vaults; `--vault` limits to a comma-separated list of vault uris; `--profile P --under <uri>` scopes to one subtree). `--vault` requires `--profile`; `--under` and `--vault` are mutually exclusive; all guards error clearly.
 
+### Fixed
+
+- **`ki get --type full` no longer leaks Rule-1 `uri:` child pointers** ([#42](https://github.com/zach-blumenfeld/knowledge-index/issues/42)). The reconstructed reading-order body dropped the scaffolding pointer lines (the children are inlined right after, so they were redundant). Stripping is guarded to the reconstruction's known node uris, so it can never remove a user's literal `uri:…` prose. `--type content` is unchanged — it keeps the pointers (Rule 1 is its purpose). (`--type path` keeps its full metadata bag by design — the "metadata, no content" view.)
+
 ### Changed
 
 - **`ki status` is walk-up only — uses `-C/--directory`, no `--profile`.** `status` reads your *local files* (it diffs disk against the index for `STALE`), so its profile/vault/source all come from the vault's binding via the walk-up; `--profile` (which would void the walk-up and the local source it needs) is removed. It also drops the positional `[PATH]` for `-C` (matching `search`/`outline`/`get`): `ki status` (cwd) or `ki status -C <dir>`. To check whether a vault is indexed in another profile without local source, use `ki vault list --profile P`. (pre-1.0; `ki status <path>` / `ki status --profile` no longer work.)

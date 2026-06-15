@@ -21,6 +21,7 @@ from ki.commands.get import (
     _render,
     _render_one,
     _shell_for_label,
+    _strip_child_pointers,
 )
 
 # ---- _shell_for_label ------------------------------------------------------
@@ -117,6 +118,38 @@ def test_format_sections_heading_only_no_body():
     rows = [{"heading": "Empty", "heading_level": 2, "content": ""}]
     out = _format_sections(rows, preamble=None)
     assert out == "## Empty"
+
+
+# ---- _strip_child_pointers (--type full Rule-1 pointer cleanup) -------------
+
+
+def test_strip_removes_known_child_pointers_keeps_prose():
+    text = "real body line.\n\nuri:v/doc.md#a\nuri:v/doc.md#b"
+    out = _strip_child_pointers(text, {"v/doc.md#a", "v/doc.md#b"})
+    assert out == "real body line."
+
+
+def test_strip_keeps_uri_line_not_in_reconstruction():
+    # A `uri:` line whose target isn't a known node — e.g. user prose, or an
+    # external/other-vault ref — must survive (the safety guard).
+    text = "see uri:some-external-thing for details\nuri:v/doc.md#a"
+    out = _strip_child_pointers(text, {"v/doc.md#a"})
+    assert "uri:some-external-thing" in out      # prose-ish, not a known node
+    assert "uri:v/doc.md#a" not in out           # known child pointer dropped
+
+
+def test_format_sections_full_strips_pointers_with_known_uris():
+    rows = [
+        {"heading": "A", "heading_level": 2, "content": "a body.\n\nuri:v/d.md#a/x",
+         "section_uri": "v/d.md#a"},
+    ]
+    known = {"v/d.md", "v/d.md#a", "v/d.md#a/x"}
+    out = _format_sections(
+        rows, preamble="doc preamble.\n\nuri:v/d.md#a", known_uris=known,
+    )
+    assert "uri:" not in out                     # all child pointers gone
+    assert out.startswith("doc preamble.")
+    assert "## A\n\na body." in out
 
 
 # ---- _bad_label_message ----------------------------------------------------

@@ -17,6 +17,7 @@ See `docs/data-model/retrieval-queries.md` (B.4 / B.13 / B.14) for the queries.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -141,34 +142,68 @@ def _full_content(
     """
     if label == "Document":
         rows = run_b4(session, uri)
-        return _format_sections(rows, preamble=shell_row.get("content"))
-    if label == "Section":
+    elif label == "Section":
         rows = run_b14(session, uri)
-        return _format_sections(rows, preamble=None)
-    return ""
+    else:
+        return ""
+    # Every node in the reconstruction — the root plus each row. A Rule-1
+    # child pointer always targets a direct child, and B.4 / B.14 return every
+    # descendant, so a *legitimate* pointer's target is always in this set.
+    known_uris = {uri} | {r.get("section_uri") for r in rows}
+    preamble = shell_row.get("content") if label == "Document" else None
+    return _format_sections(rows, preamble=preamble, known_uris=known_uris)
 
 
-def _format_sections(rows: list[dict[str, Any]], *, preamble: str | None) -> str:
+_CHILD_POINTER_RE = re.compile(r"^uri:(.+?)\s*$")
+
+
+def _strip_child_pointers(text: str, known_uris: set[str]) -> str:
+    """Drop Rule-1 `uri:` child-pointer lines from a `--type full` content block.
+
+    Only lines whose target is a node *in this reconstruction* (`known_uris`)
+    are removed — so a user's literal `uri:…` prose line, or a pointer to
+    anything outside the rebuilt subtree, is never touched. In `--type full`
+    the children are inlined right after, making these pointers redundant
+    scaffolding; `--type content` keeps them (Rule 1 is its whole point).
+    """
+    kept = [
+        line
+        for line in text.splitlines()
+        if not ((m := _CHILD_POINTER_RE.match(line)) and m.group(1) in known_uris)
+    ]
+    return "\n".join(kept).rstrip()
+
+
+def _format_sections(
+    rows: list[dict[str, Any]],
+    *,
+    preamble: str | None,
+    known_uris: set[str] | None = None,
+) -> str:
     """Concatenate ordered section rows into a single markdown string.
 
     Each section emits `<#...> heading\\n\\n<content>` if it has a heading,
     or just the content if it doesn't. Preamble (doc-level text before the
-    first heading) is prepended without any heading.
+    first heading) is prepended without any heading. Rule-1 child-pointer
+    lines are stripped (see `_strip_child_pointers`).
     """
+    known = known_uris or set()
     parts: list[str] = []
-    if preamble and preamble.strip():
-        parts.append(preamble.rstrip())
+    if preamble:
+        pre = _strip_child_pointers(preamble, known)
+        if pre.strip():
+            parts.append(pre)
     for r in rows:
         level = r.get("heading_level") or 0
         heading = r.get("heading") or ""
-        content = r.get("content") or ""
+        content = _strip_child_pointers(r.get("content") or "", known)
         hashes = "#" * level if level else ""
         if hashes and heading:
             block = f"{hashes} {heading}".rstrip()
             if content.strip():
-                block = f"{block}\n\n{content.rstrip()}"
+                block = f"{block}\n\n{content}"
         else:
-            block = content.rstrip()
+            block = content
         if block:
             parts.append(block)
     return "\n\n".join(parts)
