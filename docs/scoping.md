@@ -42,6 +42,13 @@ profile "work"  ──────┬── vault  api-docs
  (neo4j+s://…)         └── vault  runbooks
 ```
 
+**Addressing.** Inside a vault, every folder, document, and section has a
+hierarchical **uri** — a path like `my-notes/projects/plan.md#goals` that encodes
+where it sits. Copy uris from `ki outline` / `ki search`; trim a trailing segment
+to get the ancestor (no query). It's the identifier you feed to `ki get <uri>`,
+`ki outline <uri>`, and `ki search --under <uri>`. Full scheme:
+[`data-model/schema.md`](data-model/schema.md) *The URI scheme*.
+
 ---
 
 ## 2. Where state lives

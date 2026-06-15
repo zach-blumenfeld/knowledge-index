@@ -1,7 +1,100 @@
 
-### Nodes
+# Data model
 
-#### `User`
+The normative reference for **what `ki` stores** — the entities, their properties,
+and how they connect. `ki index` writes exactly this shape (queries in
+[`ingest-cypher.md`](ingest-cypher.md)); `ki search` / `ki outline` / `ki get` read
+it back (see [`retrieval-queries.md`](retrieval-queries.md)). If the code and this
+doc disagree, one of them is a bug.
+
+## What `ki` models
+
+`ki` turns a folder of markdown into a connected **graph**. It captures three things,
+all straight from disk — nothing invented, no tags / summaries / enrichment (see
+[`general-philosophy.md`](general-philosophy.md)):
+
+1. **Structure** — the folder / file / heading hierarchy.
+2. **Content** — the prose inside each file, split out by heading.
+3. **Links** — the references *between* files, and *out* to external URLs / other files.
+
+Structure and content nest like the filesystem; links cross between them — and reach
+outside it:
+
+```
+my-notes/                          ← Vault      the folder you indexed (root)
+├── projects/                      ← Folder
+│   └── plan.md                    ← Document   a markdown file
+│       ├── # Goals                ← Section    a heading + its prose
+│       │   └── ## Q3              ← Section    a nested heading
+│       │         ⇒ [[ideas]]         links to another Document  (→ ideas.md)
+│       │         ⇒ https://oas.org   links out to an external node
+│       └── # Risks                ← Section
+└── ideas.md                       ← Document
+
+  tree branches = containment (vault → folder → document → section); one parent each
+  ⇒             = a link (cross-reference) — to another node, or out to a URL / non-md file
+```
+
+- **Vault** — the directory you pointed `ki index` at; the root of everything.
+- **Folder** — a subdirectory; structure only, auto-derived from document paths.
+- **Document** — a parsed markdown file. A link can also create a lightweight **stub**
+  document (an on-disk file `ki` can't parse, e.g. a PDF) or an **external** document
+  (a URL) — so the *target* is in the graph even when its content isn't.
+- **Section** — a heading and the prose beneath it. A document's body lives in its
+  sections, not on the document.
+- **Links** are the cross-references — `[[wikilinks]]` and `[markdown](links)` —
+  between those nodes and out to external targets. They cut *across* the containment
+  tree, which is what makes the vault a *graph* rather than a folder: they answer
+  *"what connects to what,"* *"what links here,"* *"which notes cite this URL."* The
+  same URL cited from many notes collapses to **one** node, so the graph shows every
+  citation of it.
+
+**User**, a fifth node, records lightweight provenance — who/what/when indexed each
+thing — without affecting content.
+
+Every entity is addressed by a hierarchical **uri** (next section). The rest of this
+doc is the precise per-entity schema: **Nodes** (entities + properties),
+**Relationships** (the connections), and **Content construction rules** (how each
+entity's `content` field is filled).
+
+## The URI scheme
+
+Every `:Vault`, `:Folder`, `:Document`, and `:Section` is identified by a single **`uri`** — its MERGE key, and the address you copy from `ki outline` / `ki search` and feed to `ki get` / `ki outline` / `ki search --under`. URIs are **hierarchical paths**: a node's uri is its parent's uri plus one more segment, so the uri itself encodes where the node sits in the containment tree — no lookup required to know an ancestor.
+
+**Two separators:**
+
+- **`/`** — a containment step: vault → folder → … → document, *and* section → subsection (within the heading path).
+- **`#`** — the document → section boundary. It appears exactly once in a section uri, separating the document's uri from its heading path.
+
+**The four shapes** (`<vault-slug>` is the root `Vault.uri` — a slug, see *Vault* below):
+
+| Level    | uri shape                  | example                              |
+|----------|----------------------------|--------------------------------------|
+| Vault    | `<vault-slug>`             | `my-notes`                           |
+| Folder   | `<vault-slug>/<path>`      | `my-notes/projects`                  |
+| Document | `<vault-slug>/<file path>` | `my-notes/projects/plan.md`          |
+| Section  | `<doc-uri>#<heading path>` | `my-notes/projects/plan.md#goals/q3` |
+
+Every segment is slugified independently (lowercased; whitespace/punctuation → `-`) and the separators are preserved, so the hierarchy stays queryable. A nested section carries its **full heading path** (`#h1/h2/…`), not just the leaf.
+
+**Navigate by trimming — no query needed.** Because the uri *is* the path, dropping the last segment yields the ancestor:
+
+- `…/plan.md#goals/q3` → drop `/q3` → parent section `…/plan.md#goals`
+- `…/plan.md#goals` → drop the whole `#…` → owning document `…/plan.md`
+- `my-notes/projects/plan.md` → drop `/plan.md` → folder `my-notes/projects`
+- `my-notes/projects` → drop `/projects` → vault `my-notes`
+
+**Subtree matching.** "X and everything under it" is a prefix test on those separators:
+
+```
+uri = X  OR  uri STARTS WITH X + '/'  OR  uri STARTS WITH X + '#'
+```
+
+This is the basis of `ki search --under` scoping (see `docs/commands/search.md` §5.4) and any `STARTS WITH` Cypher filter. Keep the separator: `STARTS WITH 'my-notes/'` matches the subtree, whereas a bare `STARTS WITH 'my-notes'` would also catch the sibling vault `my-notes-2`.
+
+## Nodes
+
+### `User`
 
 Driven by **shareable identity + machine + agent/model metadata** Graph Vault can detect at ingest or MCP-connect time. Everything except `id`, `createdAt`, `lastSeenAt` is best-effort: detected automatically, set to `null` if unavailable, and overridable by flag. No interactive prompts.
 
@@ -16,7 +109,7 @@ Driven by **shareable identity + machine + agent/model metadata** Graph Vault ca
 
 > **Provenance philosophy.** Everything in this table is information the user has *already shared* with their git config, their OS, or their agent. Nothing here is more sensitive than `~/.gitconfig`. This is the line: detect freely, never prompt, always honour an explicit flag override.
 
-#### `Vault`
+### `Vault`
 Name inspired by an [Obsidian vault](https://obsidian.md/help/vault) it represents a folder on a file systmem.
 
 Vault identity is carried by a `.ki/vault.yaml` marker file written into the vault root on first ingest (same trick as `.git/`, `.obsidian/`, JetBrains `.idea/`). The marker travels with the folder, so a vault synced across machines via Dropbox / iCloud / git resolves to the **same** `:Vault` node — independent of user, independent of machine. Multiple users can therefore `USES_VAULT` the same vault. The file also accepts a user-authored `description:` field — a short routing hint about what this vault is for — which `ki` reads on each ingest and propagates to `Vault.description`. `ki` writes `uri:` on first creation and is read-only w.r.t. every other field.
@@ -34,33 +127,33 @@ Vault identity is carried by a `.ki/vault.yaml` marker file written into the vau
 | `firstSeenAt`     | datetime | yes      | First-seen. ON CREATE only.                                                                                                                                                                                                                              |
 | `lastSeenAt`      | datetime | yes      | Updated on each ingest for vault.                                                                                                                                                                                                                        |
 
-#### `Folder`
+### `Folder`
 
 Subdirectories inside a vault. Auto-constructed at ingest from the on-disk path of each `:Document` — no separate input, no user-authored metadata, no `description` / `aliases` / `content`. Folders exist so agent-side navigation has a node to land on (`ki outline`, `--under <folder-uri>` scoping); they carry no semantic content of their own. **A `:Folder` is materialised only when at least one indexed `:Document` (internal markdown OR internal non-md stub) lives under that path** — empty directories never appear in the graph. External Documents (URL_LINK / WIKILINK_UNRESOLVED) do not trigger folder materialization since they aren't on disk.
 
-Reversing the v1 "no `:Folder` node" stance: the v1 path-only scheme was queryable via `STARTS WITH` prefix matching but offered nothing for agents wanting to *enumerate* the hierarchy or reason about siblings. With `:Folder` the vault becomes a proper tree — every Folder, Document, and Section has exactly one incoming `:HAS` edge from its parent. Document and Section URIs are unchanged from v1, but their *parent edge* now goes through the folder chain rather than straight to the Vault (see §4.2).
+Reversing the v1 "no `:Folder` node" stance: the v1 path-only scheme was queryable via `STARTS WITH` prefix matching but offered nothing for agents wanting to *enumerate* the hierarchy or reason about siblings. With `:Folder` the vault becomes a proper tree — every Folder, Document, and Section has exactly one incoming `:HAS` edge from its parent. Document and Section URIs are unchanged from v1, but their *parent edge* now goes through the folder chain rather than straight to the Vault (see *Relationships*).
 
 | Property      | Type     | Required | Description                                                                                                                                            |
 |---------------|----------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `uri`         | string   | yes      | PK. **The URI** — MERGE key formatted as `<vaultId>/<slugified path within vault>` (no trailing `/`). e.g. `<vaultId>/notes`, `<vaultId>/notes/projects`. |
+| `uri`         | string   | yes      | PK. **The URI** — MERGE key formatted as `<vault-slug>/<slugified path within vault>` (no trailing `/`). e.g. `<vault-slug>/notes`, `<vault-slug>/notes/projects`. |
 | `name`        | string   | yes      | Basename of the directory (last path segment, slugified).                                                                                              |
 | `displayName` | string   | yes      | Human-friendly display name. Defaults to `name`.                                                                                                       |
-| `path`        | string   | yes      | Absolute POSIX path on the ingesting machine. **Machine-scoped** — same caveat as `Vault.path` (see §Vault). When multi-machine becomes real, every `*.path` property migrates to a per-user edge or per-user node; tracked indirectly by [#16](https://github.com/zach-blumenfeld/knowledge-index/issues/16). Lets agents jump straight from a `Folder` query to a `Read /path/to/dir` without re-deriving from `Vault.path` + URI prefix. |
+| `path`        | string   | yes      | Absolute POSIX path on the ingesting machine. **Machine-scoped** — same caveat as `Vault.path` (see *Vault*). When multi-machine becomes real, every `*.path` property migrates to a per-user edge or per-user node; tracked indirectly by [#16](https://github.com/zach-blumenfeld/knowledge-index/issues/16). Lets agents jump straight from a `Folder` query to a `Read /path/to/dir` without re-deriving from `Vault.path` + URI prefix. |
 | `firstSeenAt` | datetime | yes      | First-seen. ON CREATE only.                                                                                                                            |
 | `lastSeenAt`  | datetime | yes      | Updated on each ingest.                                                                                                                                |
 
 No `description`, no `aliases`, no `content`, no `fileHash`. If users want a folder-level note, they put a Document there (e.g. `_index.md`) and that Document carries the metadata, not the Folder.
 
-#### `Document`
-Inherits the v2 connector spec (§3) and adds:
+### `Document`
+Adds, beyond the common node fields (uri, name, displayName, timestamps):
 
-**Path conventions.** Document URIs are unchanged from v1: slugified `<vaultId>/<file path within vault>`. The on-disk path's nested directories are *also* materialised as `:Folder` nodes (see above), so the same hierarchy is reachable both via URI prefix match (cheap subtree scan) *and* via `(:Vault|:Folder)-[:HAS*1..]->(:Document)` traversal (cheap enumeration / `ki outline`).
+**Path conventions.** Document URIs are unchanged from v1: slugified `<vault-slug>/<file path within vault>`. The on-disk path's nested directories are *also* materialised as `:Folder` nodes (see above), so the same hierarchy is reachable both via URI prefix match (cheap subtree scan) *and* via `(:Vault|:Folder)-[:HAS*1..]->(:Document)` traversal (cheap enumeration / `ki outline`).
 
 | Source file                               | `Document.uri`                            | Materialised `:Folder` nodes                          |
 |-------------------------------------------|-------------------------------------------|-------------------------------------------------------|
-| `~/my-vault/ideas.md`                     | `<vaultId>/ideas.md`                      | *(none — document sits at the vault root)*            |
-| `~/my-vault/notes/My Projects/Big Idea.md`| `<vaultId>/notes/my-projects/big-idea.md` | `<vaultId>/notes`, `<vaultId>/notes/my-projects`       |
-| `~/my-vault/notes/projects/_index.md`     | `<vaultId>/notes/projects/_index.md`      | `<vaultId>/notes`, `<vaultId>/notes/projects`          |
+| `~/my-vault/ideas.md`                     | `<vault-slug>/ideas.md`                      | *(none — document sits at the vault root)*            |
+| `~/my-vault/notes/My Projects/Big Idea.md`| `<vault-slug>/notes/my-projects/big-idea.md` | `<vault-slug>/notes`, `<vault-slug>/notes/my-projects`       |
+| `~/my-vault/notes/projects/_index.md`     | `<vault-slug>/notes/projects/_index.md`      | `<vault-slug>/notes`, `<vault-slug>/notes/projects`          |
 
 Folder-level metadata (Obsidian folder notes, Hugo `_index.md`, etc.) is still captured by indexing whatever Document lives at that path — the `:Folder` node itself stays intentionally property-poor.
 
@@ -76,10 +169,10 @@ The `LOCAL_FILE` / `LOCAL_STUB` split keeps "primary parsed doc" an explicit pro
 
 | Kind                       | `sourceType`           | `uri`                              | `path`                  | `content`     | `fileHash`        | HAS-parent              |
 |----------------------------|------------------------|------------------------------------|-------------------------|---------------|-------------------|--------------------------|
-| Internal markdown          | `LOCAL_FILE`           | `<vaultId>/path/to/foo.md`         | absolute POSIX          | parsed body   | sha256 of bytes   | parent Folder (or Vault) |
-| **Internal non-md stub**   | `LOCAL_STUB`           | `<vaultId>/path/to/slides.pptx`    | absolute POSIX          | `null`        | sha256 of bytes   | parent Folder (or Vault) |
+| Internal markdown          | `LOCAL_FILE`           | `<vault-slug>/path/to/foo.md`         | absolute POSIX          | parsed body   | sha256 of bytes   | parent Folder (or Vault) |
+| **Internal non-md stub**   | `LOCAL_STUB`           | `<vault-slug>/path/to/slides.pptx`    | absolute POSIX          | `null`        | sha256 of bytes   | parent Folder (or Vault) |
 | **External URL / file**    | `URL_LINK`             | `https://...` or `file:///...`     | `null`                  | `null`        | `null`            | **none** — outside the vault tree |
-| Unresolved wikilink target | `WIKILINK_UNRESOLVED`  | `<vaultId>/<wikilink-name>`        | `null`                  | `null`        | `null`            | parent (vault that referenced it) |
+| Unresolved wikilink target | `WIKILINK_UNRESOLVED`  | `<vault-slug>/<wikilink-name>`        | `null`                  | `null`        | `null`            | parent (vault that referenced it) |
 
 Internal non-md stubs are discovered link-driven (`[Slides](./deck.pptx)`) — the file must exist on disk and live inside the vault root, or it's silently dropped (warn + skip per #37). External Documents are MERGE-keyed by the URL/URI string as-is — no normalization in 0.4.0, so `https://foo.com/bar` and `https://foo.com/bar/` are two distinct nodes (the link target's identity is whatever the user wrote in the markdown). `[Slides](../escaped-path.pptx)` whose resolved on-disk path is outside the current vault becomes an external `file:///...` Document (per #37 q6).
 
@@ -89,26 +182,26 @@ Internal non-md stubs are discovered link-driven (`[Slides](./deck.pptx)`) — t
 
 | Property               | Type         | Required | Description                                                                                                                                                                                     |
 |------------------------|--------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `uri`                  | `string`     | Yes      | PK. **The URI** — MERGE key formatted as slugified: `<vaultId>/<file path within vault>` where `<vaultId>` is `Vault.uri`. User is *not* part of the URI — provenance lives on the `LOADED` edge. |
+| `uri`                  | `string`     | Yes      | PK. **The URI** — MERGE key formatted as slugified: `<vault-slug>/<file path within vault>` where `<vault-slug>` is `Vault.uri`. User is *not* part of the URI — provenance lives on the `LOADED` edge. |
 | `name`                 | string       | Yes      | For now use filename (without path, just the basename)                                                                                                                                          |
 | `displayName`          | string       | Yes      | For now use filename (without path, just the basename)                                                                                                                                          |
-| `path`                 | string       | yes      | Absolute POSIX file path on the ingesting machine. **Machine-scoped** — same caveat as `Vault.path` (see §Vault). Lets agents `Read` the file directly from any `Document` query result; no `Vault.path` join required. |
+| `path`                 | string       | yes      | Absolute POSIX file path on the ingesting machine. **Machine-scoped** — same caveat as `Vault.path` (see *Vault*). Lets agents `Read` the file directly from any `Document` query result; no `Vault.path` join required. |
 | `aliases`              | list[string] | no       | Frontmatter aliases (user-authored, ground truth) **plus** piped-wikilink display texts targeting this document (e.g. `[[Darth Vader\|Anakin]]` propagates `"Anakin"` here). Used for wikilink resolution and fulltext recall via the `content_search` index. Wikilink-derived entries are normalized + capped — see [`ingest-cypher.md`](ingest-cypher.md) §4.3 step 7. |
 | `fileHash`             | string       | yes      | SHA-256 of file content. Drives incremental sync diffing.                                                                                                                                       |
 | `frontmatter`          | string       | no       | JSON-serialised unknown frontmatter keys.                                                                                                                                                       |
 | `frontmatterCreatedAt` | datetime     | no       | If frontmatter declares `created:` / `date:`.                                                                                                                                                   |
-| `content`              | `string` | No       | Preamble text (any text before the first heading in the file) followed by `uri:` references to direct top-level sections. Shallow content + child pointers — see §4 Content Construction Rules. |
+| `content`              | `string` | No       | Preamble text (any text before the first heading in the file) followed by `uri:` references to direct top-level sections. Shallow content + child pointers — see *Content Construction Rules*. |
 | `sourceType`           | enum         | yes      | `LOCAL_FILE` (parsed primary doc) \| `LOCAL_STUB` (on-disk file stubbed via a link, not parsed) \| `URL_LINK` \| `WIKILINK_UNRESOLVED`.                                                          |
 | `firstLoadedAt`        | `datetime` | yes      | Timestamp when the document was ingested. Set on CREATE only (not overwritten on re-ingest).                                                                                                    |
 | `lastLoadedAt`         | datetime | yes      | updated on each ingest for vault.                                                                                                                                                               |
 
-#### `Section`
-Inherits §3. `Section.uri` is globally unique by virtue of including `Vault.uri` (which is itself globally unique — a slug from the `.ki/vault.yaml` marker, with a `-N` suffix on collision).
+### `Section`
+`Section.uri` is globally unique by virtue of including `Vault.uri` (which is itself globally unique — a slug from the `.ki/vault.yaml` marker, with a `-N` suffix on collision).
 
 | Property        | Type | Required | Description                                                                                                                                                                                                                                                                                                                      |
 |-----------------|------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `uri`           | `string`     | Yes      | PK. **The URI** — MERGE key formatted as slugified: `<vaultId>/<file path within vault>#<slugified heading path>`                                                                                                                                                                                                                |
-| `name`          | `string` | Yes | for now just the slugified hierarcical heading path                                                                                                                                                                                                                                                                              |
+| `uri`           | `string`     | Yes      | PK. **The URI** — MERGE key formatted as slugified: `<vault-slug>/<file path within vault>#<slugified heading path>`                                                                                                                                                                                                                |
+| `name`          | `string` | Yes | for now just the slugified hierarchical heading path                                                                                                                                                                                                                                                                              |
 | `displayName`   | `string` | Yes | Heading text of the section (human-readable display name).                                                                                                                                                                                                                                                                       |
 | `path`          | `string` | yes | Absolute POSIX path of the **owning Document** on the ingesting machine. Redundant with the parent Document's `path` (every section in a doc shares the same value), but intentional — lets agents `Read` from any `Section` query result without traversing up to the doc. **Machine-scoped** — same caveat as `Vault.path` / `Document.path`. |
 | `headingLevel`  | `integer` | Yes | Depth level: `1` = H1, `2` = H2, etc.                                                                                                                                                                                                                                                                                            |
@@ -117,7 +210,7 @@ Inherits §3. `Section.uri` is globally unique by virtue of including `Vault.uri
 | `firstLoadedAt`        | `datetime` | yes      | Timestamp when the document was ingested. Set on CREATE only (not overwritten on re-ingest).                                                                                                                                                                                                                                     |
 | `lastLoadedAt`         | datetime | yes      | updated on each ingest for vault.                                                                                                                                                                                                                                                                                                |
 
-### 4.2 Relationships
+## Relationships
 
 | Type           | From | To | Properties | Parallel Allowed | Description |
 |----------------|---|---|---|---|---|
@@ -147,7 +240,7 @@ Each `Folder` / `Document` / `Section` **that belongs to a vault** has exactly o
 
 > **Why `LOADED` carries the agent/model props (and not the `User` node itself):** Useful for provenance ("which agent loaded *this* doc"). This belongs on the relationship, because a single user can ingest with different agents over time (one-off CLI run vs. agent-driven sync). Keep both. Don't try to deduplicate.
 
-#### LOADED Properties
+### LOADED Properties
 | Property | Type | Required | Description                                                                                           |
 |---|---|---|-------------------------------------------------------------------------------------------------------|
 | `loadId` | string | yes | Stable UUID. MERGE key for `userId` to  `document uri` and `vault uri`.  .                            |
@@ -163,7 +256,7 @@ Each `Folder` / `Document` / `Section` **that belongs to a vault** has exactly o
 | `hostname` | string | no | `socket.gethostname()`. Identifies the machine that ran the import.                                   |
 | `pythonVersion` | string | no | `platform.python_version()`. Repro / debugging provenance.                                            |
 
-#### LINKS_TO Properties
+### LINKS_TO Properties
 
 | Property | Type | Required | Description                                                         |
 |---|---|---|---------------------------------------------------------------------|
@@ -171,7 +264,7 @@ Each `Folder` / `Document` / `Section` **that belongs to a vault** has exactly o
 | `wikilink` | boolean | yes | Whether the link is a wikilink (`[[...]]` in markdown).             |
 
 
-### Content Construction Rules
+## Content Construction Rules
 
 These rules should be implied in a document mapper not in individual parsers. Parsers produce raw parsed document trees; the mapper applies these rules when building entity `content` fields.
 

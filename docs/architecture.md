@@ -59,7 +59,7 @@ The schema is normative in `docs/data-model/schema.md`; this is the picture.
 | `Document` | `<vault-slug>/<file-path-within-vault>` (internal `.md`) <br> `<vault-slug>/<file-path-within-vault>` (internal non-md stub — PDF, deck, image; `sourceType=LOCAL_STUB`) <br> `https://...` or `file:///...` (external; `sourceType=URL_LINK`) | `displayName`, `path`, `aliases`, `fileHash`, frontmatter, content |
 | `Section`  | `<doc-uri>#<h1-slug>/<h2-slug>/...`                            | `displayName`, `headingLevel`, `content`, `aliases`                |
 
-URIs encode containment as paths — trimming the last segment yields the parent, so the agent can derive ancestor URIs without a "go up" query.
+URIs encode containment as paths — trimming the last segment yields the parent, so the agent can derive ancestor URIs without a "go up" query. Full scheme (separators, the four shapes, subtree matching): `docs/data-model/schema.md` *The URI scheme*.
 
 **Three Document kinds** (since PR #50 / #37 landed): every `[text](href)` link in a markdown file now creates a `:Document` node. Internal `.md` targets resolve to the existing in-vault Document; internal non-md files (PDFs, decks, images) become stub Documents inside the containment tree; external URLs become Documents *outside* the containment tree (the `HAS` single-parent invariant applies to vault-belonging nodes only). Same URL referenced from multiple vaults collapses to one Document via `MERGE` on `uri`. See `docs/data-model/link_capture.md` for the full matrix and edge cases.
 

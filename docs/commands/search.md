@@ -175,7 +175,8 @@ ki: profile 'work' · under 'api-docs/v2'
 
 The scope is **not** a plain prefix. Containment in ki uris uses two separators —
 `/` (vault/folder → child, section → subsection) and `#` (document → its sections)
-— and a node's own uri has no trailing separator. So "node `X` and everything under
+— and a node's own uri has no trailing separator (the full scheme is in
+`docs/data-model/schema.md` *The URI scheme*). So "node `X` and everything under
 it" is a **three-part, type-agnostic** test, wrapped in `any()` to cover one *or*
 many scope uris:
 
