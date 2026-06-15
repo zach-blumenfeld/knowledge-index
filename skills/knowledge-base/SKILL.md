@@ -165,11 +165,13 @@ Sometimes the question is about the vault as a whole, not a specific slice:
 
 Two strategies:
 1. **Outline as overview** — read `ki outline --full` as a high-level map of the *whole* vault to summarize its coverage and structure (adjust --depth and recurse on uris as needed). Follow with `ki search/get` for any specifics. Best for *"what's in here."*
-2. **Custom Cypher** — for more flexible counts, aggregates, and structural questions, use the **`neo4j-cli`** to directly inspect the schema and query the database
-   - Use the neo4j credentials from the ki profile
+2. **Graph-reasoning via `neo4j-cli`** — for counts, aggregates, paths, and structural questions that search can't express, query the same Neo4j directly with **`neo4j-cli`**. **Connect by credential *name*, never a password** — `ki configure` (and `ki profile sync`) registered each profile as a neo4j-cli credential named after the profile, so you pass `--credential <profile>` and the secret stays in neo4j-cli's store:
+   ```sh
+   neo4j-cli query :schema --credential <profile> --format toon     # inspect the schema FIRST — never guess it
+   neo4j-cli query "<cypher>" --credential <profile> --format json   # then reason over paths/patterns and query
+   ```
+   - `<profile>` is the vault's bound profile — read it from `ki profile list` or the `.ki/vault.yaml` `profile:` field (both non-secret). If `--credential` reports the name is unknown, run `ki profile sync`.
    - To scope queries to the vault uri (or any folder, document, section therein) know that **ki URIs are hierarchical**, so filtering `uri` with `STARTS WITH '<uri>/'` filters to the subtree — everything under that vault / folder / document / section. Keep the trailing `/`: `STARTS WITH 'my-notes'` would also match the sibling vault `my-notes-2`.
-
-<!-- req: install.sh installs neo4j-cli + its Cypher skills, but ki must still bridge the active profile's creds → neo4j-cli env (NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD) so delegated Cypher hits the right database. Not yet wired — see docs/archive/v0_3_1_introspect_dedup. -->
 
 ### Making Inferences
 
@@ -180,7 +182,7 @@ Sometimes the user wants analysis, not just retrieval:
 - *"Where do these notes reinforce or contradict each other on [topic]?"*
 - *"What's underdeveloped — what's referenced a lot but never fleshed out?"*
 
-Gather context with `ki outline` / `ki search` / `ki get`, but **lean on `neo4j-cli` query and schema detection** — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Scope to a vault or any other subtree with the hierarchical uri `STARTS WITH` filter noted above.
+Gather context with `ki outline` / `ki search` / `ki get`, but **lean on `neo4j-cli` (`--credential <profile>`, schema first — see above)** — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Scope to a vault or any other subtree with the hierarchical uri `STARTS WITH` filter noted above.
 
 ### Updating & Adding Content
 

@@ -30,7 +30,7 @@ from .commands.index import cmd_index
 from .commands.init import cmd_init
 from .commands.nuke import cmd_nuke
 from .commands.outline import cmd_outline
-from .commands.profile import cmd_profile_list
+from .commands.profile import cmd_profile_list, cmd_profile_sync
 from .commands.search import cmd_search
 from .commands.skill import cmd_install as cmd_skill_install
 from .commands.skill import cmd_list as cmd_skill_list
@@ -440,6 +440,17 @@ def profile_group() -> None:
 @click.option("--json", "as_json", is_flag=True, default=False)
 def profile_list_cmd(as_json: bool) -> None:
     sys.exit(cmd_profile_list(as_json=as_json))
+
+
+@profile_group.command(
+    "sync",
+    help="Register profiles into neo4j-cli's credential store so agents can run "
+         "`neo4j-cli query --credential <name>` for graph-reasoning. Syncs all "
+         "profiles, or NAME if given. Requires neo4j-cli.",
+)
+@click.argument("name", required=False)
+def profile_sync_cmd(name: str | None) -> None:
+    sys.exit(cmd_profile_sync(name))
 
 
 @main.group("vault", help="Inspect indexed vaults.")

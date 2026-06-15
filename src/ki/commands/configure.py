@@ -20,7 +20,7 @@ import click
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from .. import neo4j_podman
+from .. import neo4j_cli, neo4j_podman
 from ..config import (
     Profile,
     default_config_path,
@@ -110,6 +110,28 @@ def configure(
     console.print(
         f"\n[green]✓[/green] Wrote profile [bold]{profile.name}[/bold] to {path}"
     )
+
+    # Best-effort: mirror into neo4j-cli's credential store so agents can run
+    # delegated graph-reasoning Cypher (`neo4j-cli query --credential <name>`)
+    # without ever handling the password. neo4j-cli is optional — skip cleanly.
+    if neo4j_cli.is_available():
+        try:
+            neo4j_cli.register_credential(profile)
+            console.print(
+                f"[dim]Registered neo4j-cli credential '{profile.name}' "
+                f"(for graph-reasoning queries).[/dim]"
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(
+                f"[yellow]note:[/yellow] couldn't register a neo4j-cli "
+                f"credential ({exc}); graph-reasoning delegation unavailable "
+                f"until `ki profile sync`."
+            )
+    else:
+        console.print(
+            "[dim]Install neo4j-cli for graph-reasoning delegation, "
+            "then `ki profile sync`.[/dim]"
+        )
     return profile
 
 
