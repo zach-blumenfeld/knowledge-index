@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import click
+
 from .config import Config
 from .ingest import queries as Q
 from .ingest.pipeline import DEFAULT_MAX_FILE_SIZE
@@ -26,7 +28,7 @@ from .neo4j_client import (
     driver_for,
 )
 from .parser.markdown import hash_bytes
-from .profile_resolve import BoundProfileMissing, resolve_profile
+from .profile_resolve import resolve_profile
 from .vault import (
     document_uri,
     find_vault_root,
@@ -129,14 +131,16 @@ def compute_status(
 
     vault_uri = read_vault_uri(root)
 
-    # Layer 2 — profile binding.
+    # Layer 2 — profile binding. resolve_profile raises ClickException
+    # (incl. BoundProfileMissing) for any unresolvable profile; status turns
+    # that into a state instead of aborting.
     try:
         prof = resolve_profile(cfg, profile_flag, start_dir=root)
-    except (BoundProfileMissing, KeyError) as exc:
+    except click.ClickException as exc:
         return StatusResult(
             state=PROFILE_MISSING, path=start, vault_root=root,
             vault_uri=vault_uri, profile=read_vault_profile(root),
-            message=str(exc),
+            message=exc.format_message(),
         )
 
     # Layer 3 — Neo4j reachability. CONN_* failure values ARE the state strings.

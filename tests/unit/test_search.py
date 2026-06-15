@@ -72,7 +72,6 @@ def _cfg() -> Config:
             "personal": Profile("personal", "bolt://h:7687", "neo4j", "pw", "local-podman"),
             "work": Profile("work", "bolt://h:7688", "neo4j", "pw", "local-podman"),
         },
-        default_profile="personal",
     )
 
 

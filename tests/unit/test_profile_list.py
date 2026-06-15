@@ -17,7 +17,6 @@ def _write_cfg(tmp_path, monkeypatch):
         name="work", uri="neo4j+s://w", user="neo4j", password="x",
         source="aura", database="dbid123",
     ))
-    cfg.default_profile = "personal"
     save_config(cfg)
 
 
@@ -28,8 +27,7 @@ def test_lists_all_profiles_json(tmp_path, monkeypatch, capsys):
     rows = json.loads(capsys.readouterr().out)
     by_name = {r["name"]: r for r in rows}
     assert set(by_name) == {"personal", "work"}
-    assert by_name["personal"]["default"] is True
-    assert by_name["work"]["default"] is False
+    assert "default" not in by_name["personal"]  # no default-profile concept
     assert by_name["work"]["database"] == "dbid123"
     assert by_name["personal"]["database"] is None  # home database
 

@@ -34,7 +34,6 @@ def vault_with_broken_default(vault_dir, neo4j_profile, cleanup_vault, tmp_path,
         name=neo4j_profile.name, uri=neo4j_profile.uri,
         user=neo4j_profile.user, password=neo4j_profile.password,
     ))
-    cfg.default_profile = "bogus"
     save_config(cfg)
     return vault_dir, res.vault_uri
 

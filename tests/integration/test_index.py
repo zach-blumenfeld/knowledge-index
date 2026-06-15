@@ -240,7 +240,6 @@ def test_ki_index_with_description_flag_sets_property(tmp_path, neo4j_profile, c
     (cfg_dir / "config.yaml").write_text(
         _yaml.safe_dump(
             {
-                "default_profile": "test",
                 "profiles": {
                     "test": {
                         "uri": neo4j_profile.uri,
@@ -255,9 +254,9 @@ def test_ki_index_with_description_flag_sets_property(tmp_path, neo4j_profile, c
     old_xdg = os.environ.get("XDG_CONFIG_HOME")
     old_profile = os.environ.get("KI_PROFILE")
     os.environ["XDG_CONFIG_HOME"] = str(tmp_path)
-    # Clear KI_PROFILE so a developer shell with `export KI_PROFILE=...` doesn't
-    # override the temp config's default profile (see Config.get_profile).
-    os.environ.pop("KI_PROFILE", None)
+    # cmd_index runs with profile=None on a fresh vault (no binding yet), so the
+    # profile resolves via $KI_PROFILE — the last resort in the chain. No default.
+    os.environ["KI_PROFILE"] = "test"
     try:
         # `find_config_path` resolves ~/.config/ki/config.yaml; XDG_CONFIG_HOME
         # redirects ~/.config to our tmp dir, but config dir is named "ki/", not

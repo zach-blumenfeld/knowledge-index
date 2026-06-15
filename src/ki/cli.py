@@ -75,17 +75,13 @@ def _directory_option(f):
     "--yes", "yes_flag", is_flag=True, default=False,
     help="Skip prompts — pick the default (Local) and proceed.",
 )
-@click.option(
-    "--set-default", is_flag=True, default=False,
-    help="Make this profile the default even if others exist.",
-)
-def configure_cmd(profile_name: str | None, yes_flag: bool, set_default: bool) -> None:
-    configure_flow(profile_name=profile_name, yes=yes_flag, set_default=set_default)
+def configure_cmd(profile_name: str | None, yes_flag: bool) -> None:
+    configure_flow(profile_name=profile_name, yes=yes_flag)
 
 
 @main.command("index", help="Sync a folder of markdown into the graph.")
 @click.argument("path", type=click.Path(file_okay=False, dir_okay=True, path_type=Path))
-@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+@click.option("--profile", default=None, help="Profile to use; else the vault's .ki binding, else $KI_PROFILE (no default)")
 @click.option(
     "--batch-size", type=int, default=DEFAULT_BATCH_SIZE,
     help=f"Rows per UNWIND batch (default: {DEFAULT_BATCH_SIZE})",
@@ -254,7 +250,7 @@ def _outline_options(f):
     )(f)
     f = click.option(
         "--profile", default=None,
-        help="Profile name (overrides KI_PROFILE / default)",
+        help="Profile to use; else the vault's .ki binding, else $KI_PROFILE (no default)",
     )(f)
     f = _directory_option(f)
     f = click.argument("uri", required=False)(f)
@@ -317,7 +313,7 @@ def tree_cmd(
          "Use `ki tree` / `ki search` to find URIs first.",
 )
 @click.argument("uris", nargs=-1, required=True)
-@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+@click.option("--profile", default=None, help="Profile to use; else the vault's .ki binding, else $KI_PROFILE (no default)")
 @_directory_option
 @click.option(
     "--type", "get_type",
@@ -391,7 +387,7 @@ def drop_cmd(
          "constraints, and remove every .ki/vault.yaml ki knows about. "
          "Typed confirmation required. Source files untouched.",
 )
-@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+@click.option("--profile", default=None, help="Profile to use; else the vault's .ki binding, else $KI_PROFILE (no default)")
 @click.option("--dry-run", is_flag=True, default=False, help="Report only; no changes.")
 @click.option("--yes", "yes_flag", is_flag=True, default=False, help="Skip the typed-confirmation prompt.")
 @click.option(
@@ -429,7 +425,7 @@ def nuke_cmd(
          "Needs a configured Neo4j profile for the slug-collision check.",
 )
 @click.argument("path", type=click.Path(file_okay=False, dir_okay=True, path_type=Path))
-@click.option("--profile", default=None, help="Profile name (overrides KI_PROFILE / default)")
+@click.option("--profile", default=None, help="Profile to use; else the vault's .ki binding, else $KI_PROFILE (no default)")
 def init_cmd(path: Path, profile: str | None) -> None:
     sys.exit(cmd_init(path, profile=profile))
 

@@ -22,9 +22,10 @@ def indexed_vault(vault_dir, neo4j_profile, cleanup_vault, monkeypatch, tmp_path
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    # Clear KI_PROFILE so a developer shell with `export KI_PROFILE=...` doesn't
-    # override the temp config's default profile (see Config.get_profile).
-    monkeypatch.delenv("KI_PROFILE", raising=False)
+    # Drop-by-path resolves the profile via the target vault's binding; drop-by-slug
+    # has no local dir, so it resolves via $KI_PROFILE (the last resort — there is
+    # no default profile). Set it so the profile=None slug calls resolve.
+    monkeypatch.setenv("KI_PROFILE", neo4j_profile.name)
     cfg = Config()
     cfg.add_profile(Profile(
         name=neo4j_profile.name, uri=neo4j_profile.uri,

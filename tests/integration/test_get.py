@@ -148,7 +148,6 @@ def _write_test_config(tmp_path, neo4j_profile, monkeypatch):
     (xdg / "ki" / "config.yaml").write_text(
         yaml.safe_dump(
             {
-                "default_profile": neo4j_profile.name,
                 "profiles": {
                     neo4j_profile.name: {
                         "uri": neo4j_profile.uri,
@@ -160,10 +159,10 @@ def _write_test_config(tmp_path, neo4j_profile, monkeypatch):
         )
     )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
-    # Clear KI_PROFILE so a developer shell with `export KI_PROFILE=...` doesn't
-    # override the temp config's default_profile and break test isolation. See
-    # Config.get_profile's resolution order: arg → KI_PROFILE → default_profile.
-    monkeypatch.delenv("KI_PROFILE", raising=False)
+    # The cmd_get calls below pass profile=None and run outside the vault, so
+    # the profile resolves via $KI_PROFILE — the last resort in the chain
+    # (--profile → vault binding → KI_PROFILE → error). There is no default.
+    monkeypatch.setenv("KI_PROFILE", neo4j_profile.name)
 
 
 def test_cmd_get_content_returns_node_content(

@@ -228,7 +228,7 @@ During indexing, the entire vault is removed from Neo4j then rebuilt to reflect 
 ## Anti-Patterns
 
 1. **Raw file ops on vault content** — reading/searching a vault with `Read` / `grep` / `cat` instead of `ki`, and spawning sub-agents that default to file reads. Burns the tokens `ki` exists to save.
-2. **Defaulting the profile** — auto-picking `default_profile` (or any profile) when binding/indexing a vault. Profiles are privacy boundaries; confirm the profile once, at first usage in session. 
+2. **Auto-binding a profile** — binding a fresh vault to whatever profile happens to be around (e.g. a stray `$KI_PROFILE`) without confirming. `ki` has **no default profile** — you must `ki index` a new vault with an explicit `--profile`. Profiles are privacy boundaries; confirm the profile once, at first index.
 3. **Full re-index for a small change** — running `ki index .` (full nuke + rebuild) after editing one file. Use per-target `ki add` / `ki rm` / `ki mv`; reserve `ki index .` for bulk edits or refactors.
 4. **Cold-starting Neo4j just to look around** — spinning up a stopped profile's instance only to enumerate vaults.
 5. **Switching vault or profile mid-task without confirming** — work one vault + one profile per session; confirm any switch with the user.

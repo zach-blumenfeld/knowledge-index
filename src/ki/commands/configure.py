@@ -39,7 +39,6 @@ def configure(
     *,
     profile_name: str | None = None,
     yes: bool = False,
-    set_default: bool = False,
 ) -> Profile:
     """Run the configure flow. Returns the saved Profile."""
     cfg_path = find_config_path() or default_config_path()
@@ -106,7 +105,7 @@ def configure(
         if not yes and not Confirm.ask("Save the profile anyway?", default=False):
             raise click.Abort() from exc
 
-    cfg.add_profile(profile, set_default=set_default or (len(cfg.profiles) == 0))
+    cfg.add_profile(profile)
     path = save_config(cfg, cfg_path)
     console.print(
         f"\n[green]✓[/green] Wrote profile [bold]{profile.name}[/bold] to {path}"
