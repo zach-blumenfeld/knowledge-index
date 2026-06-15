@@ -5,10 +5,10 @@ Agent runbook. `ki status` reported the bound profile's Neo4j as **down** (conne
 ## 1. Identify the profile's backend
 
 ```sh
-ki profile list        # each profile + its source + status
+ki profile list        # each profile + its source
 ```
 
-The active profile's `source` decides the fix.
+The bound profile's `source` decides the fix (it's in the `ki status` output, or the vault's `.ki/vault.yaml` `profile:` field).
 
 ## 2a. `local-podman` — a container issue
 

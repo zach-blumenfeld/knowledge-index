@@ -217,7 +217,7 @@ Run `ki status` (add `-v` to see exactly which files drifted); if it reports `ST
 
 > **`STALE`/`READY` is markdown-only — not bulletproof.** It does **not** notice changes to linked non-markdown attachments (PDFs, decks, images captured as stub nodes), and a vault indexed with a non-default `--max-file-size` can skew the diff. So `READY` guarantees the **markdown** is in sync, not necessarily every attachment. When in doubt — or after bulk/attachment changes — a full `ki index .` is the source of truth.
 
-During indexing, the entire vault is removed from Neo4j then rebuilt to reflect what's on the file system currently. The process can last a couple seconds (for dozens of documents) or a few minutes (for thousands of docs).  During re-indexing the the `ki vault` should not be used for search or answering questions.
+During indexing, the entire vault is removed from Neo4j then rebuilt to reflect what's on the file system currently. The process can last a couple seconds (for dozens of documents) or a few minutes (for thousands of docs).  During re-indexing the vault should not be used for search or answering questions.
 
 ### Other Operations
 

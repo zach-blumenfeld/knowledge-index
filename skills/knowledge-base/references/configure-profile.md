@@ -1,6 +1,6 @@
 # Configure a Neo4j profile (`ki configure`)
 
-Agent runbook. Reached when there are **no profiles yet**, when credentials are wrong (`AUTH_ERROR`), or when the user wants a new backend. A *profile* is a named Neo4j connection stored in `~/.config/ki/config.yaml`; `ki configure` creates one and, if it's the first, sets it as the default.
+Agent runbook. Reached when there are **no profiles yet**, when credentials are wrong (`AUTH_ERROR`), or when the user wants a new backend. A *profile* is a named Neo4j connection stored in `~/.config/ki/config.yaml`; `ki configure` creates one. `ki` has **no default profile** — every command resolves the profile from `--profile`, the vault's `.ki` binding, or `$KI_PROFILE` (see `docs/scoping.md`).
 
 ## Pick a backend
 
@@ -31,7 +31,7 @@ ki configure                 # interactive: pick a backend, write the profile
 ki configure --yes           # non-interactive: auto-pick Local without prompting
 ```
 
-`ki configure` probes the backend, writes the profile into `config.yaml`, and makes it the default if it's the first one.
+`ki configure` probes the backend and writes the profile into `config.yaml`. It also registers the profile for `neo4j-cli` if installed.
 
 ## Which database
 

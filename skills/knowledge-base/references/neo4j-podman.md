@@ -10,7 +10,7 @@ Agent runbook. Brings up a local Neo4j container that `ki configure → Local` c
 - Plugins: `apoc`, `genai`
 - Auth: `neo4j` / `password` (plaintext, local-only)
 - Bolt: `bolt://localhost:7687` · Browser: `http://localhost:7474`
-- JVM heap (max): `1G` · Page cache: `512M` — total Neo4j footprint ~2 GB. Sized as a personal-laptop citizen; the batcher's OOM auto-recovery covers occasional fat transactions on bigger vaults. See `docs/archive/requirements_v01_mvp.md` § Scalability for when to bump.
+- JVM heap (max): `1G` · Page cache: `512M` — total Neo4j footprint ~2 GB. Sized as a personal-laptop citizen; the batcher's OOM auto-recovery covers occasional fat transactions on bigger vaults. See `docs/architecture.md` *Scalability envelopes* for when to bump.
 
 If you change any of these, change them everywhere — `src/ki/neo4j_podman.py`, this doc, and the user's `~/.config/ki/config.yaml` profile must agree.
 
