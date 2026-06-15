@@ -78,7 +78,7 @@ ki --help            # if missing: curl -sSfL https://knowledge-index.ai/install
 Run `ki status`. It resolves **in layers** and reports the first blocking state — each layer needs the one above it to pass:
 
 1. **Disk marker** (no Neo4j needed) — is there a `.ki/` here?
-2. **Neo4j reachability** — `ki status` *attempts a connection* to the bound profile and classifies the result (you don't know this until you try).
+2. **Neo4j reachability** — `ki status -v` *attempts a connection* to the bound profile and classifies the result (you don't know this until you try).
 3. **Graph state** — only knowable once Neo4j is reachable.
 
 Act on the reported state, then re-run until READY:
@@ -90,7 +90,7 @@ Act on the reported state, then re-run until READY:
 | `NEO4J_UNRESPONSIVE` | connect hangs / times out | container up but not ready, or wedged → wait, then `references/neo4j-troubleshoot.md` |
 | `AUTH_ERROR` | connect → authentication failure | profile credentials wrong → `references/configure-profile.md` (re-enter creds) — **not** a restart |
 | `NOT_INDEXED` | reachable, but no `:Vault` node | `ki index .` (profile already bound) |
-| `STALE` | indexed, but the set or content-hash of `.md` files no longer matches the graph | `ki index .` to refresh |
+| `STALE` | indexed, but the set or content-hash of `.md` files no longer matches the graph | `ki status -v` shows which files drifted; `ki index .` to resync (see *Re-Indexing*) |
 | `READY` | indexed + in sync | proceed to Step 3 |
 
 Layers 1–2 work even when Neo4j is down (that's how `ki status` reports the Neo4j rows at all). The graph rows below require a reachable Neo4j.
@@ -210,7 +210,7 @@ Re-indexing entire vaults can become an expensive operations with more documents
 
 After significant changes or refactors to knowledge base content
 
-Run `ki status`; if it reports `STALE`, run `ki index .` — preferably in a sub-agent. 
+Run `ki status` (add `-v` to see exactly which files drifted); if it reports `STALE`, run `ki index .` — preferably in a sub-agent.
 
 > **`STALE`/`READY` is markdown-only — not bulletproof.** It does **not** notice changes to linked non-markdown attachments (PDFs, decks, images captured as stub nodes), and a vault indexed with a non-default `--max-file-size` can skew the diff. So `READY` guarantees the **markdown** is in sync, not necessarily every attachment. When in doubt — or after bulk/attachment changes — a full `ki index .` is the source of truth.
 

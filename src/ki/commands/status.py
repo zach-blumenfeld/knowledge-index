@@ -1,9 +1,10 @@
-"""`ki status [path]` — report the vault's state and the next action.
+"""`ki status [-C <dir>]` — report the vault's state and the next action.
 
 Thin IO wrapper over `ki.status.compute_status`. Renders the first blocking
 state with a concrete next step (human), or the raw state machine (`--json`).
-Exit code is 0 only for READY, 1 otherwise — so `ki status && ki search …`
-composes.
+Resolves from the cwd, or `-C <dir>` — same as the other read commands
+(`search`/`outline`/`get`). Exit code is 0 only for READY, 1 otherwise — so
+`ki status && ki search …` composes.
 """
 
 from __future__ import annotations
@@ -78,13 +79,19 @@ def _action(r: StatusResult) -> str:
         if d.get("changed"):
             bits.append(f"{d['changed']} changed")
         what = ", ".join(bits) if bits else "files changed"
-        return f"{what} since last index → run `ki index .` to refresh."
+        # Deliberately does NOT prescribe `ki index .` — that's cwd-relative
+        # (wrong when status was pointed elsewhere) and a full rebuild is
+        # overkill for a single change. Report the drift; -v lists the files.
+        return f"{what} on disk since last index."
     if r.state == READY:
         return "Use it: `ki outline <vault uri>`, then `ki search` / `ki get`."
     return ""
 
 
-def _render(r: StatusResult) -> None:
+_STALE_MARK = {"added_uris": "+", "removed_uris": "-", "changed_uris": "~"}
+
+
+def _render(r: StatusResult, *, verbose: bool = False) -> None:
     symbol, meaning = _HEADLINE.get(r.state, ("[red]✗[/red]", ""))
     console.print(f"{symbol} [bold]{r.state}[/bold] — {meaning}")
     if r.vault_uri:
@@ -96,12 +103,23 @@ def _render(r: StatusResult) -> None:
         console.print(f"  [dim]{r.message}[/dim]")
     console.print(f"  → {_action(r)}")
 
+    # STALE detail: with -v, list the out-of-sync files (+ added / - removed /
+    # ~ changed); otherwise just point at -v.
+    if r.state == STALE:
+        if verbose:
+            for key, mark in _STALE_MARK.items():
+                for uri in r.detail.get(key, []):
+                    console.print(f"      [dim]{mark}[/dim] {uri}")
+        else:
+            console.print("    [dim](`ki status -v` lists the out-of-sync files)[/dim]")
+
 
 def cmd_status(
-    path: Path | None,
+    directory: Path | None,
     *,
     profile: str | None,
     as_json: bool,
+    verbose: bool = False,
     conn_timeout: float = 5.0,
 ) -> int:
     cfg_path = find_config_path()
@@ -109,7 +127,7 @@ def cmd_status(
     # still reports NOT_A_VAULT (disk layer needs no Neo4j) when relevant.
     cfg = load_config(cfg_path)
 
-    start = Path(path).expanduser().resolve() if path else Path.cwd()
+    start = Path(directory).expanduser().resolve() if directory else Path.cwd()
     result = compute_status(
         cfg, start, profile_flag=profile, conn_timeout=conn_timeout
     )
@@ -125,6 +143,6 @@ def cmd_status(
         }
         sys.stdout.write(jsonlib.dumps(payload, indent=2) + "\n")
     else:
-        _render(result)
+        _render(result, verbose=verbose)
 
     return 0 if result.state == READY else 1

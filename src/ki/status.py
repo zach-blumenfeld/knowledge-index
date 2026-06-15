@@ -99,17 +99,26 @@ def graph_state(session, vault_root: Path, vault_uri: str) -> tuple[str, dict]:
     added = disk_uris - graph_uris      # on disk, never indexed
     removed = graph_uris - disk_uris    # indexed, gone from disk
     if added or removed:
-        return STALE, {"added": len(added), "removed": len(removed), "changed": 0}
+        # Detail carries both counts (for the headline) and the uri lists (for
+        # `ki status -v` / --json). Sorted for stable output.
+        return STALE, {
+            "added": len(added), "removed": len(removed), "changed": 0,
+            "added_uris": sorted(added), "removed_uris": sorted(removed),
+            "changed_uris": [],
+        }
 
-    changed = 0
+    changed_uris: list[str] = []
     for uri, path in disk.items():
         try:
             if graph.get(uri) != hash_bytes(path.read_bytes()):
-                changed += 1
+                changed_uris.append(uri)
         except OSError:
-            changed += 1  # vanished mid-check → treat as a change
-    if changed:
-        return STALE, {"added": 0, "removed": 0, "changed": changed}
+            changed_uris.append(uri)  # vanished mid-check → treat as a change
+    if changed_uris:
+        return STALE, {
+            "added": 0, "removed": 0, "changed": len(changed_uris),
+            "added_uris": [], "removed_uris": [], "changed_uris": sorted(changed_uris),
+        }
 
     return READY, {}
 

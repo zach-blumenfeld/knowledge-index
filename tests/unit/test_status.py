@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ki import status as S
 from ki.config import Config, Profile
 from ki.parser.markdown import hash_bytes
@@ -95,6 +97,69 @@ def test_set_check_short_circuits_before_hashing(tmp_path):
     state, detail = S.graph_state(_FakeSession(True, graph), tmp_path, "v")
     assert state == S.STALE
     assert detail["changed"] == 0  # short-circuited on the set diff
+
+
+def test_stale_detail_carries_uri_lists(tmp_path):
+    """Detail includes the actual out-of-sync uris (for `ki status -v` / --json),
+    not just counts."""
+    disk = _make_vault(tmp_path, {"a.md": b"# A", "b.md": b"# B"})
+    graph = {"v/a.md": disk["v/a.md"]}  # b.md added on disk
+    _, detail = S.graph_state(_FakeSession(True, graph), tmp_path, "v")
+    assert detail["added_uris"] == ["v/b.md"]
+    assert detail["removed_uris"] == []
+    assert detail["changed_uris"] == []
+
+
+def test_stale_changed_detail_lists_uris(tmp_path):
+    _make_vault(tmp_path, {"a.md": b"# A"})
+    graph = {"v/a.md": "differenthash"}
+    _, detail = S.graph_state(_FakeSession(True, graph), tmp_path, "v")
+    assert detail["changed_uris"] == ["v/a.md"]
+
+
+# ---- STALE message + -v rendering -----------------------------------------
+
+
+def test_stale_action_does_not_advise_ki_index():
+    from ki.commands.status import _action
+
+    r = S.StatusResult(
+        state=S.STALE, path=Path("/x"),
+        detail={"added": 1, "removed": 0, "changed": 2,
+                "added_uris": ["v/new.md"], "removed_uris": [],
+                "changed_uris": ["v/a.md", "v/b.md"]},
+    )
+    action = _action(r)
+    assert "ki index" not in action  # no cwd-relative re-index prescription
+    assert "1 added" in action and "2 changed" in action
+
+
+def test_render_verbose_lists_stale_files(capsys):
+    from ki.commands.status import _render
+
+    r = S.StatusResult(
+        state=S.STALE, path=Path("/x"), vault_uri="v",
+        detail={"added": 1, "removed": 1, "changed": 0,
+                "added_uris": ["v/new.md"], "removed_uris": ["v/gone.md"],
+                "changed_uris": []},
+    )
+    _render(r, verbose=True)
+    out = capsys.readouterr().out
+    assert "v/new.md" in out and "v/gone.md" in out
+
+
+def test_render_non_verbose_hints_at_v(capsys):
+    from ki.commands.status import _render
+
+    r = S.StatusResult(
+        state=S.STALE, path=Path("/x"), vault_uri="v",
+        detail={"added": 1, "removed": 0, "changed": 0,
+                "added_uris": ["v/new.md"], "removed_uris": [], "changed_uris": []},
+    )
+    _render(r, verbose=False)
+    out = capsys.readouterr().out
+    assert "v/new.md" not in out          # files not listed without -v
+    assert "-v" in out                    # but hinted
 
 
 # ---- compute_status: layers that need no Neo4j ----------------------------

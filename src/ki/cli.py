@@ -54,7 +54,7 @@ def main(verbose: int) -> None:
 
 
 def _directory_option(f):
-    """Shared `-C/--directory` for the read commands (outline/tree/search/get).
+    """Shared `-C/--directory` for the read commands (status/outline/tree/search/get).
 
     Resolves the vault's profile as if the command were run from <dir> (git's
     `-C`). Defaults to the current directory. Scope of *results* is unchanged —
@@ -144,31 +144,33 @@ def index_cmd(
     "status",
     help="Report a vault's state and the next action: NOT_A_VAULT / "
          "PROFILE_MISSING / NEO4J_DOWN / NEO4J_UNRESPONSIVE / AUTH_ERROR / "
-         "NOT_INDEXED / STALE / READY. Walks up from PATH (default: cwd). "
+         "NOT_INDEXED / STALE / READY. Walks up from -C <dir> (default: cwd). "
          "Exit 0 only when READY.",
 )
-@click.argument(
-    "path",
-    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
-    required=False,
-)
+@_directory_option
 @click.option("--profile", default=None, help="Override the vault's bound profile.")
 @click.option("--json", "as_json", is_flag=True, default=False)
+@click.option(
+    "-v", "--verbose", "verbose", is_flag=True, default=False,
+    help="On STALE, list the out-of-sync files (+ added / - removed / ~ changed).",
+)
 @click.option(
     "--timeout", "conn_timeout", type=float, default=5.0,
     help="Seconds to wait on the Neo4j connectivity probe (default: 5).",
 )
 def status_cmd(
-    path: Path | None,
+    directory: Path | None,
     profile: str | None,
     as_json: bool,
+    verbose: bool,
     conn_timeout: float,
 ) -> None:
     sys.exit(
         cmd_status(
-            path,
+            directory,
             profile=profile,
             as_json=as_json,
+            verbose=verbose,
             conn_timeout=conn_timeout,
         )
     )

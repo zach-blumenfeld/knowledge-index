@@ -242,9 +242,9 @@ the target explicitly instead; see §3.2.)
 
 ## 6. `ki status` — is this directory ready?
 
-`ki status [path]` answers "can I use `ki` here, and if not, what's the one next
-step?" It resolves in **layers**, each needing the one above to pass, and reports
-the **first blocking state**:
+`ki status` (cwd, or `-C <dir>`) answers "can I use `ki` here, and if not, what's
+the one next step?" It resolves in **layers**, each needing the one above to pass,
+and reports the **first blocking state**:
 
 1. **Disk** (no Neo4j needed) — is there a `.ki/` marker here?
 2. **Config** — is the bound profile actually in `config.yaml`?
@@ -259,7 +259,7 @@ the **first blocking state**:
 | `NEO4J_UNRESPONSIVE` | connect hangs / times out | wait, then troubleshoot |
 | `AUTH_ERROR` | connect → auth failure | re-enter creds (`ki configure`) — *not* a restart |
 | `NOT_INDEXED` | reachable, but no `:Vault` node | `ki index .` |
-| `STALE` | indexed, but `.md` set / hashes drifted | `ki index .` to refresh |
+| `STALE` | indexed, but `.md` set / hashes drifted | `ki status -v` lists the drifted files; re-index the vault to resync |
 | `READY` | indexed + in sync | use it (`outline` → `search`/`get`) |
 
 Exit code is `0` only for `READY` (so `ki status && ki search …` composes). The

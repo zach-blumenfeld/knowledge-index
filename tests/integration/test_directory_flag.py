@@ -12,6 +12,7 @@ import pytest
 from ki.commands.get import cmd_get
 from ki.commands.outline import cmd_outline
 from ki.commands.search import cmd_search
+from ki.commands.status import cmd_status
 from ki.config import Config, Profile, save_config
 from ki.ingest.pipeline import IngestOptions, ingest_vault
 from ki.neo4j_client import driver_for
@@ -71,6 +72,14 @@ def test_outline_bare_renders_the_vault_youre_in(vault_with_broken_default, caps
     assert rc == 0
     out = capsys.readouterr().out
     assert vault_uri in out
+
+
+def test_status_directory_relocates(vault_with_broken_default):
+    vault_dir, _ = vault_with_broken_default
+    # -C resolves the vault's bound profile (not the bogus default); freshly
+    # indexed → READY → exit 0.
+    rc = cmd_status(vault_dir, profile=None, as_json=True, verbose=False)
+    assert rc == 0
 
 
 def test_get_directory_relocates(vault_with_broken_default, neo4j_profile):
