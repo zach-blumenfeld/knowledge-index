@@ -16,6 +16,7 @@ from ki.search.queries import (
     run_b3,
     run_b12,
     run_b12_links,
+    run_search,
     run_vault_search,
 )
 
@@ -459,3 +460,55 @@ def test_cmd_search_plain_text_includes_key_header(
     assert "Key:" in out
     assert "D Document" in out
     assert "S Section" in out
+
+
+# ---- scope predicate ($scope) — the any() 3-part containment filter --------
+
+
+def test_scope_none_returns_results(search_corpus, neo4j_profile):
+    """Unscoped (scope_uris=None) searches all vaults — sanity baseline."""
+    with driver_for(neo4j_profile) as d, d.session() as s:
+        rows = run_search(s, "retrieval", scope_uris=None, k=20)
+    assert rows, "baseline unscoped search should find the corpus"
+
+
+def test_scope_to_document_returns_doc_and_its_sections(search_corpus, neo4j_profile):
+    """Scoping to a document uri matches the doc itself AND its sections
+    (the `= u` and `STARTS WITH u + '#'` branches)."""
+    doc_uri = f"{search_corpus}/retrieval.md"
+    with driver_for(neo4j_profile) as d, d.session() as s:
+        rows = run_search(s, "retrieval", scope_uris=[doc_uri], k=20)
+    uris = {r["uri"] for r in rows}
+    assert uris, "doc scope should return the doc + its sections"
+    # every hit is the doc itself or one of its sections — nothing outside.
+    assert all(u == doc_uri or u.startswith(doc_uri + "#") for u in uris)
+    assert doc_uri in uris  # the document node itself
+    assert any(u.startswith(doc_uri + "#") for u in uris)  # at least one section
+
+
+def test_scope_to_vault_keeps_only_in_vault_hits(search_corpus, neo4j_profile):
+    """Scoping to the vault uri matches its docs + sections (`STARTS WITH u + '/'`)."""
+    with driver_for(neo4j_profile) as d, d.session() as s:
+        rows = run_search(s, "retrieval", scope_uris=[search_corpus], k=20)
+    uris = {r["uri"] for r in rows}
+    assert uris
+    assert all(u.startswith(search_corpus + "/") for u in uris)
+
+
+def test_scope_to_unknown_uri_returns_nothing(search_corpus, neo4j_profile):
+    """A scope root nothing lives under yields no results (no silent over-match)."""
+    with driver_for(neo4j_profile) as d, d.session() as s:
+        rows = run_search(s, "retrieval", scope_uris=["no-such-vault"], k=20)
+    assert rows == []
+
+
+def test_scope_sibling_prefix_not_overmatched(search_corpus, neo4j_profile):
+    """A scope root that is a string-prefix of the vault but not a containment
+    ancestor must not match (the trailing separator guards this)."""
+    sibling = search_corpus[:-1] if len(search_corpus) > 1 else search_corpus + "x"
+    with driver_for(neo4j_profile) as d, d.session() as s:
+        rows = run_search(s, "retrieval", scope_uris=[sibling], k=20)
+    # `sibling` is the vault uri minus its last char — a bare string prefix,
+    # not a real ancestor — so the `/` and `#` boundaries exclude every hit.
+    assert all(r["uri"] != search_corpus for r in rows)
+    assert not any(r["uri"].startswith(search_corpus + "/") for r in rows)

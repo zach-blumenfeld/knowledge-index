@@ -180,16 +180,16 @@ def status_cmd(
 
 @main.command(
     "search",
-    help="Fulltext search over documents and sections. Requires a profile: "
-         "--profile, else the vault dir you are in (or -C <dir>), else error. "
-         "Scopes to that vault unless --profile (-> all vaults) or --vault. "
-         "Prints the resolved profile/vault to stderr.",
+    help="Fulltext search over documents and sections. Local by default: "
+         "profile + vault come from the vault dir you are in (or -C <dir>); "
+         "narrow with --under. Pass --profile for a remote profile (--vault to "
+         "pick vaults). Prints the resolved profile/scope to stderr.",
 )
 @click.argument("query")
 @click.option(
     "--profile", default=None,
-    help="Profile to search. Else read from the vault dir's .ki/vault.yaml; "
-         "passing it widens scope to all vaults (re-narrow with --vault).",
+    help="Remote mode: search this profile (alone -> all its vaults). "
+         "Omit to use the vault dir you are in.",
 )
 @_directory_option
 @click.option(
@@ -199,9 +199,14 @@ def status_cmd(
     help="Comma-separated subset of {document,section} (default: both).",
 )
 @click.option(
+    "--under", "under", default=None,
+    help="Narrow to a subtree (folder / document / section): a uri anywhere, or "
+         "a filesystem path in the local vault. Mutually exclusive with --vault.",
+)
+@click.option(
     "--vault", "vault_uri", default=None,
-    help="Scope to a specific vault uri (default: the vault dir you are in, "
-         "or all vaults).",
+    help="Comma-separated vault uris to limit to (requires --profile). "
+         "Mutually exclusive with --under.",
 )
 @click.option(
     "--k", "k", type=int, default=10,
@@ -213,6 +218,7 @@ def search_cmd(
     profile: str | None,
     directory: Path | None,
     types_csv: str,
+    under: str | None,
     vault_uri: str | None,
     k: int,
     as_json: bool,
@@ -222,6 +228,7 @@ def search_cmd(
             query,
             profile=profile,
             types_csv=types_csv,
+            under=under,
             vault_uri=vault_uri,
             k=k,
             as_json=as_json,

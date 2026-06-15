@@ -138,11 +138,22 @@ def run_vault_search(session, query: str, k: int = 10) -> list[dict]:
 # The uri scope is a Cypher property predicate (exact path prefix), NOT a
 # Lucene clause: `content_search` uses the standard analyzer, which would
 # tokenize/shred a uri, so prefix-matching must run here on the stored value.
+#
+# Scope predicate ($scope): a list of containment-root URIs, or null for
+# unscoped (all vaults). Containment in ki URIs uses two separators — `/`
+# (vault/folder → child, section → subsection) and `#` (document → its
+# sections) — and a node's own URI has no trailing separator. So "node X and
+# everything under it" is a three-part, type-agnostic test, wrapped in any()
+# to cover one *or* many scope roots (vault / folder / document / section).
+# See docs/commands/search.md §5.4.
 SEARCH_DOC_SECTION = """
 CALL db.index.fulltext.queryNodes($index_name, $query) YIELD node, score
 WHERE (node:Document OR node:Section)
   AND ($labels IS NULL OR any(l IN labels(node) WHERE l IN $labels))
-  AND ($prefix IS NULL OR node.uri STARTS WITH $prefix)
+  AND ($scope IS NULL OR any(u IN $scope WHERE
+        node.uri = u
+        OR node.uri STARTS WITH u + '/'
+        OR node.uri STARTS WITH u + '#'))
 WITH node, score
 ORDER BY score DESC
 LIMIT toInteger($k)
@@ -163,15 +174,17 @@ def run_search(
     session,
     query: str,
     *,
-    vault_prefix: str | None = None,
+    scope_uris: list[str] | None = None,
     labels: list[str] | None = None,
     k: int = 10,
 ) -> list[dict]:
     """Unified fulltext over Document + Section, optionally scoped.
 
     `labels` restricts to a subset of {"Document", "Section"} (None = both).
-    `vault_prefix` (e.g. "my-notes/") scopes results to one vault's subtree.
-    Sections carry their owning Document's uri/title; Documents leave those null.
+    `scope_uris` is a list of containment roots (vault / folder / document /
+    section URIs); a hit is kept if it is, or is under, any of them. `None`
+    means unscoped (all vaults). Sections carry their owning Document's
+    uri/title; Documents leave those null.
     """
     res = session.run(
         SEARCH_DOC_SECTION,
@@ -179,7 +192,7 @@ def run_search(
             "index_name": INDEX_NAME,
             "query": query,
             "labels": labels,
-            "prefix": vault_prefix,
+            "scope": scope_uris,
             "k": k,
         },
     )

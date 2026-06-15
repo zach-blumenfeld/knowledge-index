@@ -116,12 +116,12 @@ ki: profile 'personal' · vault 'my-notes'   (from .ki)
 Profile is **never guessed**: it's `--profile`, else the vault's binding. Not in a
 vault and no `--profile` → error (nothing to resolve against).
 
-### 5.2 `--under` — the local subtree filter
+### 5.2 `--under` — the subtree filter
 
 `--under` narrows to a containment subtree at **any level** — folder, document, or
-section of the vault you're in. It takes **either a uri or a filesystem path**,
-resolved by one function (a uri in this vault → as-is; an existing file/dir in this
-vault → its uri; neither → loud error):
+section. It takes a **uri** (works in either mode) or a **filesystem path** (local
+mode only). Locally it's resolved by one function (a uri in this vault → as-is; an
+existing file/dir in this vault → its uri; neither → loud error):
 
 ```python
 def resolve_to_uri(arg, vault_uri, vault_path, cwd) -> str:
@@ -140,27 +140,35 @@ def resolve_to_uri(arg, vault_uri, vault_path, cwd) -> str:
     raise click.ClickException(f"{arg!r} is not a uri or a file in vault {vault_uri!r}")
 ```
 
-`vault_uri`/`vault_path` are always present here because `--under` is **local-only**
-(you're in a vault). A path is **`-N`-safe**: it resolves through the on-disk marker,
-so even if the directory is `my-notes/` but its slug collided to `my-notes-1`, the
-path still yields `my-notes-1/...`. A *guessed bare uri* is not safe — the basename
-is not always the uri. Rule of thumb: **copy uris** from `ki search`/`ki outline`,
-or **use a path** when you mean "the folder I'm looking at."
+`resolve_to_uri` is **local-only** — it runs against the vault you're in. A path is
+**`-N`-safe**: it resolves through the on-disk marker, so even if the directory is
+`my-notes/` but its slug collided to `my-notes-1`, the path still yields
+`my-notes-1/...`. A *guessed bare uri* is not safe — the basename is not always the
+uri. Rule of thumb: **copy uris** from `ki search`/`ki outline`, or **use a path**
+when you mean "the folder I'm looking at."
+
+In **remote** mode (§5.3) `--under` takes a **uri only** (no local filesystem to
+resolve a path against) and uses it verbatim. `--under` and `--vault` are mutually
+exclusive — narrow one subtree, or pick whole vaults.
 
 ### 5.3 Remote mode (`--profile`)
 
 Passing `--profile` says *"I'm not working on the vault I'm standing in."* It drops
 the cwd-vault auto-scope (a vault lives in exactly one profile) and searches the
 profile directly — useful when you don't have the source locally (shared / remote
-KBs). Scope is by **`--vault`**, not `--under`:
+KBs). Scope is by **`--vault`** (whole vaults) or **`--under`** (one subtree),
+either as verbatim uris:
 
 - `--profile P` → **all vaults** in P.
 - `--profile P --vault a,b` → just those vaults (comma-separated **uris**, taken
   verbatim — no filesystem resolution, since the source may not be present).
+- `--profile P --under a/folder/doc.md` → one subtree (a **uri**; a path would
+  error — nothing local to resolve it against).
 
 ```
 ki: profile 'work' · all vaults
 ki: profile 'work' · vaults [api-docs, runbooks]
+ki: profile 'work' · under 'api-docs/v2'
 ```
 
 ### 5.4 The scope predicate (one or many uris)
@@ -251,9 +259,9 @@ ki get --type path "<uri>"                 # metadata only (then read the file y
 | flag | meaning |
 |---|---|
 | `--types <csv>` | subset of `{document, section}` (default: both) |
-| `--under <uri-or-path>` | **local** — narrow to a subtree of the vault you're in (folder / doc / section) |
+| `--under <uri-or-path>` | narrow to a subtree (folder / doc / section): a uri anywhere, or a path in the local vault. Excludes `--vault` |
 | `--profile <name>` | **remote** — search this profile; alone → all its vaults |
-| `--vault <uri,…>` | **remote** — limit to these vaults (requires `--profile`) |
+| `--vault <uri,…>` | **remote** — limit to these vaults (requires `--profile`). Excludes `--under` |
 | `-C, --directory <dir>` | resolve the local vault/profile as if run from `<dir>` |
 | `--k <n>` | result cap (default 10) |
 | `--json` | machine-readable rows (keys = the §6 fields) |
@@ -270,10 +278,11 @@ ki search "rate limiting" --under my-notes/api     # same, by uri
 ki search "retry" --under my-notes/api/client.md   # one doc + its sections
 ki search "retry" --types section --k 25           # sections only, wider cap
 
-# Remote — name the profile (and optionally the vaults) explicitly:
+# Remote — name the profile (and optionally a scope) explicitly, by uri:
 ki search "rate limiting" --profile work                       # all vaults in 'work'
 ki search "rate limiting" --profile work --vault api-docs      # one vault
 ki search "incident" --profile work --vault api-docs,runbooks  # two vaults
+ki search "retry" --profile work --under api-docs/v2/auth.md   # one subtree
 ```
 
 ---
@@ -288,10 +297,7 @@ ki search "incident" --profile work --vault api-docs,runbooks  # two vaults
 
 ## Status
 
-This doc describes the agreed search design. **Shipped:** the unified
-Document+Section sweep, profile resolution with the stderr banner, and `--types`.
-**Pending:** `--under` (the local subtree filter, §5.2), remote `--vault` scoping
-(§5.3), and the `any()` / three-part scope predicate (§5.4) — documented here as the
-target so the behavior is settled before the code lands. Current code applies scope
-as a single `uri STARTS WITH <vault>/` prefix; this generalizes it to one-or-many
-subtrees.
+This doc matches the implemented behavior: the unified Document+Section sweep,
+profile resolution with the stderr banner, `--types`, the local `--under` subtree
+filter (§5.2), remote `--profile` / `--vault` scoping (§5.3), and the `any()`
+three-part scope predicate (§5.4).

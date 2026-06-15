@@ -18,6 +18,7 @@ from ki.commands.search import (
     VALID_TYPES,
     _parse_types,
     _resolve_scope,
+    resolve_to_uri,
 )
 from ki.config import Config, Profile
 from ki.search.queries import run_search
@@ -80,74 +81,146 @@ def _vault_dir(tmp_path, *, uri="my-notes", profile="personal"):
     return tmp_path
 
 
+def _scope(cfg, *, profile_flag=None, under_flag=None, vault_flag=None, start_dir):
+    return _resolve_scope(
+        cfg, profile_flag=profile_flag, under_flag=under_flag,
+        vault_flag=vault_flag, start_dir=start_dir,
+    )
+
+
+# -- flag-combination guards --
+
 def test_resolve_requires_a_profile_outside_a_vault(tmp_path):
     with pytest.raises(ClickException) as e:
-        _resolve_scope(_cfg(), profile_flag=None, vault_flag=None, start_dir=tmp_path)
+        _scope(_cfg(), start_dir=tmp_path)
     assert "profile" in str(e.value).lower()
 
 
+def test_resolve_vault_without_profile_errors(tmp_path):
+    with pytest.raises(ClickException) as e:
+        _scope(_cfg(), vault_flag="notes", start_dir=tmp_path)
+    assert "--vault requires --profile" in str(e.value)
+
+
+def test_resolve_under_and_vault_mutually_exclusive(tmp_path):
+    with pytest.raises(ClickException) as e:
+        _scope(
+            _cfg(), profile_flag="work", under_flag="notes/x",
+            vault_flag="notes", start_dir=tmp_path,
+        )
+    assert "mutually exclusive" in str(e.value)
+
+
+# -- remote mode (--profile) --
+
 def test_resolve_profile_flag_means_all_vaults(tmp_path):
-    prof, prefix, banner = _resolve_scope(
-        _cfg(), profile_flag="work", vault_flag=None, start_dir=tmp_path
-    )
+    prof, scope, banner = _scope(_cfg(), profile_flag="work", start_dir=tmp_path)
     assert prof.name == "work"
-    assert prefix is None
+    assert scope is None
     assert "all vaults" in banner
 
 
-def test_resolve_profile_and_vault(tmp_path):
-    prof, prefix, _ = _resolve_scope(
+def test_resolve_profile_and_one_vault(tmp_path):
+    prof, scope, banner = _scope(
         _cfg(), profile_flag="work", vault_flag="notes", start_dir=tmp_path
     )
     assert prof.name == "work"
-    assert prefix == "notes/"
+    assert scope == ["notes"]
+    assert "notes" in banner
 
 
-def test_resolve_vault_flag_trailing_slash_idempotent(tmp_path):
-    _, prefix, _ = _resolve_scope(
-        _cfg(), profile_flag="work", vault_flag="notes/", start_dir=tmp_path
+def test_resolve_profile_and_vault_csv(tmp_path):
+    _, scope, _ = _scope(
+        _cfg(), profile_flag="work", vault_flag="notes, docs/", start_dir=tmp_path
     )
-    assert prefix == "notes/"
+    assert scope == ["notes", "docs"]  # split, trimmed, trailing slash stripped
+
+
+def test_resolve_empty_vault_csv_errors(tmp_path):
+    with pytest.raises(ClickException) as e:
+        _scope(_cfg(), profile_flag="work", vault_flag=" , ", start_dir=tmp_path)
+    assert "empty" in str(e.value).lower()
+
+
+def test_resolve_remote_under_uri(tmp_path):
+    prof, scope, banner = _scope(
+        _cfg(), profile_flag="work", under_flag="work-notes/api/v2", start_dir=tmp_path
+    )
+    assert prof.name == "work"
+    assert scope == ["work-notes/api/v2"]  # taken verbatim, no local resolution
+    assert "under 'work-notes/api/v2'" in banner
+
+
+def test_resolve_remote_under_path_errors(tmp_path):
+    # No local vault to resolve a path against → must be a uri.
+    with pytest.raises(ClickException) as e:
+        _scope(_cfg(), profile_flag="work", under_flag="./api", start_dir=tmp_path)
+    assert "path" in str(e.value).lower()
 
 
 def test_resolve_unknown_profile_errors(tmp_path):
     with pytest.raises(ClickException):
-        _resolve_scope(_cfg(), profile_flag="nope", vault_flag=None, start_dir=tmp_path)
+        _scope(_cfg(), profile_flag="nope", start_dir=tmp_path)
 
 
-def test_resolve_in_vault_default_uses_bound_profile_and_vault(tmp_path):
+# -- local mode (in a vault) --
+
+def test_resolve_in_vault_default_scopes_to_that_vault(tmp_path):
     vd = _vault_dir(tmp_path)
-    prof, prefix, banner = _resolve_scope(
-        _cfg(), profile_flag=None, vault_flag=None, start_dir=vd
+    prof, scope, banner = _scope(_cfg(), start_dir=vd)
+    assert prof.name == "personal"
+    assert scope == ["my-notes"]
+    assert "vault 'my-notes'" in banner
+
+
+def test_resolve_under_uri_in_vault(tmp_path):
+    vd = _vault_dir(tmp_path)
+    prof, scope, banner = _scope(
+        _cfg(), under_flag="my-notes/projects", start_dir=vd
     )
     assert prof.name == "personal"
-    assert prefix == "my-notes/"
-    assert "my-notes" in banner
+    assert scope == ["my-notes/projects"]
+    assert "under 'my-notes/projects'" in banner
 
 
-def test_resolve_in_vault_profile_override_resets_to_all(tmp_path):
+def test_resolve_under_path_in_vault(tmp_path):
     vd = _vault_dir(tmp_path)
-    prof, prefix, _ = _resolve_scope(
-        _cfg(), profile_flag="work", vault_flag=None, start_dir=vd
-    )
-    assert prof.name == "work"
-    assert prefix is None  # override drops the .ki vault scope
-
-
-def test_resolve_in_vault_vault_override(tmp_path):
-    vd = _vault_dir(tmp_path)
-    prof, prefix, _ = _resolve_scope(
-        _cfg(), profile_flag=None, vault_flag="other", start_dir=vd
-    )
-    assert prof.name == "personal"  # still the bound profile
-    assert prefix == "other/"
+    (vd / "projects").mkdir()
+    _, scope, _ = _scope(_cfg(), under_flag="./projects", start_dir=vd)
+    assert scope == ["my-notes/projects"]
 
 
 def test_resolve_bound_profile_missing_from_config_errors(tmp_path):
     vd = _vault_dir(tmp_path, profile="ghost")  # not in cfg
     with pytest.raises(ClickException) as e:
-        _resolve_scope(_cfg(), profile_flag=None, vault_flag=None, start_dir=vd)
+        _scope(_cfg(), start_dir=vd)
     assert "ghost" in str(e.value)
+
+
+# ---- resolve_to_uri --------------------------------------------------------
+
+
+def test_resolve_to_uri_uri_in_vault_passthrough(tmp_path):
+    assert resolve_to_uri("my-notes/foo.md", "my-notes", tmp_path, cwd=tmp_path) \
+        == "my-notes/foo.md"
+    # the vault uri itself, and a trailing slash, both normalize
+    assert resolve_to_uri("my-notes", "my-notes", tmp_path, cwd=tmp_path) == "my-notes"
+    assert resolve_to_uri("my-notes/a/", "my-notes", tmp_path, cwd=tmp_path) == "my-notes/a"
+
+
+def test_resolve_to_uri_existing_dir_to_uri(tmp_path):
+    (tmp_path / "My Projects").mkdir()
+    assert resolve_to_uri("./My Projects", "my-notes", tmp_path, cwd=tmp_path) \
+        == "my-notes/my-projects"  # slugified
+
+
+def test_resolve_to_uri_vault_root_path(tmp_path):
+    assert resolve_to_uri(".", "my-notes", tmp_path, cwd=tmp_path) == "my-notes"
+
+
+def test_resolve_to_uri_nonexistent_non_uri_errors(tmp_path):
+    with pytest.raises(ClickException):
+        resolve_to_uri("nope/missing", "my-notes", tmp_path, cwd=tmp_path)
 
 
 # ---- run_search param plumbing ---------------------------------------------
@@ -162,10 +235,10 @@ class _FakeSession:
         return []
 
 
-def test_run_search_threads_prefix_labels_k():
+def test_run_search_threads_scope_labels_k():
     s = _FakeSession()
-    run_search(s, "q", vault_prefix="my-notes/", labels=["Section"], k=7)
-    assert s.params["prefix"] == "my-notes/"
+    run_search(s, "q", scope_uris=["my-notes"], labels=["Section"], k=7)
+    assert s.params["scope"] == ["my-notes"]
     assert s.params["labels"] == ["Section"]
     assert s.params["k"] == 7
 

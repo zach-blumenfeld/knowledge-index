@@ -15,8 +15,14 @@ exact pattern. Editorial prose is fine; just don't change the heading.
 
 ## [Unreleased]
 
+### Added
+
+- **`ki search --under <uri-or-path>`** — scope a search to a containment subtree (folder / document / section). Takes a **uri** (works in either mode) or a **filesystem path** (local mode only — `-N`-safe, resolved through the on-disk marker). See [#67](https://github.com/zach-blumenfeld/knowledge-index/issues/67), `docs/commands/search.md` §5.2.
+- **`ki search --profile P [--vault a,b]`** — remote mode: search a profile you're not standing in (`--profile` alone → all its vaults; `--vault` limits to a comma-separated list of vault uris; `--profile P --under <uri>` scopes to one subtree). `--vault` requires `--profile`; `--under` and `--vault` are mutually exclusive; all guards error clearly.
+
 ### Changed
 
+- **`ki search` scope predicate** now matches a node that *is* or is *under* any of one-or-more containment roots (the `any()` three-part `= / STARTS WITH '/' / STARTS WITH '#'` test), replacing the single `uri STARTS WITH <vault>/` prefix. Correct for vault / folder / document / section roots alike. See `docs/commands/search.md` §5.4.
 - **Agent skill renamed `ki` → `knowledge-base`.** The bundled skill's frontmatter `name` is now `knowledge-base`, and `ki skill install` writes it to `<agent-config>/skills/knowledge-base/SKILL.md` (previously `.../skills/ki/SKILL.md`) — a use-case-descriptive name (the skill builds and searches a *knowledge base*), sitting alongside the sibling `neo4j-cli` skill. The `ki` CLI command and the `knowledge-index` Python package are unchanged.
   - **Migration:** a prior `ki skill install` left the skill at the old `skills/ki/` path. After upgrading, re-run `ki skill install` to write the new `knowledge-base/` skill, then delete the stale `skills/ki/` directory in each agent's config by hand — `ki skill remove` now targets the new path and won't clean up the old one.
 
