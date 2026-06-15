@@ -3,9 +3,8 @@ name: knowledge-base
 description: Search, navigate, and read a markdown knowledge base — a directory of notes, docs, or a wiki — via an auto-built knowledge-graph index over documents, their sections, and the wikilinks between them, retrieving the right slice instead of grepping and reading whole files. Use when working in a folder of markdown — setting up or maintaining a knowledge base, finding or retrieving content, summarizing it, or answering questions grounded in the notes.
 ---
 <!-- TODO
-1. graph reasoning reframe here.  Not text2Cypher/Query. Carry over, to blog. We could have called this...but thi is actually more fitting, and prompting as such helps substantially. When you prompt an agent with "query-first" language i.e. to make Cypher queries - it thinks in terms of (SQL) DB query in Cypher syntax, while working it leaves huge benifits on the table.  Instead, prompt the agent with "reasoning-first" languge - read schema and reason over how to find paths and patterns in the graph - use the Cypher query language to express and execute. It is a true unlock.  Simple yet so powerful. The reframe has improved my agents graph queries substantially. 
-2. Rewrite the references (as much as needed)
-3. get all the todos left on your plate. 
+1. Rewrite the references (as much as needed)
+2. get all the todos left on your plate.
 -->
 # `ki` — Usage
 
@@ -165,10 +164,12 @@ Sometimes the question is about the vault as a whole, not a specific slice:
 
 Two strategies:
 1. **Outline as overview** — read `ki outline --full` as a high-level map of the *whole* vault to summarize its coverage and structure (adjust --depth and recurse on uris as needed). Follow with `ki search/get` for any specifics. Best for *"what's in here."*
-2. **Graph-reasoning via `neo4j-cli`** — for counts, aggregates, paths, and structural questions that search can't express, query the same Neo4j directly with **`neo4j-cli`**. **Connect by credential *name*, never a password** — `ki configure` (and `ki profile sync`) registered each profile as a neo4j-cli credential named after the profile, so you pass `--credential <profile>` and the secret stays in neo4j-cli's store:
+2. **Reason over the graph (via `neo4j-cli`)** — for counts, aggregates, paths, and structural questions search can't express, query the Neo4j graph directly with **`neo4j-cli`**. **Reason over the graph; don't translate the question into a query** — read the schema, think in nodes / relationships / **paths / neighborhoods / centrality**, *then* express that reasoning as Cypher. (`neo4j-cli` and its installed skills already drive this schema-first, graph-shaped flow — lean on them rather than re-deriving it.)
+
+   **Connect by credential *name*, never a password** — `ki configure` / `ki profile sync` registered each profile as a neo4j-cli credential, so pass `--credential <profile>` and the secret stays in neo4j-cli's store:
    ```sh
-   neo4j-cli query :schema --credential <profile> --format toon     # inspect the schema FIRST — never guess it
-   neo4j-cli query "<cypher>" --credential <profile> --format json   # then reason over paths/patterns and query
+   neo4j-cli query :schema --credential <profile> --format toon     # read the schema FIRST — never guess it
+   neo4j-cli query "<cypher>" --credential <profile> --format json   # then express your graph reasoning as Cypher
    ```
    - `<profile>` is the vault's bound profile — read it from `ki profile list` or the `.ki/vault.yaml` `profile:` field (both non-secret). If `--credential` reports the name is unknown, run `ki profile sync`.
    - To scope queries to the vault uri (or any folder, document, section therein) know that **ki URIs are hierarchical**, so filtering `uri` with `STARTS WITH '<uri>/'` filters to the subtree — everything under that vault / folder / document / section. Keep the trailing `/`: `STARTS WITH 'my-notes'` would also match the sibling vault `my-notes-2`.

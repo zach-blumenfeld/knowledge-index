@@ -44,6 +44,14 @@ The graph, how it's built, and how it's queried.
 - [data-model/theme-queries.md](data-model/theme-queries.md) — GDS Leiden
   clustering for themes. **Draft — not yet shipped.**
 
+## Experiments — [`experiments/`](experiments/)
+
+Empirical research logs that inform design decisions (not specs).
+
+- [experiments/graph-reasoning.md](experiments/graph-reasoning.md) — query-first vs
+  reasoning-first prompting for `neo4j-cli` graph queries, run against the live wiki
+  graph. Informs the SKILL's graph-reasoning framing.
+
 ## Archive — [`archive/`](archive/)
 
 Historical / superseded design records. Kept for provenance — **not current truth.**
