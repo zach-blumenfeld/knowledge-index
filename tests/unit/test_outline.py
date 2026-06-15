@@ -11,6 +11,9 @@ Integration tests (B.12 / B.12-links against an ephemeral Neo4j) live in
 
 from __future__ import annotations
 
+import pytest
+from click import ClickException
+
 from ki.commands.outline import (
     Row,
     _dfs_emit,
@@ -20,7 +23,32 @@ from ki.commands.outline import (
     _links_to_hint,
     _parse_at,
     _uri_display,
+    cmd_outline,
 )
+
+# ---- render-root resolution (no Neo4j; errors before connecting) ----------
+
+
+def _write_cfg(tmp_path, monkeypatch):
+    xdg = tmp_path / "xdg"
+    (xdg / "ki").mkdir(parents=True)
+    (xdg / "ki" / "config.yaml").write_text(
+        "profiles:\n  local:\n    uri: bolt://h:7687\n    user: neo4j\n    password: x\n"
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.delenv("KI_PROFILE", raising=False)
+
+
+def test_outline_bare_outside_vault_errors(tmp_path, monkeypatch):
+    """No uri, no --profile, not in a vault → a clear error (nothing to render),
+    raised before any Neo4j connection."""
+    _write_cfg(tmp_path, monkeypatch)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(ClickException) as e:
+        cmd_outline(profile=None, at=None, depth=2, full=False, directory=plain)
+    assert "needs a target" in str(e.value)
+
 
 # ---- --at parsing ----------------------------------------------------------
 

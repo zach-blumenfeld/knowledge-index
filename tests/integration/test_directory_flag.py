@@ -63,6 +63,16 @@ def test_outline_directory_relocates(vault_with_broken_default):
     assert rc == 0
 
 
+def test_outline_bare_renders_the_vault_youre_in(vault_with_broken_default, capsys):
+    """Bare `ki outline` (no uri, no --profile) scopes to the vault at -C/cwd,
+    not all vaults — its uri shows up as the rendered root."""
+    vault_dir, vault_uri = vault_with_broken_default
+    rc = cmd_outline(profile=None, at=None, depth=2, full=False, directory=vault_dir)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert vault_uri in out
+
+
 def test_get_directory_relocates(vault_with_broken_default, neo4j_profile):
     vault_dir, vault_uri = vault_with_broken_default
     with driver_for(neo4j_profile) as d, d.session() as s:

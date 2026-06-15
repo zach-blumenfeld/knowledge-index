@@ -20,7 +20,7 @@ This document defines the rendered format. **Scope and flag semantics** (which p
   - `ki outline --profile P <uri>` → render that subtree (the uri names the vault).
 - **`-C <dir>`** relocates the working dir for resolution; **`--at <uri>`** is a back-compat alias for the positional `<uri>`.
 
-> **Alignment note (pending).** Today a bare `ki outline` (no uri) renders *all* vaults in the resolved profile, regardless of whether you're in a vault — the pre-scoping-model behavior. The target above (bare = the vault you're in; all vaults only under `--profile`) is the alignment to `docs/scoping.md`, not yet wired. Until then, pass the vault uri explicitly: `ki outline <vault-uri>`.
+A bare `ki outline` outside any vault (no uri, no `--profile`) is an error — there's nothing to render. Pass a `<uri>`, `-C <dir>`, or `--profile`.
 
 ## Quick example
 
@@ -220,7 +220,7 @@ This partitioning is a consequence of the data model, not a renderer rule — Fo
 
 ### Multi-root (all vaults)
 
-When the scope is **all vaults** (remote `--profile` with no uri — see *Scoping*), there is no single root URI. The query matches **every `:Vault` in the resolved profile** as a root, and the walk fans out from each. The wire format is unchanged — multiple rows arrive with `depth = 0, parent_uri = null`. (Until the *Scoping* alignment note lands, a bare `ki outline` also takes this path.)
+When the scope is **all vaults** (remote `--profile` with no uri — see *Scoping*), there is no single root URI. The query matches **every `:Vault` in the resolved profile** as a root, and the walk fans out from each. The wire format is unchanged — multiple rows arrive with `depth = 0, parent_uri = null`.
 
 The renderer treats the `parent_uri = null` group as the implicit "root group," sorts alphabetically by `name`, and DFS-emits each vault tree in turn. There is no separator between vaults in the rendered output — the `V` row at depth 0 is the visual boundary.
 

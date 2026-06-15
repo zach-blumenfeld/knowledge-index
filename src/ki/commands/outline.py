@@ -22,6 +22,7 @@ from ..config import find_config_path, load_config
 from ..neo4j_client import driver_for
 from ..profile_resolve import resolve_profile
 from ..search.queries import run_b12, run_b12_links
+from ..vault import find_vault_root, read_vault_uri
 
 
 @dataclass
@@ -56,9 +57,28 @@ def cmd_outline(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = resolve_profile(cfg, profile, start_dir=directory)
 
-    root_uri = _parse_at(at)
+    explicit_uri = _parse_at(at)
+
+    # Pick the render root, mirroring the scoping model (docs/scoping.md §3.2):
+    #   - explicit <uri> / --at → render that subtree (local or remote).
+    #   - --profile, no uri      → all vaults in that profile (multi-root).
+    #   - else (local, no uri)   → the vault you're in (cwd, or -C <dir>).
+    if explicit_uri is not None:
+        root_uri: str | None = explicit_uri
+    elif profile:
+        root_uri = None
+    else:
+        vroot = find_vault_root(directory or Path.cwd())
+        if vroot is None:
+            raise click.ClickException(
+                "ki outline needs a target: run inside a vault, point at one with "
+                "-C <dir>, pass a <uri>, or use --profile <name> to render all "
+                "vaults in a profile."
+            )
+        root_uri = read_vault_uri(vroot)
+
+    prof = resolve_profile(cfg, profile, start_dir=directory)
 
     with driver_for(prof) as driver, driver.session() as session:
         rows = _collect_rows(session, root_uri, depth, full=full)
@@ -66,12 +86,12 @@ def cmd_outline(
     if not rows:
         if root_uri is None:
             click.echo(
-                "(no vaults indexed yet — run `ki index <path>` to create one)"
+                "(no vaults indexed in this profile — run `ki index <path>` to create one)"
             )
         else:
             click.echo(
-                f"(no node found at `{root_uri}` — try `ki outline` (no URI) "
-                "to list all vaults, or `ki vault list`)"
+                f"(nothing indexed at `{root_uri}` — check `ki status`, "
+                f"or `ki vault list` for the indexed vaults)"
             )
         return 0
 
