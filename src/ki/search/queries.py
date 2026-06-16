@@ -1,4 +1,4 @@
-"""Retrieval queries, lifted from docs/retrieval-queries.md.
+"""Retrieval queries, lifted from docs/data-model/retrieval-queries.md.
 
 v1 sign-off requires B.1, B.2, B.3 to be reachable via `ki search` flags.
 B.4–B.10 ship as constants so they're easy to wire up later.
@@ -128,9 +128,80 @@ def run_vault_search(session, query: str, k: int = 10) -> list[dict]:
     return [dict(r) for r in res]
 
 
-# B.12 — Containment tree (HAS walk). `ki tree`'s hierarchy producer.
+# Unified content search over Document + Section — the `ki search` default.
+# Uses the same shared `content_search` index, which searches ALL indexed
+# fields at once (displayName + content + aliases + description); the B1/B2
+# constants above are *not* title-only / content-only despite their names.
+# Optional structural filters, both controlled by us (not the user's query):
+#   - $labels: restrict to a subset of {"Document","Section"} (the --types flag)
+#   - $prefix: a `<Vault.uri>/` prefix to scope to one vault's subtree.
+# The uri scope is a Cypher property predicate (exact path prefix), NOT a
+# Lucene clause: `content_search` uses the standard analyzer, which would
+# tokenize/shred a uri, so prefix-matching must run here on the stored value.
 #
-# Emits the wire record format defined in docs/tree-format.md *Wire record
+# Scope predicate ($scope): a list of containment-root URIs, or null for
+# unscoped (all vaults). Containment in ki URIs uses two separators — `/`
+# (vault/folder → child, section → subsection) and `#` (document → its
+# sections) — and a node's own URI has no trailing separator. So "node X and
+# everything under it" is a three-part, type-agnostic test, wrapped in any()
+# to cover one *or* many scope roots (vault / folder / document / section).
+# See docs/commands/search.md §5.4.
+SEARCH_DOC_SECTION = """
+CALL db.index.fulltext.queryNodes($index_name, $query) YIELD node, score
+WHERE (node:Document OR node:Section)
+  AND ($labels IS NULL OR any(l IN labels(node) WHERE l IN $labels))
+  AND ($scope IS NULL OR any(u IN $scope WHERE
+        node.uri = u
+        OR node.uri STARTS WITH u + '/'
+        OR node.uri STARTS WITH u + '#'))
+WITH node, score
+ORDER BY score DESC
+LIMIT toInteger($k)
+OPTIONAL MATCH (doc:Document)-[:HAS*]->(node)
+RETURN
+  CASE WHEN node:Section THEN 'Section' ELSE 'Document' END AS label,
+  node.uri          AS uri,
+  node.displayName  AS display_name,
+  node.path         AS path,
+  node.content      AS content,
+  doc.uri           AS document_uri,
+  doc.displayName   AS document_title,
+  score
+""".strip()
+
+
+def run_search(
+    session,
+    query: str,
+    *,
+    scope_uris: list[str] | None = None,
+    labels: list[str] | None = None,
+    k: int = 10,
+) -> list[dict]:
+    """Unified fulltext over Document + Section, optionally scoped.
+
+    `labels` restricts to a subset of {"Document", "Section"} (None = both).
+    `scope_uris` is a list of containment roots (vault / folder / document /
+    section URIs); a hit is kept if it is, or is under, any of them. `None`
+    means unscoped (all vaults). Sections carry their owning Document's
+    uri/title; Documents leave those null.
+    """
+    res = session.run(
+        SEARCH_DOC_SECTION,
+        parameters={
+            "index_name": INDEX_NAME,
+            "query": query,
+            "labels": labels,
+            "scope": scope_uris,
+            "k": k,
+        },
+    )
+    return [dict(r) for r in res]
+
+
+# B.12 — Containment tree (HAS walk). `ki outline`'s hierarchy producer.
+#
+# Emits the wire record format defined in docs/commands/outline.md *Wire record
 # format*: {depth, inrel, label, name, displayName, uri, parent_uri,
 # sort_pos}. Sections carry sort_pos (NEXT_SECTION position in the parent
 # doc) so the renderer can order sibling sections by reading order.
@@ -181,7 +252,7 @@ RETURN depth, inrel, label, name, displayName, uri, parent_uri, sort_pos
 
 
 # B.12-links — outbound :LINKS_TO edges from a set of source URIs. Called
-# by `ki tree` after B.12 to surface horizontal LINKS_TO branches. The
+# by `ki outline` after B.12 to surface horizontal LINKS_TO branches. The
 # renderer combines these rows with B.12 hierarchy rows, sets
 # `depth = source_depth + 1` and `inrel = 'LINKS_TO'`, and sorts L
 # siblings alphabetically by target uri.

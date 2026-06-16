@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "knowledge-index"
-version = "0.4.1"
+version = "0.5.0a0"
 description = "Search index for agent memory — knowledge graph index for your documents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -51,9 +51,10 @@ packages = ["src/ki"]
 
 # Bundle the agent skill into the wheel so `ki skill install` can read it
 # via importlib.resources. The canonical source lives at the repo root
-# (`skills/ki/SKILL.md`) and is also the rendered file on GitHub.
+# (`skills/knowledge-base/SKILL.md`) and is also the rendered file on GitHub.
 [tool.hatch.build.targets.wheel.force-include]
-"skills/ki/SKILL.md" = "ki/_resources/SKILL.md"
+"skills/knowledge-base/SKILL.md" = "ki/_resources/SKILL.md"
+"skills/knowledge-base/references" = "ki/_resources/references"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/ki", "skills/", "README.md", "LICENSE", "docs/"]

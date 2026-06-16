@@ -1,9 +1,9 @@
 """`ki get <uri> [<uri> ...]` — fetch a node's metadata and content by URI.
 
-Pairs with `ki tree` / `ki search`: those return URIs, this fetches what
+Pairs with `ki outline` / `ki search`: those return URIs, this fetches what
 the URI points to. Only `:Document` and `:Section` URIs are valid — text
 retrieval is what this command does. `:Folder` and `:Vault` URIs error
-with a hint pointing at `ki tree` / `ki vault list`.
+with a hint pointing at `ki outline` / `ki vault list`.
 
 `--type` controls how much content rides along on the metadata shell:
   path     → no content; just the shell (uri, name, displayName, path, ...)
@@ -11,19 +11,22 @@ with a hint pointing at `ki tree` / `ki vault list`.
   full     → reconstructed reading-order body via B.4 (Documents) or B.14
              (Sections). One Neo4j query, no client-side recursion.
 
-See `docs/retrieval-queries.md` (B.4 / B.13 / B.14) for the queries.
+See `docs/data-model/retrieval-queries.md` (B.4 / B.13 / B.14) for the queries.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
+from pathlib import Path
 from typing import Any
 
 import click
 
 from ..config import find_config_path, load_config
 from ..neo4j_client import driver_for
+from ..profile_resolve import resolve_profile
 from ..search.queries import run_b4, run_b13, run_b14
 
 VALID_TYPES = ("path", "content", "full")
@@ -36,6 +39,7 @@ def cmd_get(
     profile: str | None,
     get_type: str,
     as_json: bool,
+    directory: Path | None = None,
 ) -> int:
     if get_type not in VALID_TYPES:
         raise click.ClickException(
@@ -48,7 +52,7 @@ def cmd_get(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = cfg.get_profile(profile)
+    prof = resolve_profile(cfg, profile, start_dir=directory)
 
     results: list[dict[str, Any]] = []
     errors: list[tuple[str, str]] = []  # (uri, message)
@@ -80,13 +84,13 @@ def _bad_label_message(label: str | None, uri: str) -> str:
     if label == "Folder":
         return (
             f"ki get is for text retrieval but you passed a Folder ({uri}). "
-            f"Use 'ki tree --at {uri}' to enumerate contents recursively under folder."
+            f"Use 'ki outline {uri}' to enumerate contents recursively under folder."
         )
     if label == "Vault":
         return (
             f"ki get is for text retrieval but you passed a Vault ({uri}). "
             f"Use 'ki vault list' to see vaults "
-            f"or 'ki tree --at {uri}' to enumerate contents recursively under Vault."
+            f"or 'ki outline {uri}' to enumerate contents recursively under Vault."
         )
     return f"unsupported node label {label!r} for ki get (uri: {uri})"
 
@@ -138,34 +142,68 @@ def _full_content(
     """
     if label == "Document":
         rows = run_b4(session, uri)
-        return _format_sections(rows, preamble=shell_row.get("content"))
-    if label == "Section":
+    elif label == "Section":
         rows = run_b14(session, uri)
-        return _format_sections(rows, preamble=None)
-    return ""
+    else:
+        return ""
+    # Every node in the reconstruction — the root plus each row. A Rule-1
+    # child pointer always targets a direct child, and B.4 / B.14 return every
+    # descendant, so a *legitimate* pointer's target is always in this set.
+    known_uris = {uri} | {r.get("section_uri") for r in rows}
+    preamble = shell_row.get("content") if label == "Document" else None
+    return _format_sections(rows, preamble=preamble, known_uris=known_uris)
 
 
-def _format_sections(rows: list[dict[str, Any]], *, preamble: str | None) -> str:
+_CHILD_POINTER_RE = re.compile(r"^uri:(.+?)\s*$")
+
+
+def _strip_child_pointers(text: str, known_uris: set[str]) -> str:
+    """Drop Rule-1 `uri:` child-pointer lines from a `--type full` content block.
+
+    Only lines whose target is a node *in this reconstruction* (`known_uris`)
+    are removed — so a user's literal `uri:…` prose line, or a pointer to
+    anything outside the rebuilt subtree, is never touched. In `--type full`
+    the children are inlined right after, making these pointers redundant
+    scaffolding; `--type content` keeps them (Rule 1 is its whole point).
+    """
+    kept = [
+        line
+        for line in text.splitlines()
+        if not ((m := _CHILD_POINTER_RE.match(line)) and m.group(1) in known_uris)
+    ]
+    return "\n".join(kept).rstrip()
+
+
+def _format_sections(
+    rows: list[dict[str, Any]],
+    *,
+    preamble: str | None,
+    known_uris: set[str] | None = None,
+) -> str:
     """Concatenate ordered section rows into a single markdown string.
 
     Each section emits `<#...> heading\\n\\n<content>` if it has a heading,
     or just the content if it doesn't. Preamble (doc-level text before the
-    first heading) is prepended without any heading.
+    first heading) is prepended without any heading. Rule-1 child-pointer
+    lines are stripped (see `_strip_child_pointers`).
     """
+    known = known_uris or set()
     parts: list[str] = []
-    if preamble and preamble.strip():
-        parts.append(preamble.rstrip())
+    if preamble:
+        pre = _strip_child_pointers(preamble, known)
+        if pre.strip():
+            parts.append(pre)
     for r in rows:
         level = r.get("heading_level") or 0
         heading = r.get("heading") or ""
-        content = r.get("content") or ""
+        content = _strip_child_pointers(r.get("content") or "", known)
         hashes = "#" * level if level else ""
         if hashes and heading:
             block = f"{hashes} {heading}".rstrip()
             if content.strip():
-                block = f"{block}\n\n{content.rstrip()}"
+                block = f"{block}\n\n{content}"
         else:
-            block = content.rstrip()
+            block = content
         if block:
             parts.append(block)
     return "\n\n".join(parts)

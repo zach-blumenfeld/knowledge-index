@@ -1,6 +1,6 @@
 # Index / remove behavior — vault-level sync
 
-This page is the authoritative behavior spec for `ki index`, `ki rm`, and `ki nuke` in 0.4.0. Read this before changing any of those commands or their underlying queries.
+This page is the authoritative behavior spec for `ki index`, `ki drop`, and `ki nuke` in 0.4.0. Read this before changing any of those commands or their underlying queries.
 
 > **Vocabulary.** We say **remove** when we mean "take a node or vault out of the index." Cypher keywords (`DELETE`, `DETACH DELETE`) stay verbatim — they're a language reserved word — but every user-facing string, error message, doc paragraph, and code comment uses "remove."
 
@@ -11,7 +11,7 @@ This page is the authoritative behavior spec for `ki index`, `ki rm`, and `ki nu
 This is a deliberate v0.4.0 simplification:
 
 - One way to **add / refresh** content: `ki index <vault>`.
-- One way to **remove** content: `ki rm <vault>`.
+- One way to **remove** content: `ki drop <vault>`.
 - One way to **wipe everything**: `ki nuke`.
 
 Document-level / subtree-level granularity is **not** exposed in 0.4.0. If a user asks for it, the answer is "re-index the vault." This keeps state-reconciliation logic out of the per-document code path and makes the graph easy to reason about — at any moment, every indexed Document, Section, and Folder mirrors a file that existed on disk the last time the vault was indexed.
@@ -23,7 +23,7 @@ Document-level / subtree-level granularity is **not** exposed in 0.4.0. If a use
 **On an already-indexed vault:** treat it as a full re-sync.
 
 1. Read the existing `.ki/vault.yaml`. The `uri:` field identifies the existing `:Vault` in the graph.
-2. **Remove the vault contents in the graph** (Documents, Sections, Folders, HAS edges, LINKS_TO edges from-and-to these nodes). Use the same routine `ki rm` uses (see *Removal routine* below).
+2. **Remove the vault contents in the graph** (Documents, Sections, Folders, HAS edges, LINKS_TO edges from-and-to these nodes). Use the same routine `ki drop` uses (see *Removal routine* below).
 3. Re-ingest from disk as if it were a fresh ingest, *but* keep the existing `Vault.uri` from the marker (no slug reassignment).
 4. The user-authored `description:` in the marker is preserved across the cycle.
 
@@ -33,16 +33,16 @@ Document-level / subtree-level granularity is **not** exposed in 0.4.0. If a use
 
 - `--chunk-size N` — rows per batched `DETACH DELETE` transaction during the pre-ingest nuke step (default 1000). Raise it on small graphs to cut transaction overhead; lower it if the JVM heap is tight. (See *Batched DETACH DELETE* below for why this exists at all.)
 
-## `ki rm <vault>`
+## `ki drop <vault>`
 
 **Vault-only.** The only valid argument shape is a path that resolves to a vault root (or a Vault.uri slug). Passing a document path, a subdirectory, or a non-vault path errors with this message:
 
-> `ki rm` only operates on vaults. Individual folders, documents, and sections sync at the vault level to mirror what's currently on disk. Use `ki index <vault>` to refresh, or `ki rm <vault>` to remove the whole vault.
+> `ki drop` only operates on vaults. Individual folders, documents, and sections sync at the vault level to mirror what's currently on disk. Use `ki index <vault>` to refresh, or `ki drop <vault>` to remove the whole vault.
 
 **Behavior:**
 
 1. Resolve target to a `Vault.uri` (path → read marker → take `uri:`; slug-form → use literally).
-2. Run `ki rm`'s pre-removal preview (count of Documents, Sections; surfaced with the vault `displayName`).
+2. Run `ki drop`'s pre-removal preview (count of Documents, Sections; surfaced with the vault `displayName`).
 3. Typed-confirmation prompt (`type the vault display-name to confirm`), unless `--yes`.
 4. Run the removal routine (see below).
 5. Drop `.ki/vault.yaml` from disk, unless `--keep-marker` is passed.
@@ -68,13 +68,13 @@ Reset the entire graph and remove every `.ki/vault.yaml` ki knows about.
 
 **Flags:**
 
-- `--yes`, `--keep-marker`, `--chunk-size N` — same semantics as `ki rm`.
+- `--yes`, `--keep-marker`, `--chunk-size N` — same semantics as `ki drop`.
 
-`ki nuke` is intentionally not exposed via auto-mode without explicit user consent (touches every vault, drops schema). See the agent auto-mode rules in `docs/requirements_v01_mvp.md`.
+`ki nuke` is intentionally not exposed via auto-mode without explicit user consent (touches every vault, drops schema). See the safe-by-default principle in `docs/general-philosophy.md` and the agent auto-mode rules in `skills/knowledge-base/SKILL.md`.
 
 ## Removal routine
 
-The shared procedure used by `ki index` (pre-ingest), `ki rm`, and `ki nuke` (per-vault).
+The shared procedure used by `ki index` (pre-ingest), `ki drop`, and `ki nuke` (per-vault).
 
 Given a `Vault.uri`:
 
@@ -126,13 +126,13 @@ CALL (n) {
 
 **Default chunk size: 1000.** Tuned empirically — small enough to fit a typical batch in heap on a 1 GB Neo4j, large enough that transaction overhead doesn't dominate.
 
-**`--chunk-size` flag.** Exposed on `ki index`, `ki rm`, and `ki nuke`. Help text reads roughly: *"Rows per batched-remove transaction. If you hit Neo4j OOM during removal, lower this (e.g. 200); on small graphs where you want fewer transactions, raise it (e.g. 5000)."* We do not currently catch OOM programmatically — the agent reads the flag help and adjusts.
+**`--chunk-size` flag.** Exposed on `ki index`, `ki drop`, and `ki nuke`. Help text reads roughly: *"Rows per batched-remove transaction. If you hit Neo4j OOM during removal, lower this (e.g. 200); on small graphs where you want fewer transactions, raise it (e.g. 5000)."* We do not currently catch OOM programmatically — the agent reads the flag help and adjusts.
 
 ## Why not partial / incremental sync
 
-We considered keeping `ki rm` document-level and adding stale-doc cleanup to `ki index`. Rejected because:
+We considered keeping `ki drop` document-level and adding stale-doc cleanup to `ki index`. Rejected because:
 
-- **State drift.** Three "remove" code paths (file deletion + index, manual `ki rm <doc>`, stale-doc sweep during re-index) means three behaviors to keep in sync with each other and with the graph.
+- **State drift.** Three "remove" code paths (file deletion + index, manual `ki drop <doc>`, stale-doc sweep during re-index) means three behaviors to keep in sync with each other and with the graph.
 - **Resolver invalidation.** Partial removal needs to invalidate the wikilink resolver entries the removed docs participated in. Easy to forget.
 - **No real demand yet.** Pre-1.0; nobody is hitting "I removed one file from a 10k-doc vault and don't want to re-index the whole thing." If that demand shows up, we add a partial-sync mode then with eyes-open design rather than hedging now.
 

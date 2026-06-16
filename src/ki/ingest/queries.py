@@ -1,4 +1,4 @@
-"""Cypher for ingest, lifted verbatim from docs/ingest-cypher.md.
+"""Cypher for ingest, lifted verbatim from docs/data-model/ingest-cypher.md.
 
 If a query here drifts from the docs, fix the docs first then update the
 implementation to match — the docs are the source of truth (see AGENTS.md
@@ -145,7 +145,7 @@ SET s.path = row.path
 
 # 4.3 step 3 — section-tree HAS edges (Document|Section → Section).
 # Same `:HAS` relationship type as the vault/folder/document tree (step 1c
-# in docs/ingest-cypher.md); kept in its own step here because section
+# in docs/data-model/ingest-cypher.md); kept in its own step here because section
 # trees are constructed per-document alongside section node writes, while
 # folder trees are constructed per-vault.
 WRITE_SECTION_EDGES = """
@@ -187,7 +187,7 @@ SET ld += $loadProps,
 
 # 4.3 step 5.5 — stub :Document upsert for internal non-md files (e.g.
 # `[Slides](./deck.pptx)`). Same node-property shape as the main Document
-# (name, displayName, path, fileHash) but with sourceType = LOCAL_FILE and
+# (name, displayName, path, fileHash) but with sourceType = LOCAL_STUB and
 # no content / frontmatter / aliases-from-frontmatter (aliases are filled
 # from link-text via WRITE_DISPLAY_TEXT_ALIASES). The parent HAS edge is
 # written separately via WRITE_TREE_EDGES — same as md docs.
@@ -201,7 +201,7 @@ WRITE_STUB_DOCUMENTS = """
 UNWIND $stubDocRows AS row
 MERGE (d:Document {uri: row.uri})
 ON CREATE SET d.firstLoadedAt = $now,
-              d.sourceType = 'LOCAL_FILE',
+              d.sourceType = 'LOCAL_STUB',
               d.displayName = row.displayName
 SET d.name = row.name,
     d.path = row.path,
@@ -260,7 +260,7 @@ SET n.aliases = existing + toAdd
 """.strip()
 
 
-# --- Vault-level removal queries. See `docs/index_rm_behavior.md` for the
+# --- Vault-level removal queries. See `docs/data-model/index_rm_behavior.md` for the
 # full design (vault-level sync model, three-step removal routine, batched
 # DETACH DELETE rationale).
 #
@@ -274,6 +274,25 @@ OPTIONAL MATCH (d)-[:HAS*]->(s:Section)
 RETURN v.displayName AS display_name,
        count(DISTINCT d) AS doc_count,
        count(DISTINCT s) AS section_count
+""".strip()
+
+
+# `ki status` — cheap existence check for a vault node (NOT_INDEXED vs indexed).
+VAULT_EXISTS = """
+MATCH (v:Vault {uri: $vaultUri})
+RETURN count(v) AS n
+""".strip()
+
+
+# `ki status` — the URIs + content hashes of every *primary parsed* document
+# under a vault (STALE diff). `sourceType = 'LOCAL_FILE'` is the whole point of
+# the LOCAL_FILE/LOCAL_STUB split: it selects exactly the docs that came from
+# the disk walk, excluding LOCAL_STUB attachments, URL_LINK externals, and
+# WIKILINK_UNRESOLVED stubs — whose URIs may also start with the vault prefix.
+LIST_LOCAL_FILE_DOC_HASHES = """
+MATCH (d:Document)
+WHERE d.sourceType = 'LOCAL_FILE' AND d.uri STARTS WITH $prefix
+RETURN d.uri AS uri, d.fileHash AS fileHash
 """.strip()
 
 
@@ -318,6 +337,65 @@ WHERE NOT (n)--()
 CALL (n) {
   DETACH DELETE n
 } IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# --- `ki rm` — subtree removal --------------------------------------------
+#
+# Same three-step routine as the vault removal above, but scoped to one
+# document/folder *subtree* instead of a whole vault. The scope predicate is
+# the **3-part containment test** (`= $root OR STARTS WITH $root + '/' OR
+# STARTS WITH $root + '#'`) — identical to `ki search --under` — so a folder
+# takes its `/`-descendants and a document takes its `#`-sections. `ki rm`
+# guards that `$root` is a Document or Folder (never a Vault → `ki drop`, never
+# a bare Section), so the `#` branch only ever fires for a document target.
+
+# `ki rm` step 1 — outbound external LINKS_TO targets from inside the subtree
+# (so they can be GC'd if the subtree was their only referrer). Excludes
+# targets that are themselves inside the subtree (those go with it).
+COLLECT_EXTERNAL_LINKS_TARGETS_SUBTREE = """
+MATCH (src)-[:LINKS_TO]->(tgt)
+WHERE (src.uri = $root OR src.uri STARTS WITH $root + '/' OR src.uri STARTS WITH $root + '#')
+  AND NOT (tgt.uri = $root OR tgt.uri STARTS WITH $root + '/' OR tgt.uri STARTS WITH $root + '#')
+RETURN DISTINCT tgt.uri AS uri
+""".strip()
+
+
+# `ki rm` step 2 — batched DETACH DELETE of the subtree. `$chunkSize` is
+# substituted client-side (CALL IN TRANSACTIONS rejects it as a param); run
+# from an implicit transaction (`session.run`), never inside `execute_write`.
+REMOVE_SUBTREE_BATCHED = """
+MATCH (n) WHERE n.uri = $root OR n.uri STARTS WITH $root + '/' OR n.uri STARTS WITH $root + '#'
+CALL (n) {
+  DETACH DELETE n
+} IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# `ki rm` — count the subtree by label (for the removal report / `--dry-run`
+# preview). Plain read; safe in a managed transaction.
+COUNT_SUBTREE_BY_LABEL = """
+MATCH (n) WHERE n.uri = $root OR n.uri STARTS WITH $root + '/' OR n.uri STARTS WITH $root + '#'
+RETURN labels(n)[0] AS label, count(n) AS n
+ORDER BY label
+""".strip()
+
+
+# `ki add` edge-restore — snapshot LINKS_TO edges that point INTO the subtree
+# from OUTSIDE it, *before* the subtree is removed. After the subtree is
+# re-ingested, these rows are replayed through WRITE_LINKS_TO: a referrer's
+# edge is restored iff its target uri exists again (the section/doc came back),
+# and dropped otherwise (e.g. an `mv` moved the target, or an edit deleted the
+# section). This preserves still-valid inbound links (matching a full
+# `ki index`) without re-resolving the referrers' markdown — every restored
+# edge already existed from a real prior ingest, so nothing is invented.
+# Intra-subtree links (src also inside) are excluded — those are rebuilt by the
+# re-ingest's own link resolution.
+SNAPSHOT_INBOUND_LINKS_TO_SUBTREE = """
+MATCH (src)-[r:LINKS_TO]->(tgt)
+WHERE (tgt.uri = $root OR tgt.uri STARTS WITH $root + '/' OR tgt.uri STARTS WITH $root + '#')
+  AND NOT (src.uri = $root OR src.uri STARTS WITH $root + '/' OR src.uri STARTS WITH $root + '#')
+RETURN src.uri AS srcUri, tgt.uri AS tgtUri, r.wikilink AS wikilink, r.embed AS embed
 """.strip()
 
 

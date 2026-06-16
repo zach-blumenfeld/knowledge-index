@@ -17,7 +17,7 @@ never reused once assigned — see `find_next_vault_slug` for the algorithm.
 The marker is the only state `ki` writes inside the vault; everything else
 lives in `~/.config/ki/` or in Neo4j.
 
-URI conventions (from docs/data-model.md *Path conventions*):
+URI conventions (from docs/data-model/schema.md *Path conventions*):
   - Document.uri = "<vaultUri>/<file path within vault>"     (slugified, '/' kept)
   - Section.uri  = "<vaultUri>/<file path within vault>#<slugified heading path>"
 
@@ -84,10 +84,43 @@ def read_vault_uri(vault_root: Path) -> str | None:
     return str(data["uri"]).strip()
 
 
+def read_vault_profile(vault_root: Path) -> str | None:
+    """Read the bound profile **name** from the marker (or None if absent).
+
+    This is the vault's own answer to "which Neo4j do I live in" — set once
+    at first index and committed alongside the source. Only the name is
+    stored; credentials stay in `config.yaml`.
+    """
+    data = read_vault_marker(vault_root)
+    if data is None:
+        return None
+    prof = data.get("profile")
+    if not isinstance(prof, str) or not prof.strip():
+        return None
+    return prof.strip()
+
+
+def find_vault_root(start: Path) -> Path | None:
+    """Walk up from `start` to the nearest ancestor holding `.ki/vault.yaml`.
+
+    Returns the vault root (the dir containing `.ki/`), or None if no marker
+    is found before the filesystem root. This is how a command run *inside*
+    a vault discovers which vault it's in without being told.
+    """
+    cur = Path(start).expanduser().resolve()
+    if cur.is_file():
+        cur = cur.parent
+    for d in (cur, *cur.parents):
+        if vault_marker_path(d).exists():
+            return d
+    return None
+
+
 def write_vault_marker(
-    vault_root: Path, *, uri: str, description: str | None = None
+    vault_root: Path, *, uri: str, description: str | None = None,
+    profile: str | None = None,
 ) -> None:
-    """Write `.ki/vault.yaml` with the assigned URI and optional description.
+    """Write `.ki/vault.yaml` with the assigned URI, profile, and optional description.
 
     Atomic-enough for ki's purposes (single-file YAML write). Always
     rewrites the file in full — callers compose the desired state and pass
@@ -97,6 +130,8 @@ def write_vault_marker(
     marker = vault_marker_path(vault_root)
     marker.parent.mkdir(parents=True, exist_ok=True)
     data: dict[str, Any] = {"uri": uri}
+    if profile is not None and profile.strip():
+        data["profile"] = profile.strip()
     if description is not None:
         desc = description.strip()
         encoded = desc.encode("utf-8")
@@ -151,7 +186,7 @@ def compute_base_slug(vault_root: Path) -> str:
             "alphanumeric characters to anchor a readable slug. Please "
             "rename the directory to something descriptive — e.g. "
             "'my-notes', 'work-journal', 'project-x' — so the vault has a "
-            "readable identifier in URIs and in `ki tree` / `ki search` "
+            "readable identifier in URIs and in `ki outline` / `ki search` "
             "output."
         )
     return slugify_segment(raw)
@@ -172,7 +207,7 @@ def find_next_vault_slug(session, base: str) -> str:
     integer suffix on a *currently-present* slug in the family.
 
     **Reuse semantics.** The algorithm operates on the graph's current
-    state, so if a vault is removed (`ki rm --vault`), its slug becomes
+    state, so if a vault is removed (`ki drop <vault>`), its slug becomes
     eligible for reassignment. Concretely: if `base`, `base-1`, `base-3`
     exist (because `-2` was removed), the next assignment is `base-4`;
     but if `base-3` is also removed before the next ingest, the family is
@@ -352,7 +387,7 @@ def section_uri(doc_uri: str, heading_path: list[str]) -> str:
 
     `heading_path` is a list of disambiguated heading slugs (already
     post-processed for duplicate-at-same-level disambiguation per
-    docs/data-model.md *Content Construction Rules* Rule 3).
+    docs/data-model/schema.md *Content Construction Rules* Rule 3).
     """
     return f"{doc_uri}#{'/'.join(heading_path)}"
 

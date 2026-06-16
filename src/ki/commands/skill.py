@@ -1,6 +1,6 @@
 """`ki skill <install|remove|list|print>` — manage the agent-skill bundle.
 
-The skill bundle is the markdown file at `skills/ki/SKILL.md` (shipped inside
+The skill bundle is the markdown file at `skills/knowledge-base/SKILL.md` (shipped inside
 the wheel as `ki/_resources/SKILL.md`). It tells AI agents when to invoke
 `ki` and how. `ki skill install` drops it into each supported agent's
 well-known config path so the agent picks it up without the user copying
@@ -18,7 +18,7 @@ UX shape mirrors `neo4j-cli skill` and the supported-agent catalog
 Adding a new agent is a one-line append to `AGENTS` below. Paths follow
 `<detect_dir>` (the marker we check for the agent's presence) and
 `<skills_dir>` (where bundles live). The actual file written is
-`<skills_dir>/ki/SKILL.md`.
+`<skills_dir>/knowledge-base/SKILL.md`.
 """
 
 from __future__ import annotations
@@ -35,7 +35,8 @@ console = Console()
 
 SKILL_RESOURCE_PACKAGE = "ki._resources"
 SKILL_RESOURCE_NAME = "SKILL.md"
-TOOL_NAME = "ki"
+SKILL_RESOURCE_REFERENCES = "references"  # bundled reference-doc subdir
+TOOL_NAME = "knowledge-base"
 
 
 # --- agent catalog ----------------------------------------------------------
@@ -136,7 +137,7 @@ def read_bundled_skill() -> str:
     `ki/_resources/SKILL.md` so `importlib.resources` finds it.
 
     In a dev checkout (editable install): the wheel hasn't been built, so
-    fall back to the canonical repo path `skills/ki/SKILL.md`, located by
+    fall back to the canonical repo path `skills/knowledge-base/SKILL.md`, located by
     walking up from this module to the repo root. The fallback never fires
     in production.
     """
@@ -149,13 +150,60 @@ def read_bundled_skill() -> str:
 
     # Dev fallback: src/ki/commands/skill.py → src/ki/commands → src/ki → src → <repo>.
     repo_root = Path(__file__).resolve().parents[3]
-    candidate = repo_root / "skills" / "ki" / "SKILL.md"
+    candidate = repo_root / "skills" / "knowledge-base" / "SKILL.md"
     if candidate.is_file():
         return candidate.read_text(encoding="utf-8")
     raise FileNotFoundError(
         "could not locate the bundled SKILL.md — neither "
         f"`{SKILL_RESOURCE_PACKAGE}.{SKILL_RESOURCE_NAME}` nor `{candidate}` exists."
     )
+
+
+def read_bundled_references() -> dict[str, str]:
+    """Return ``{filename: text}`` for every bundled reference doc.
+
+    Mirror of :func:`read_bundled_skill`: prefer the wheel resource dir
+    (`ki/_resources/references/`), fall back to the canonical repo dir
+    `skills/knowledge-base/references/` in a dev checkout. Returns an empty
+    dict if neither exists (older wheels predating the references bundle).
+    """
+    out: dict[str, str] = {}
+    try:
+        refs = resources.files(SKILL_RESOURCE_PACKAGE) / SKILL_RESOURCE_REFERENCES
+        if refs.is_dir():
+            for entry in refs.iterdir():
+                if entry.name.endswith(".md"):
+                    out[entry.name] = entry.read_text(encoding="utf-8")
+            return out
+    except (FileNotFoundError, ModuleNotFoundError):
+        pass
+
+    repo_root = Path(__file__).resolve().parents[3]
+    refs_dir = repo_root / "skills" / "knowledge-base" / SKILL_RESOURCE_REFERENCES
+    if refs_dir.is_dir():
+        for entry in sorted(refs_dir.glob("*.md")):
+            out[entry.name] = entry.read_text(encoding="utf-8")
+    return out
+
+
+def _write_bundle(skill_path: Path) -> list[Path]:
+    """Write SKILL.md + the references/ tree into ``skill_path``'s directory.
+
+    Returns every path written (SKILL.md first), so callers can report counts.
+    """
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(read_bundled_skill(), encoding="utf-8")
+    written = [skill_path]
+
+    refs = read_bundled_references()
+    if refs:
+        refs_dir = skill_path.parent / SKILL_RESOURCE_REFERENCES
+        refs_dir.mkdir(parents=True, exist_ok=True)
+        for name, text in refs.items():
+            ref_path = refs_dir / name
+            ref_path.write_text(text, encoding="utf-8")
+            written.append(ref_path)
+    return written
 
 
 # --- command entry points ---------------------------------------------------
@@ -183,15 +231,18 @@ def cmd_install(agent: str | None, path: Path | None = None) -> int:
     target path; when given without `agent`, it just writes to `path` and
     labels the action with the path as the "display name".
     """
-    body = read_bundled_skill()
+    def _report(label: str, skill_path: Path, written: list[Path]) -> None:
+        extra = f" (+{len(written) - 1} references)" if len(written) > 1 else ""
+        console.print(
+            f"[green]✓[/green] installed [bold]{label}[/bold] skill → {skill_path}{extra}"
+        )
 
     if path is not None:
-        # Explicit-path mode: ignore catalog, just write to where the user said.
+        # Explicit-path mode: ignore catalog, just write to where the user said
+        # (references land in a `references/` dir beside it).
         target = path.expanduser().resolve()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
-        label = agent or "custom"
-        console.print(f"[green]✓[/green] installed [bold]{label}[/bold] skill → {target}")
+        written = _write_bundle(target)
+        _report(agent or "custom", target, written)
         return 0
 
     if agent is None:
@@ -213,11 +264,8 @@ def cmd_install(agent: str | None, path: Path | None = None) -> int:
                 "could not resolve install path (HOME / XDG_CONFIG_HOME unset)."
             )
             continue
-        skill_path.parent.mkdir(parents=True, exist_ok=True)
-        skill_path.write_text(body, encoding="utf-8")
-        console.print(
-            f"[green]✓[/green] installed [bold]{t.display_name}[/bold] skill → {skill_path}"
-        )
+        written = _write_bundle(skill_path)
+        _report(t.display_name, skill_path, written)
     return 0
 
 
@@ -231,6 +279,14 @@ def cmd_remove(agent: str | None) -> int:
         skill_path = t.skill_path()
         if skill_path is not None and skill_path.exists():
             skill_path.unlink()
+            # Remove the bundled references/ dir we wrote alongside it.
+            refs_dir = skill_path.parent / SKILL_RESOURCE_REFERENCES
+            if refs_dir.is_dir():
+                for f in refs_dir.iterdir():
+                    if f.is_file():
+                        f.unlink()
+                if not any(refs_dir.iterdir()):
+                    refs_dir.rmdir()
             console.print(f"[green]✓[/green] removed {skill_path}")
             # Clean up the per-tool dir we created on install (but not the
             # agent's top-level `skills/` — other tools may live there).

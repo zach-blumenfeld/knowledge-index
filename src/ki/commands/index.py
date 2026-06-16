@@ -24,6 +24,7 @@ from ..ingest.pipeline import (
     IngestServiceUnavailable,
     ingest_vault,
 )
+from ..profile_resolve import resolve_profile
 from ..vault import (
     VaultDescriptionExists,
     vault_marker_path,
@@ -117,7 +118,7 @@ def _render_service_unavailable(
     """Render a Profile.source-aware recovery hint block for an ingest crash.
 
     #54 Fix 3. `local-podman` profiles get the canonical `neo4j-ki` container
-    commands and a pointer to `references/neo4j-podman.md` *Recovery*; other
+    commands and a pointer to `skills/knowledge-base/references/neo4j-podman.md` *Recovery*; other
     profiles get generic heap/batch/split guidance since we don't know their
     container shape.
     """
@@ -141,7 +142,7 @@ def _render_service_unavailable(
         )
         console.print(
             "[bold]Then retry the index.[/bold] Full recovery flow + heap "
-            "tuning notes live in [cyan]references/neo4j-podman.md[/cyan] "
+            "tuning notes live in [cyan]skills/knowledge-base/references/neo4j-podman.md[/cyan] "
             "(Recovery — graph went away)."
         )
     else:
@@ -193,7 +194,7 @@ def cmd_index(
 
     cfg = load_config(cfg_path)
     try:
-        prof = cfg.get_profile(profile)
+        prof = resolve_profile(cfg, profile, start_dir=path)
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
 

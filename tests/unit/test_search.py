@@ -1,8 +1,8 @@
 """Unit tests for `ki search` — pure-Python pieces of `ki.commands.search`.
 
-Covers --types CSV parsing, label tagging via `_unify`, and table-render
-header. Integration tests against an ephemeral Neo4j live in
-`tests/integration/test_search.py`.
+Covers --types CSV parsing, profile+vault scope resolution, run_search param
+plumbing, and the table-render header. Integration tests against an ephemeral
+Neo4j live in tests/integration/test_search.py.
 """
 
 from __future__ import annotations
@@ -17,13 +17,17 @@ from ki.commands.search import (
     TYPE_LETTER,
     VALID_TYPES,
     _parse_types,
-    _unify,
+    _resolve_scope,
+    resolve_to_uri,
 )
+from ki.config import Config, Profile
+from ki.search.queries import run_search
+from ki.vault import write_vault_marker
 
 # ---- _parse_types ----------------------------------------------------------
 
 
-def test_parse_types_default_is_all_three():
+def test_parse_types_default_is_both():
     assert _parse_types(DEFAULT_TYPES) == list(VALID_TYPES)
 
 
@@ -32,8 +36,7 @@ def test_parse_types_single():
 
 
 def test_parse_types_csv_preserves_canonical_order():
-    """User-provided order is normalized to VALID_TYPES order for determinism."""
-    assert _parse_types("vault,document") == ["document", "vault"]
+    assert _parse_types("section,document") == ["document", "section"]
 
 
 def test_parse_types_strips_whitespace_and_lowercases():
@@ -55,105 +58,232 @@ def test_parse_types_unknown_value_errors():
     assert "bogus" in str(excinfo.value)
 
 
-# ---- _unify (per-label display field extraction) ---------------------------
+def test_parse_types_rejects_vault_now():
+    with pytest.raises(ClickException):
+        _parse_types("vault")
 
 
-def test_unify_document_row():
-    row = {
-        "label": "Document",
-        "score": 4.2,
-        "document_uri": "vault://v/foo.md",
-        "title": "foo.md",
-        "path": "/tmp/foo.md",
-    }
-    u = _unify(row)
-    assert u["label"] == "Document"
-    assert u["displayName"] == "foo.md"
-    assert u["uri"] == "vault://v/foo.md"
-    assert u["score"] == 4.2
+# ---- _resolve_scope --------------------------------------------------------
 
 
-def test_unify_section_row_uses_heading_as_display_name():
-    row = {
-        "label": "Section",
-        "score": 3.1,
-        "section_uri": "vault://v/foo.md#background",
-        "heading": "Background",
-        "heading_level": 2,
-    }
-    u = _unify(row)
-    assert u["label"] == "Section"
-    # Per design: displayName is the heading text, NO `##` prefix.
-    assert u["displayName"] == "Background"
-    assert u["uri"] == "vault://v/foo.md#background"
+def _cfg() -> Config:
+    return Config(
+        profiles={
+            "personal": Profile("personal", "bolt://h:7687", "neo4j", "pw", "local-podman"),
+            "work": Profile("work", "bolt://h:7688", "neo4j", "pw", "local-podman"),
+        },
+    )
 
 
-def test_unify_vault_row_prefers_display_name_over_name():
-    row = {
-        "label": "Vault",
-        "score": 2.5,
-        "vault_uri": "vault://abc",
-        "display_name": "My Blog",
-        "name": "blog",
-    }
-    u = _unify(row)
-    assert u["displayName"] == "My Blog"
-    assert u["uri"] == "vault://abc"
+def _vault_dir(tmp_path, *, uri="my-notes", profile="personal"):
+    write_vault_marker(tmp_path, uri=uri, profile=profile)
+    return tmp_path
 
 
-def test_unify_vault_row_falls_back_to_name_if_display_name_missing():
-    row = {
-        "label": "Vault",
-        "score": 2.5,
-        "vault_uri": "vault://abc",
-        "name": "blog",
-    }
-    u = _unify(row)
-    assert u["displayName"] == "blog"
+def _scope(cfg, *, profile_flag=None, under_flag=None, vault_flag=None, start_dir):
+    return _resolve_scope(
+        cfg, profile_flag=profile_flag, under_flag=under_flag,
+        vault_flag=vault_flag, start_dir=start_dir,
+    )
 
 
-def test_type_letter_mapping_covers_all_valid_labels():
-    """Regression guard: each label has a single-character T column letter."""
-    assert TYPE_LETTER["Vault"] == "V"
-    assert TYPE_LETTER["Document"] == "D"
-    assert TYPE_LETTER["Section"] == "S"
+# -- flag-combination guards --
+
+def test_resolve_requires_a_profile_outside_a_vault(tmp_path):
+    with pytest.raises(ClickException) as e:
+        _scope(_cfg(), start_dir=tmp_path)
+    assert "profile" in str(e.value).lower()
+
+
+def test_resolve_vault_without_profile_errors(tmp_path):
+    with pytest.raises(ClickException) as e:
+        _scope(_cfg(), vault_flag="notes", start_dir=tmp_path)
+    assert "--vault requires --profile" in str(e.value)
+
+
+def test_resolve_under_and_vault_mutually_exclusive(tmp_path):
+    with pytest.raises(ClickException) as e:
+        _scope(
+            _cfg(), profile_flag="work", under_flag="notes/x",
+            vault_flag="notes", start_dir=tmp_path,
+        )
+    assert "mutually exclusive" in str(e.value)
+
+
+# -- remote mode (--profile) --
+
+def test_resolve_profile_flag_means_all_vaults(tmp_path):
+    prof, scope, banner = _scope(_cfg(), profile_flag="work", start_dir=tmp_path)
+    assert prof.name == "work"
+    assert scope is None
+    assert "all vaults" in banner
+
+
+def test_resolve_profile_and_one_vault(tmp_path):
+    prof, scope, banner = _scope(
+        _cfg(), profile_flag="work", vault_flag="notes", start_dir=tmp_path
+    )
+    assert prof.name == "work"
+    assert scope == ["notes"]
+    assert "notes" in banner
+
+
+def test_resolve_profile_and_vault_csv(tmp_path):
+    _, scope, _ = _scope(
+        _cfg(), profile_flag="work", vault_flag="notes, docs/", start_dir=tmp_path
+    )
+    assert scope == ["notes", "docs"]  # split, trimmed, trailing slash stripped
+
+
+def test_resolve_empty_vault_csv_errors(tmp_path):
+    with pytest.raises(ClickException) as e:
+        _scope(_cfg(), profile_flag="work", vault_flag=" , ", start_dir=tmp_path)
+    assert "empty" in str(e.value).lower()
+
+
+def test_resolve_remote_under_uri(tmp_path):
+    prof, scope, banner = _scope(
+        _cfg(), profile_flag="work", under_flag="work-notes/api/v2", start_dir=tmp_path
+    )
+    assert prof.name == "work"
+    assert scope == ["work-notes/api/v2"]  # taken verbatim, no local resolution
+    assert "under 'work-notes/api/v2'" in banner
+
+
+def test_resolve_remote_under_path_errors(tmp_path):
+    # No local vault to resolve a path against → must be a uri.
+    with pytest.raises(ClickException) as e:
+        _scope(_cfg(), profile_flag="work", under_flag="./api", start_dir=tmp_path)
+    assert "path" in str(e.value).lower()
+
+
+def test_resolve_unknown_profile_errors(tmp_path):
+    with pytest.raises(ClickException):
+        _scope(_cfg(), profile_flag="nope", start_dir=tmp_path)
+
+
+# -- local mode (in a vault) --
+
+def test_resolve_in_vault_default_scopes_to_that_vault(tmp_path):
+    vd = _vault_dir(tmp_path)
+    prof, scope, banner = _scope(_cfg(), start_dir=vd)
+    assert prof.name == "personal"
+    assert scope == ["my-notes"]
+    assert "vault 'my-notes'" in banner
+
+
+def test_resolve_under_uri_in_vault(tmp_path):
+    vd = _vault_dir(tmp_path)
+    prof, scope, banner = _scope(
+        _cfg(), under_flag="my-notes/projects", start_dir=vd
+    )
+    assert prof.name == "personal"
+    assert scope == ["my-notes/projects"]
+    assert "under 'my-notes/projects'" in banner
+
+
+def test_resolve_under_path_in_vault(tmp_path):
+    vd = _vault_dir(tmp_path)
+    (vd / "projects").mkdir()
+    _, scope, _ = _scope(_cfg(), under_flag="./projects", start_dir=vd)
+    assert scope == ["my-notes/projects"]
+
+
+def test_resolve_bound_profile_missing_from_config_errors(tmp_path):
+    vd = _vault_dir(tmp_path, profile="ghost")  # not in cfg
+    with pytest.raises(ClickException) as e:
+        _scope(_cfg(), start_dir=vd)
+    assert "ghost" in str(e.value)
+
+
+# ---- resolve_to_uri --------------------------------------------------------
+
+
+def test_resolve_to_uri_uri_in_vault_passthrough(tmp_path):
+    assert resolve_to_uri("my-notes/foo.md", "my-notes", tmp_path, cwd=tmp_path) \
+        == "my-notes/foo.md"
+    # the vault uri itself, and a trailing slash, both normalize
+    assert resolve_to_uri("my-notes", "my-notes", tmp_path, cwd=tmp_path) == "my-notes"
+    assert resolve_to_uri("my-notes/a/", "my-notes", tmp_path, cwd=tmp_path) == "my-notes/a"
+
+
+def test_resolve_to_uri_existing_dir_to_uri(tmp_path):
+    (tmp_path / "My Projects").mkdir()
+    assert resolve_to_uri("./My Projects", "my-notes", tmp_path, cwd=tmp_path) \
+        == "my-notes/my-projects"  # slugified
+
+
+def test_resolve_to_uri_vault_root_path(tmp_path):
+    assert resolve_to_uri(".", "my-notes", tmp_path, cwd=tmp_path) == "my-notes"
+
+
+def test_resolve_to_uri_nonexistent_non_uri_errors(tmp_path):
+    with pytest.raises(ClickException):
+        resolve_to_uri("nope/missing", "my-notes", tmp_path, cwd=tmp_path)
+
+
+# ---- run_search param plumbing ---------------------------------------------
+
+
+class _FakeSession:
+    def __init__(self):
+        self.params = None
+
+    def run(self, _query, parameters=None):
+        self.params = parameters
+        return []
+
+
+def test_run_search_threads_scope_labels_k():
+    s = _FakeSession()
+    run_search(s, "q", scope_uris=["my-notes"], labels=["Section"], k=7)
+    assert s.params["scope"] == ["my-notes"]
+    assert s.params["labels"] == ["Section"]
+    assert s.params["k"] == 7
+
+
+# ---- render ----------------------------------------------------------------
+
+
+def test_type_letter_mapping():
+    assert TYPE_LETTER == {"Document": "D", "Section": "S"}
 
 
 # ---- CLI surface -----------------------------------------------------------
 
 
 def test_search_help_shows_types_flag():
-    runner = CliRunner()
-    res = runner.invoke(main, ["search", "--help"])
+    res = CliRunner().invoke(main, ["search", "--help"])
     assert res.exit_code == 0
     assert "--types" in res.output
     for t in VALID_TYPES:
         assert t in res.output
 
 
-def test_search_help_no_longer_has_singular_type_flag():
-    """`--type` (singular) was renamed to `--types` (plural) in this PR.
+def test_search_help_has_vault_and_profile_flags():
+    res = CliRunner().invoke(main, ["search", "--help"])
+    assert "--vault" in res.output
+    assert "--profile" in res.output
 
-    Confirm the singular form isn't lingering in help — `ki get` still uses
-    `--type` for its own flag, but `ki search` should not.
-    """
-    runner = CliRunner()
-    res = runner.invoke(main, ["search", "--help"])
-    # Plural is present; singular '--type ' (with trailing space) should not be.
+
+def test_search_help_no_longer_has_all_flag():
+    res = CliRunner().invoke(main, ["search", "--help"])
+    assert "--all" not in res.output
+
+
+def test_search_help_no_singular_type_flag():
+    res = CliRunner().invoke(main, ["search", "--help"])
     assert "--types" in res.output
     assert "--type " not in res.output
 
 
 def test_search_rejects_bogus_types_value():
-    runner = CliRunner()
-    res = runner.invoke(main, ["search", "foo", "--types", "bogus"])
+    res = CliRunner().invoke(main, ["search", "foo", "--types", "bogus"])
     assert res.exit_code != 0
     assert "bogus" in res.output
 
 
-def test_search_help_documents_default_is_all_types():
-    """The flag's default value should be visible in --help."""
-    runner = CliRunner()
-    res = runner.invoke(main, ["search", "--help"])
+def test_search_help_documents_default_types():
+    res = CliRunner().invoke(main, ["search", "--help"])
     assert res.exit_code == 0
     assert DEFAULT_TYPES in res.output

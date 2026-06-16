@@ -1,6 +1,13 @@
-"""Integration tests for `ki rm` — vault-only model (see docs/index_rm_behavior.md)."""
+"""Integration tests for `ki rm` — subtree removal (document / folder).
+
+`ki rm` is the incremental sibling of `ki drop`: it removes one Document or
+Folder (and its subtree) from the index, source untouched. See
+`src/ki/commands/rm.py` and `docs/data-model/index_rm_behavior.md`.
+"""
 
 from __future__ import annotations
+
+import json
 
 import click
 import pytest
@@ -9,198 +16,191 @@ from ki.commands.rm import cmd_rm
 from ki.config import Config, Profile, save_config
 from ki.ingest.pipeline import IngestOptions, ingest_vault
 from ki.neo4j_client import driver_for
-from ki.vault import read_vault_uri
+from ki.scope import resolve_to_uri
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
 def indexed_vault(vault_dir, neo4j_profile, cleanup_vault, monkeypatch, tmp_path):
-    """Index the vault and write a Config so the rm command can resolve a profile."""
+    """Index the sample vault and write a Config so cmd_rm can resolve a profile.
+
+    The sample marker carries only `uri:` (no profile binding), so local-mode
+    resolution falls through to `$KI_PROFILE` — the documented last resort.
+    """
     res = ingest_vault(vault_dir, IngestOptions(profile=neo4j_profile, batch_size=64))
     cleanup_vault.append(res.vault_uri)
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("KI_PROFILE", neo4j_profile.name)
     cfg = Config()
     cfg.add_profile(Profile(
-        name="default", uri=neo4j_profile.uri,
+        name=neo4j_profile.name, uri=neo4j_profile.uri,
         user=neo4j_profile.user, password=neo4j_profile.password,
     ))
     save_config(cfg)
     return res.vault_uri
 
 
-def _vault_doc_count(profile, vault_uri):
-    with driver_for(profile) as driver:
-        with driver.session() as session:
-            row = session.run(
-                "MATCH (v:Vault {uri: $u})-[:HAS*]->(d:Document) RETURN count(DISTINCT d) AS n",
-                u=vault_uri,
-            ).single()
-            return row["n"] if row else 0
+def _count_under(profile, uri_prefix_root):
+    """Count nodes in the subtree rooted at `uri_prefix_root` (3-part containment)."""
+    with driver_for(profile) as driver, driver.session() as session:
+        row = session.run(
+            "MATCH (n) WHERE n.uri = $r OR n.uri STARTS WITH $r + '/' "
+            "OR n.uri STARTS WITH $r + '#' RETURN count(n) AS n",
+            r=uri_prefix_root,
+        ).single()
+        return row["n"] if row else 0
 
 
-# ---- Vault-only behavior: sub-vault targets error -------------------------
+def _exists(profile, uri):
+    with driver_for(profile) as driver, driver.session() as session:
+        row = session.run(
+            "MATCH (n {uri: $u}) RETURN count(n) AS n", u=uri
+        ).single()
+        return bool(row and row["n"])
 
 
-def test_rm_file_target_errors_with_helpful_message(indexed_vault, vault_dir, neo4j_profile):
-    """Passing a file path is the most common "I meant document-level rm" mistake.
-
-    Should error with the canonical sub-vault message that points the user at
-    `ki index` (the only sync mechanism for sub-vault content).
-    """
-    target = vault_dir / "concepts" / "duplicate-headings.md"
-    assert target.exists()
-    before = _vault_doc_count(neo4j_profile, indexed_vault)
-    with pytest.raises(click.ClickException) as exc_info:
-        cmd_rm(
-            str(target), profile=None,
-            dry_run=False, yes=True, keep_marker=False,
-        )
-    msg = exc_info.value.message
-    assert "file" in msg.lower()
-    assert "ki rm only operates on vaults" in msg
-    assert "ki index" in msg
-    # Graph state unchanged.
-    after = _vault_doc_count(neo4j_profile, indexed_vault)
-    assert after == before
+def _a_section_uri(profile, vault_uri):
+    with driver_for(profile) as driver, driver.session() as session:
+        row = session.run(
+            "MATCH (s:Section) WHERE s.uri STARTS WITH $v + '/' RETURN s.uri AS u LIMIT 1",
+            v=vault_uri,
+        ).single()
+        return row["u"] if row else None
 
 
-def test_rm_subdirectory_target_errors(indexed_vault, vault_dir, neo4j_profile):
-    """Passing a subdirectory inside a vault errors — only vault roots are accepted."""
-    target = vault_dir / "inbox"
-    assert target.is_dir()
-    before = _vault_doc_count(neo4j_profile, indexed_vault)
-    with pytest.raises(click.ClickException) as exc_info:
-        cmd_rm(
-            str(target), profile=None,
-            dry_run=False, yes=True, keep_marker=False,
-        )
-    msg = exc_info.value.message
-    assert "not a vault root" in msg
-    assert "ki rm only operates on vaults" in msg
-    after = _vault_doc_count(neo4j_profile, indexed_vault)
-    assert after == before
+# ---- Document removal ------------------------------------------------------
 
 
-# ---- Vault-level removal (path + slug forms) ------------------------------
-
-
-def test_rm_vault_path_removes_everything_and_marker(indexed_vault, vault_dir, neo4j_profile):
-    assert read_vault_uri(vault_dir) is not None
-    rc = cmd_rm(
-        str(vault_dir), profile=None,
-        dry_run=False, yes=True, keep_marker=False,
+def test_rm_document_by_path_removes_doc_and_sections_keeps_siblings(
+    indexed_vault, vault_dir, neo4j_profile
+):
+    doc_uri = resolve_to_uri(
+        "concepts/duplicate-headings.md", indexed_vault, vault_dir, cwd=vault_dir
     )
-    assert rc == 0
-    assert _vault_doc_count(neo4j_profile, indexed_vault) == 0
-    assert read_vault_uri(vault_dir) is None  # marker gone
-
-
-def test_rm_vault_keep_marker_preserves_yaml(indexed_vault, vault_dir, neo4j_profile):
-    rc = cmd_rm(
-        str(vault_dir), profile=None,
-        dry_run=False, yes=True, keep_marker=True,
+    sibling_uri = resolve_to_uri(
+        "concepts/heading-skip.md", indexed_vault, vault_dir, cwd=vault_dir
     )
+    assert _exists(neo4j_profile, doc_uri)
+    assert _count_under(neo4j_profile, doc_uri) >= 1  # doc + its sections
+
+    rc = cmd_rm("concepts/duplicate-headings.md", directory=vault_dir)
     assert rc == 0
-    assert _vault_doc_count(neo4j_profile, indexed_vault) == 0
-    assert read_vault_uri(vault_dir) is not None  # marker preserved
+
+    # Doc + its entire `#`-section subtree gone.
+    assert _count_under(neo4j_profile, doc_uri) == 0
+    # Sibling document and the vault itself untouched.
+    assert _exists(neo4j_profile, sibling_uri)
+    assert _exists(neo4j_profile, indexed_vault)
+
+
+def test_rm_document_source_file_untouched(indexed_vault, vault_dir, neo4j_profile):
+    src = vault_dir / "concepts" / "duplicate-headings.md"
+    assert src.exists()
+    cmd_rm("concepts/duplicate-headings.md", directory=vault_dir)
+    assert src.exists()  # only the index entry is gone
+
+
+# ---- Folder removal (incl. nested) -----------------------------------------
+
+
+def test_rm_folder_by_path_removes_whole_subtree(indexed_vault, vault_dir, neo4j_profile):
+    folder_uri = resolve_to_uri("science", indexed_vault, vault_dir, cwd=vault_dir)
+    nested_doc_uri = resolve_to_uri(
+        "science/i/in-practice-macos.md", indexed_vault, vault_dir, cwd=vault_dir
+    )
+    other_folder_uri = resolve_to_uri("inbox", indexed_vault, vault_dir, cwd=vault_dir)
+    assert _exists(neo4j_profile, nested_doc_uri)
+
+    rc = cmd_rm("science", directory=vault_dir)
+    assert rc == 0
+
+    # Folder + nested subfolder + nested doc all gone.
+    assert _count_under(neo4j_profile, folder_uri) == 0
+    # A different folder is untouched.
+    assert _count_under(neo4j_profile, other_folder_uri) > 0
+    assert _exists(neo4j_profile, indexed_vault)
+
+
+# ---- Guards ----------------------------------------------------------------
+
+
+def test_rm_vault_uri_errors_pointing_at_drop(indexed_vault, neo4j_profile):
+    before = _count_under(neo4j_profile, indexed_vault)
+    with pytest.raises(click.ClickException) as exc:
+        cmd_rm(indexed_vault, profile=neo4j_profile.name)
+    assert "ki drop" in exc.value.message
+    assert _count_under(neo4j_profile, indexed_vault) == before  # no changes
+
+
+def test_rm_section_uri_errors(indexed_vault, neo4j_profile):
+    section_uri = _a_section_uri(neo4j_profile, indexed_vault)
+    assert section_uri is not None
+    before = _exists(neo4j_profile, section_uri)
+    with pytest.raises(click.ClickException) as exc:
+        cmd_rm(section_uri, profile=neo4j_profile.name)
+    assert "section" in exc.value.message.lower()
+    assert _exists(neo4j_profile, section_uri) == before  # no changes
+
+
+def test_rm_unknown_in_namespace_uri_errors(indexed_vault, neo4j_profile):
+    ghost = f"{indexed_vault}/concepts/does-not-exist.md"
+    with pytest.raises(click.ClickException) as exc:
+        cmd_rm(ghost, profile=neo4j_profile.name)
+    assert "nothing indexed" in exc.value.message.lower()
+
+
+# ---- Dry-run / JSON --------------------------------------------------------
 
 
 def test_rm_dry_run_makes_no_changes(indexed_vault, vault_dir, neo4j_profile):
-    before = _vault_doc_count(neo4j_profile, indexed_vault)
-    rc = cmd_rm(
-        str(vault_dir), profile=None,
-        dry_run=True, yes=True, keep_marker=False,
+    doc_uri = resolve_to_uri(
+        "concepts/duplicate-headings.md", indexed_vault, vault_dir, cwd=vault_dir
     )
+    before = _count_under(neo4j_profile, doc_uri)
+    assert before >= 1
+    rc = cmd_rm("concepts/duplicate-headings.md", directory=vault_dir, dry_run=True)
     assert rc == 0
-    assert _vault_doc_count(neo4j_profile, indexed_vault) == before
-    assert read_vault_uri(vault_dir) is not None
+    assert _count_under(neo4j_profile, doc_uri) == before  # untouched
 
 
-def test_rm_vault_by_slug_works(indexed_vault, vault_dir, neo4j_profile):
-    """Passing a Vault.uri slug (no on-disk path) removes the vault by URI."""
-    slug = indexed_vault  # the slug IS the URI
-    rc = cmd_rm(
-        slug, profile=None,
-        dry_run=False, yes=True, keep_marker=False,
+def test_rm_json_output(indexed_vault, vault_dir, neo4j_profile, capsys):
+    rc = cmd_rm("concepts/duplicate-headings.md", directory=vault_dir, as_json=True)
+    assert rc == 0
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+    assert payload["label"] == "Document"
+    assert payload["nodes_removed"] >= 1
+    assert payload["uri"].endswith("concepts/duplicate-headings.md")
+
+
+# ---- Remote (`--profile`) mode --------------------------------------------
+
+
+def test_rm_remote_by_uri(indexed_vault, vault_dir, neo4j_profile):
+    """--profile + uri removes without needing a local vault."""
+    doc_uri = resolve_to_uri(
+        "concepts/heading-skip.md", indexed_vault, vault_dir, cwd=vault_dir
     )
+    assert _exists(neo4j_profile, doc_uri)
+    rc = cmd_rm(doc_uri, profile=neo4j_profile.name)
     assert rc == 0
-    assert _vault_doc_count(neo4j_profile, indexed_vault) == 0
-    # Marker NOT touched when target was a slug (we don't know which path the
-    # vault was at).
-    assert read_vault_uri(vault_dir) is not None
+    assert _exists(neo4j_profile, doc_uri) is False
 
 
-def test_rm_unknown_slug_errors(indexed_vault, neo4j_profile):
-    with pytest.raises(click.ClickException) as exc_info:
-        cmd_rm(
-            "does-not-exist", profile=None,
-            dry_run=False, yes=True, keep_marker=False,
-        )
-    assert "not found" in exc_info.value.message
+def test_rm_remote_rejects_path(indexed_vault, neo4j_profile):
+    with pytest.raises(click.ClickException) as exc:
+        cmd_rm("./concepts/heading-skip.md", profile=neo4j_profile.name)
+    assert "path" in exc.value.message.lower()
 
 
-# ---- LINKS_TO orphan GC (the one edge case) -------------------------------
+# ---- --chunk-size passthrough ---------------------------------------------
 
 
-def test_rm_orphan_gc_removes_unresolved_wikilink_targets(
-    tmp_path, neo4j_profile, cleanup_vault, monkeypatch,
-):
-    """When the removed vault's only WIKILINK_UNRESOLVED stub is dropped with
-    the vault, it doesn't leak.
-
-    In current 0.4.0, WIKILINK_UNRESOLVED Documents live INSIDE the source
-    vault (HAS-attached to it), so they're removed by step 2 of the routine.
-    No orphan GC needed for them — but this test pins the "no leaked stubs"
-    invariant so a future refactor can't regress it.
-    """
-    vault = tmp_path / "linker"
-    vault.mkdir()
-    (vault / "a.md").write_text("References [[unknown-target]].\n\n# A\n\nbody.\n")
-    res = ingest_vault(vault, IngestOptions(profile=neo4j_profile, batch_size=64))
-    cleanup_vault.append(res.vault_uri)
-
-    # Set up config so cmd_rm runs cleanly.
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    cfg = Config()
-    cfg.add_profile(Profile(
-        name="default", uri=neo4j_profile.uri,
-        user=neo4j_profile.user, password=neo4j_profile.password,
-    ))
-    save_config(cfg)
-
-    rc = cmd_rm(
-        str(vault), profile=None,
-        dry_run=False, yes=True, keep_marker=False,
-    )
+def test_rm_with_chunk_size(indexed_vault, vault_dir, neo4j_profile):
+    rc = cmd_rm("inbox", directory=vault_dir, chunk_size=128)
     assert rc == 0
-
-    # No nodes (Vault, Document, Section, anything) survive from this vault.
-    with driver_for(neo4j_profile) as driver, driver.session() as session:
-        row = session.run(
-            "MATCH (n) WHERE n.uri STARTS WITH $prefix RETURN count(n) AS n",
-            prefix=res.vault_uri + "/",
-        ).single()
-        assert row["n"] == 0
-        row = session.run(
-            "MATCH (v:Vault {uri: $uri}) RETURN count(v) AS n",
-            uri=res.vault_uri,
-        ).single()
-        assert row["n"] == 0
-
-
-# ---- --chunk-size flag passes through -------------------------------------
-
-
-def test_rm_with_chunk_size_flag_works(indexed_vault, vault_dir, neo4j_profile):
-    """--chunk-size is plumbed through to the batched-remove queries."""
-    rc = cmd_rm(
-        str(vault_dir), profile=None,
-        dry_run=False, yes=True, keep_marker=False,
-        chunk_size=128,
-    )
-    assert rc == 0
-    assert _vault_doc_count(neo4j_profile, indexed_vault) == 0
+    folder_uri = resolve_to_uri("inbox", indexed_vault, vault_dir, cwd=vault_dir)
+    assert _count_under(neo4j_profile, folder_uri) == 0

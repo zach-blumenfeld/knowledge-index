@@ -21,17 +21,23 @@ from ki.commands import skill as skill_mod
 
 def test_read_bundled_skill_returns_canonical_text():
     body = skill_mod.read_bundled_skill()
-    assert "Skill spec" in body
-    assert "TRIGGER when" in body  # routing-rule heading from skills/ki/SKILL.md
+    assert "knowledge graph index" in body
+    assert "Trigger When" in body  # routing-rule heading from skills/knowledge-base/SKILL.md
 
 
 def test_read_bundled_skill_dev_fallback_resolves_to_repo_path():
     """In an editable / dev checkout there's no `_resources/SKILL.md`, so the
-    fallback should walk up to `<repo>/skills/ki/SKILL.md` and read it."""
+    fallback should walk up to `<repo>/skills/knowledge-base/SKILL.md` and read it."""
     repo_root = Path(skill_mod.__file__).resolve().parents[3]
-    canonical = repo_root / "skills" / "ki" / "SKILL.md"
+    canonical = repo_root / "skills" / "knowledge-base" / "SKILL.md"
     assert canonical.is_file()
     assert skill_mod.read_bundled_skill() == canonical.read_text(encoding="utf-8")
+
+
+def test_read_bundled_references_includes_the_runbooks():
+    refs = skill_mod.read_bundled_references()
+    assert {"configure-profile.md", "neo4j-troubleshoot.md", "neo4j-podman.md"} <= set(refs)
+    assert refs["neo4j-podman.md"].strip()  # non-empty content
 
 
 # --- catalog ----------------------------------------------------------------
@@ -73,17 +79,18 @@ def fake_home(tmp_path, monkeypatch):
 
 def _expected_skill_path(home: Path, agent: str) -> Path:
     """Manual paths from the AGENTS catalog. Catches drift if the table changes."""
+    n = skill_mod.TOOL_NAME
     paths = {
-        "claude-code": home / ".claude" / "skills" / "ki" / "SKILL.md",
-        "cursor": home / ".cursor" / "skills" / "ki" / "SKILL.md",
-        "windsurf": home / ".codeium" / "windsurf" / "skills" / "ki" / "SKILL.md",
-        "copilot": home / ".copilot" / "skills" / "ki" / "SKILL.md",
-        "gemini-cli": home / ".gemini" / "skills" / "ki" / "SKILL.md",
-        "cline": home / ".agents" / "skills" / "ki" / "SKILL.md",
-        "codex": home / ".codex" / "skills" / "ki" / "SKILL.md",
-        "pi": home / ".pi" / "agent" / "skills" / "ki" / "SKILL.md",
-        "opencode": home / "xdg" / "opencode" / "skills" / "ki" / "SKILL.md",
-        "junie": home / ".junie" / "skills" / "ki" / "SKILL.md",
+        "claude-code": home / ".claude" / "skills" / n / "SKILL.md",
+        "cursor": home / ".cursor" / "skills" / n / "SKILL.md",
+        "windsurf": home / ".codeium" / "windsurf" / "skills" / n / "SKILL.md",
+        "copilot": home / ".copilot" / "skills" / n / "SKILL.md",
+        "gemini-cli": home / ".gemini" / "skills" / n / "SKILL.md",
+        "cline": home / ".agents" / "skills" / n / "SKILL.md",
+        "codex": home / ".codex" / "skills" / n / "SKILL.md",
+        "pi": home / ".pi" / "agent" / "skills" / n / "SKILL.md",
+        "opencode": home / "xdg" / "opencode" / "skills" / n / "SKILL.md",
+        "junie": home / ".junie" / "skills" / n / "SKILL.md",
     }
     return paths[agent]
 
@@ -101,6 +108,10 @@ def test_install_writes_skill_for_every_agent(agent, fake_home):
     target = _expected_skill_path(fake_home, agent)
     assert target.is_file(), f"{agent}: expected {target}"
     assert target.read_text(encoding="utf-8") == skill_mod.read_bundled_skill()
+    # References ship alongside SKILL.md in a sibling references/ dir.
+    assert (target.parent / "references" / "neo4j-podman.md").is_file(), (
+        f"{agent}: references not shipped"
+    )
 
 
 def test_install_case_insensitive_agent_name(fake_home):
@@ -126,7 +137,7 @@ def test_remove_deletes_file_and_empty_per_tool_dir(fake_home):
     assert rc == 0
     target = _expected_skill_path(fake_home, "claude-code")
     assert not target.exists()
-    # Per-tool dir (`~/.claude/skills/ki/`) is cleaned up; the per-agent
+    # Per-tool dir (`~/.claude/skills/knowledge-base/`) is cleaned up; the per-agent
     # `skills/` dir is left alone (other tools may live in it).
     assert not target.parent.exists()
 
@@ -206,7 +217,7 @@ def test_cli_skill_install_help_shows_path_flag():
 def test_cli_skill_print_emits_to_stdout():
     res = CliRunner().invoke(main, ["skill", "print"])
     assert res.exit_code == 0
-    assert "Skill spec" in res.output
+    assert "knowledge graph index" in res.output
 
 
 def test_cli_skill_list_runs_and_shows_all_agents():

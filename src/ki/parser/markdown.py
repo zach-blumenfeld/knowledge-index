@@ -1,6 +1,6 @@
 """Markdown → Document + Section tree.
 
-Implements the *Content Construction Rules* from docs/data-model.md:
+Implements the *Content Construction Rules* from docs/data-model/schema.md:
 
   Rule 1 — Shallow content with child pointers.
       Each node's `content` field is the body text *directly* under it
@@ -38,7 +38,7 @@ from .frontmatter import FrontmatterFields, parse_frontmatter
 # Wikilink and embed forms. Order matters: embed must be matched first.
 # Capture both the target and an optional piped display text so the ingest
 # pipeline can route `[[Target|Display]]` display texts back to the target's
-# aliases list (see docs/ingest-cypher.md §4.3 step 7).
+# aliases list (see docs/data-model/ingest-cypher.md §4.3 step 7).
 _EMBED_RE = re.compile(r"!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]")
 _WIKILINK_RE = re.compile(r"(?<!\!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]")
 # Markdown links — broadened in 0.4.0 (#37) to capture every `[text](href)`,
@@ -63,7 +63,7 @@ class ParsedLink:
     embed: bool
     # Display text after the pipe in a wikilink (`[[Target|Display]]`) OR the
     # `[text]` part of a markdown link (`[text](href)`). Routed to the
-    # *target's* `aliases` at ingest — see docs/ingest-cypher.md §4.3 step 7.
+    # *target's* `aliases` at ingest — see docs/data-model/ingest-cypher.md §4.3 step 7.
     # `None` for un-piped wikilinks / embeds, and for markdown links with empty
     # text.
     display_text: str | None = None
@@ -273,7 +273,7 @@ def parse_markdown(text: str, *, filename: str) -> ParsedDocument:
     """Parse a markdown string into the in-memory document model.
 
     `filename` is the source basename (e.g. "ideas.md"). It's used for
-    Document.name and Document.displayName per docs/data-model.md.
+    Document.name and Document.displayName per docs/data-model/schema.md.
     """
     fm: FrontmatterFields = parse_frontmatter(text, filename=filename)
 

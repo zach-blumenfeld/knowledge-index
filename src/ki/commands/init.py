@@ -20,6 +20,7 @@ from rich.console import Console
 
 from ..config import find_config_path, load_config
 from ..neo4j_client import driver_for
+from ..profile_resolve import resolve_profile
 from ..vault import (
     compute_base_slug,
     find_next_vault_slug,
@@ -52,14 +53,14 @@ def cmd_init(path: Path, *, profile: str | None = None) -> int:
         )
     cfg = load_config(cfg_path)
     try:
-        prof = cfg.get_profile(profile)
+        prof = resolve_profile(cfg, profile, start_dir=path)
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
 
     base = compute_base_slug(path)
     with driver_for(prof) as driver, driver.session() as session:
         vault_uri = find_next_vault_slug(session, base)
-    write_vault_marker(path, uri=vault_uri)
+    write_vault_marker(path, uri=vault_uri, profile=prof.name)
     console.print(
         f"[green]✓[/green] Initialized vault at {path} (uri: {vault_uri})"
     )

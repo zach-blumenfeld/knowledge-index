@@ -46,7 +46,6 @@ def test_save_then_load_roundtrip(isolated_home):
     loaded = load_config(path)
     assert "default" in loaded.profiles
     assert loaded.profiles["default"].uri == "bolt://localhost:7687"
-    assert loaded.default_profile == "default"
 
 
 def test_save_writes_0600_mode(isolated_home):
@@ -62,21 +61,15 @@ def test_save_writes_0600_mode(isolated_home):
     assert mode & stat.S_IROTH == 0
 
 
-def test_env_var_overrides_default_profile(isolated_home, monkeypatch):
+def test_get_profile_is_pure_by_name_lookup(isolated_home, monkeypatch):
+    # get_profile looks up by exact name only — no env var, no default, no
+    # sole-profile auto-pick (that precedence lives in resolve_profile).
     cfg = Config()
-    cfg.add_profile(Profile(name="default", uri="u1", user="u", password="p"))
-    cfg.add_profile(Profile(name="work", uri="u2", user="u", password="p"))
-    cfg.default_profile = "default"
-    monkeypatch.setenv(PROFILE_ENV_VAR, "work")
-    assert cfg.get_profile().name == "work"
-
-
-def test_explicit_profile_arg_wins_over_env(isolated_home, monkeypatch):
-    cfg = Config()
-    cfg.add_profile(Profile(name="default", uri="u1", user="u", password="p"))
-    cfg.add_profile(Profile(name="work", uri="u2", user="u", password="p"))
-    monkeypatch.setenv(PROFILE_ENV_VAR, "work")
-    assert cfg.get_profile("default").name == "default"
+    cfg.add_profile(Profile(name="only", uri="u1", user="u", password="p"))
+    monkeypatch.setenv(PROFILE_ENV_VAR, "only")
+    assert cfg.get_profile("only").name == "only"
+    with pytest.raises(KeyError):
+        cfg.get_profile("")  # empty never resolves, even with KI_PROFILE set
 
 
 def test_get_profile_raises_when_unknown(isolated_home):

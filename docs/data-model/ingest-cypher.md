@@ -99,7 +99,7 @@ SET f += row.props,
 ```cypher
 // 1c. HAS — batched edges for the vault/folder/document tree.
 //
-// Single edge type for all containment (see `docs/data-model.md` §4.2 *Why
+// Single edge type for all containment (see `docs/data-model/schema.md` §4.2 *Why
 // one relationship type instead of three*). One UNWIND covers every parent
 // → child relationship in the folder/doc layer:
 //
@@ -294,8 +294,8 @@ CREATE CONSTRAINT folder_uri_unique IF NOT EXISTS
 // label in the query (B.1 → `:Document`, B.2 → `:Section`, B.11 → `:Vault`).
 //
 // `:Folder` is deliberately **not** included — folders carry no `content`,
-// `aliases`, or `description` (see `docs/data-model.md` §Folder). They're a
-// navigation surface, not a retrieval surface. `ki tree` and `--under`
+// `aliases`, or `description` (see `docs/data-model/schema.md` §Folder). They're a
+// navigation surface, not a retrieval surface. `ki outline` and `--under`
 // scoping use graph traversal (HAS edges), not fulltext.
 // The mapper writes `content` with `uri:` child-pointer lines appended, which
 // add some junk tokens to the index; if recall suffers, switch to a sanitised

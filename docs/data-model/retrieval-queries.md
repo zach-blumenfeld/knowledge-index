@@ -1,6 +1,6 @@
 ## Retrieval queries for the new data model
 
-Same query *shapes* as [docs/research](research-data-model/research-retrieval-queries.md), ported to the new
+Same query *shapes* as [docs/research](../archive/research-data-model/research-retrieval-queries.md), ported to the new
 `(User)–(Vault)–(Folder)–(Document)–(Section)` schema.
 
 ### Mapping cheatsheet
@@ -10,7 +10,7 @@ Same query *shapes* as [docs/research](research-data-model/research-retrieval-qu
 | `:Section`                                 | `:Section (uri, displayName, headingLevel, content)`                               |
 | `:Paragraph (text)`                        | — folded into `Section.content`                                                    |
 | `:Chunk (text, embedding)`                 | — deferred (v1 has no embeddings)                                                  |
-| `:HAS_SECTION` / `:HAS_PARAGRAPH` (linear) | `:HAS` (universal containment edge — `Vault\|Folder\|Document\|Section` → `Folder\|Document\|Section`; see `docs/data-model.md` §4.2) |
+| `:HAS_SECTION` / `:HAS_PARAGRAPH` (linear) | `:HAS` (universal containment edge — `Vault\|Folder\|Document\|Section` → `Folder\|Document\|Section`; see `docs/data-model/schema.md` §4.2) |
 | `:NEXT_SECTION` / `:NEXT_PARAGRAPH`        | `:NEXT_SECTION` — threads ALL sections of a document in DFS reading order          |
 | `:MENTIONS` (article-to-article projected) | `:LINKS_TO` (`Document`\|`Section` → `Document`\|`Section`)                        |
 | `:REDIRECTS_TO`                            | `Document.aliases` (wikilinks resolved at ingest time)                             |
@@ -24,15 +24,15 @@ Same query *shapes* as [docs/research](research-data-model/research-retrieval-qu
 > rather than tree gymnastics. See `target-data-model-cypher.md` §4.3 step 4.
 
 ### Parameters
-- `$uri` — the `Document.uri` (UUID-prefixed slugified path, see §4.3).
+- `$uri` — the `Document.uri` (slugified `<vault-slug>/<path>`, see §4.3).
 - `$section_uri`, `$section_uris` — same convention for sections.
-- `$folder_uri` — a `Folder.uri` (UUID-prefixed slugified directory path) used as a prefix in `--under` scoping for B.1/B.2/B.11 — see *Scoping* below.
-- `$root_uri` — for B.12 / `ki tree`; URI of any node to start the tree walk from (`:Vault`, `:Folder`, `:Document`, or `:Section`). When `null` / absent, B.12 falls back to matching every `:Vault` in the graph — see B.12 below.
-- `$source_uris` — for B.12-links / `ki tree`; list of `:Document` and `:Section` URIs to fetch outbound `:LINKS_TO` edges from. Populated by the renderer from the B.12 result.
+- `$folder_uri` — a `Folder.uri` (slugified `<vault-slug>/<dir-path>`) used as a prefix in `--under` scoping for B.1/B.2/B.11 — see *Scoping* below.
+- `$root_uri` — for B.12 / `ki outline`; URI of any node to start the tree walk from (`:Vault`, `:Folder`, `:Document`, or `:Section`). When `null` / absent, B.12 falls back to matching every `:Vault` in the graph — see B.12 below.
+- `$source_uris` — for B.12-links / `ki outline`; list of `:Document` and `:Section` URIs to fetch outbound `:LINKS_TO` edges from. Populated by the renderer from the B.12 result.
 - `$index_name` — `'content_search'` (the fulltext index from §4.4).
 - `$query` — fulltext query string (Lucene syntax).
 - `$k`, `$n` — limit / window size.
-- `$depth` — for B.12 / `ki tree`; cap on tree traversal depth (must be >= 1).
+- `$depth` — for B.12 / `ki outline`; cap on tree traversal depth (must be >= 1).
 
 ### Scoping with `:Folder` (`--under`)
 
@@ -57,12 +57,12 @@ The same idea works for any of B.1 / B.2 / B.11 (with `:Vault`-scope `folder_uri
 - **B.8 windowing (summary)** — same `±N` walk as B.7 over `NEXT_SECTION` but returns `heading`, `first_child_section_uri`, `child_count` instead of full content. The `first_child` lookup exploits the DFS property: a section's first child is the section it points to via `NEXT_SECTION` that is also a `HAS` child of it. Mirrors A.8's summary semantics.
 - **B.9 / B.10** — straightforward `LINKS_TO` ports with endpoint-projection (any section endpoint → its owning `Document`) so the result shape stays at document granularity like the originals.
 - **B.11 Vault fulltext** — see *Per-query* notes above; same shared `content_search` index, filtered to `:Vault`. Powers `ki search --type vault` for cross-vault routing.
-- **B.12 / B.12-links Containment tree** — `ki tree`'s engine. Two queries:
-  - **B.12** walks `:HAS` from `$root_uri` up to `$depth` steps, depth-capped via a quantified path pattern (`{1,$depth}`) so the bound prunes during traversal rather than as a post-filter (same trick as B.3). Returns one row per node — root + HAS descendants — in the wire format defined by `docs/tree-format.md` *Wire record format*: `{depth, inrel, label, name, displayName, uri, parent_uri, sort_pos}`. Sections carry `sort_pos` (NEXT_SECTION position in their parent document) so the renderer can order sibling sections by reading order, not alphabetically. When `$root_uri` is `null` / absent, B.12 matches every `:Vault` as a root and fans out — the renderer treats them as a multi-root sibling group at `parent_uri = null`, sorted alphabetically by `name`. Multi-user scoping via `:USES_VAULT` is a follow-up; single-user makes "all vaults" unambiguous today.
-  - **B.12-links** is the LINKS_TO sub-pass: given a list of D/S URIs (`$source_uris`), returns their outbound `:LINKS_TO` edges. The renderer combines B.12 + B.12-links output, groups by `parent_uri`, sorts per the rules in `docs/tree-format.md` *Sibling ordering*, and DFS-emits.
-  - Splitting hierarchy and LINKS_TO into two queries keeps each small. The cost is one extra round trip, paid every `ki tree` invocation.
+- **B.12 / B.12-links Containment tree** — `ki outline`'s engine. Two queries:
+  - **B.12** walks `:HAS` from `$root_uri` up to `$depth` steps, depth-capped via a quantified path pattern (`{1,$depth}`) so the bound prunes during traversal rather than as a post-filter (same trick as B.3). Returns one row per node — root + HAS descendants — in the wire format defined by `docs/commands/outline.md` *Wire record format*: `{depth, inrel, label, name, displayName, uri, parent_uri, sort_pos}`. Sections carry `sort_pos` (NEXT_SECTION position in their parent document) so the renderer can order sibling sections by reading order, not alphabetically. When `$root_uri` is `null` / absent, B.12 matches every `:Vault` as a root and fans out — the renderer treats them as a multi-root sibling group at `parent_uri = null`, sorted alphabetically by `name`. Multi-user scoping via `:USES_VAULT` is a follow-up; single-user makes "all vaults" unambiguous today.
+  - **B.12-links** is the LINKS_TO sub-pass: given a list of D/S URIs (`$source_uris`), returns their outbound `:LINKS_TO` edges. The renderer combines B.12 + B.12-links output, groups by `parent_uri`, sorts per the rules in `docs/commands/outline.md` *Sibling ordering*, and DFS-emits.
+  - Splitting hierarchy and LINKS_TO into two queries keeps each small. The cost is one extra round trip, paid every `ki outline` invocation.
 - **B.13 / B.14 `ki get`** — fetch a node's metadata and content by URI. Two queries:
-  - **B.13** is a single-node lookup that returns the union of properties across `:Document` and `:Section` (Neo4j returns `null` for missing properties, so one query covers both). The dispatcher in `src/ki/commands/get.py` keys off `label` to pick the relevant subset for output. `ki get` rejects `:Folder` and `:Vault` URIs with a hint pointing at `ki tree` / `ki vault list` — text retrieval isn't what those nodes represent. B.13 is the metadata "shell" returned for every `ki get` row regardless of `--type`.
+  - **B.13** is a single-node lookup that returns the union of properties across `:Document` and `:Section` (Neo4j returns `null` for missing properties, so one query covers both). The dispatcher in `src/ki/commands/get.py` keys off `label` to pick the relevant subset for output. `ki get` rejects `:Folder` and `:Vault` URIs with a hint pointing at `ki outline` / `ki vault list` — text retrieval isn't what those nodes represent. B.13 is the metadata "shell" returned for every `ki get` row regardless of `--type`.
   - **B.14** is the section-subtree reconstruction used only when `--type full` is applied to a `:Section` URI. Walks the same `NEXT_SECTION` chain B.4 walks, but bounded to the subtree under the start section via `start = s OR (start)-[:HAS*]->(s)`. For `--type full` on a `:Document` URI the dispatcher calls **B.4** directly (the existing document-text query) plus a separate read of `Document.content` for the preamble.
   - Lift convention: B.4 / B.13 / B.14 are all lifted into `src/ki/search/queries.py` as constants per the AGENTS.md rule that Cypher source-of-truth lives under `docs/`.
 
@@ -358,9 +358,9 @@ LIMIT toInteger($k)
 
 B.12 Containment tree (hierarchy walk)
 ```cypher
-// New in v0.4.0. `ki tree`'s HAS walker. Returns the root row + one row per
+// New in v0.4.0. `ki outline`'s HAS walker (formerly `ki tree`). Returns the root row + one row per
 // HAS-descendant up to $depth steps. The full wire format is defined in
-// `docs/tree-format.md` *Wire record format* — this query is its only producer.
+// `docs/commands/outline.md` *Wire record format* — this query is its only producer.
 //
 // Sections additionally carry `sort_pos` (their index in the parent document's
 // NEXT_SECTION chain) so the renderer can order sibling sections by reading
@@ -384,7 +384,7 @@ B.12 Containment tree (hierarchy walk)
 // is a serious perf trap because it walks the entire reachable subgraph and
 // only then prunes. The `{1,$depth}` quantifier prunes during traversal —
 // but current Neo4j 5.x (incl. Aura) rejects Cypher parameters inside the
-// quantifier, so the wrapper (`run_b12` once `ki tree` lands in phase 3 of
+// quantifier, so the wrapper (`run_b12` once `ki outline` lands in phase 3 of
 // #17) must substitute the literal int client-side, same as B.3.
 //   https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/
 MATCH (root)
@@ -430,12 +430,12 @@ RETURN depth, inrel, label, name, displayName, uri, parent_uri, sort_pos
 B.12-links Outbound LINKS_TO sub-pass
 ```cypher
 // New in v0.4.0. Outbound :LINKS_TO edges from a set of source URIs.
-// Called by `ki tree` after B.12 to surface horizontal LINKS_TO branches
+// Called by `ki outline` after B.12 to surface horizontal LINKS_TO branches
 // (one row per outbound edge, source identified by parent_uri).
 //
 // The renderer combines these rows with the B.12 hierarchy rows, sets
 // `depth = source_depth + 1` and `inrel = 'LINKS_TO'`, and sorts L siblings
-// alphabetically by target uri. See `docs/tree-format.md` *Renderer pseudocode*.
+// alphabetically by target uri. See `docs/commands/outline.md` *Renderer pseudocode*.
 //
 // $source_uris — list of :Document and :Section URIs from the B.12 result.
 UNWIND $source_uris AS source_uri
@@ -456,7 +456,7 @@ B.13 Node lookup (any URI, label-aware metadata)
 // `src/ki/commands/get.py` picks the label-relevant subset client-side.
 //
 // `:Folder` and `:Vault` URIs also match this query — the dispatcher
-// surfaces them with an error pointing at `ki tree` / `ki vault list`.
+// surfaces them with an error pointing at `ki outline` / `ki vault list`.
 // Returning `label` lets the dispatcher reject Folder/Vault cleanly
 // without a second round trip.
 //

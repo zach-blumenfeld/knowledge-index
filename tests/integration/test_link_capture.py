@@ -194,11 +194,11 @@ def test_internal_non_md_creates_stub_document(tmp_path, neo4j_profile, cleanup_
             u=stub_uri,
         ).single()
         assert row is not None, "stub Document not created"
-        assert row["st"] == "LOCAL_FILE"
+        assert row["st"] == "LOCAL_STUB"
         assert row["p"].endswith("q3-deck.pptx")
         assert row["fh"] is not None and len(row["fh"]) == 64  # sha256 hex
         # name stays the on-disk filename for machine-readable identity; the
-        # link text wins displayName (so `ki tree` shows "Q3 deck" instead of
+        # link text wins displayName (so `ki outline` shows "Q3 deck" instead of
         # the bare filename).
         assert row["name"] == "q3-deck.pptx"
         assert row["dn"] == "Q3 deck"

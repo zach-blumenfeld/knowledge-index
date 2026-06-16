@@ -2,12 +2,12 @@
 
 Three paths:
   1) Local      → wraps `podman` to run `neo4j:latest` locally.
-                  See references/neo4j-podman.md for the full runbook.
+                  See skills/knowledge-base/references/neo4j-podman.md for the full runbook.
   2) Aura       → wraps `neo4j-cli aura create` (cloud — billable).
   3) Existing   → prompt for URI + credentials.
 
 On `--yes` (agent auto-mode escape hatch), pick the default (Local) and run
-non-interactively. *Aura is never auto-picked* per docs/requirements_v01_mvp.md
+non-interactively. *Aura is never auto-picked* per docs/archive/requirements_v01_mvp.md
 *Agent auto-mode behavior* — it creates billable resources.
 """
 
@@ -20,7 +20,7 @@ import click
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from .. import neo4j_podman
+from .. import neo4j_cli, neo4j_podman
 from ..config import (
     Profile,
     default_config_path,
@@ -39,7 +39,6 @@ def configure(
     *,
     profile_name: str | None = None,
     yes: bool = False,
-    set_default: bool = False,
 ) -> Profile:
     """Run the configure flow. Returns the saved Profile."""
     cfg_path = find_config_path() or default_config_path()
@@ -106,18 +105,40 @@ def configure(
         if not yes and not Confirm.ask("Save the profile anyway?", default=False):
             raise click.Abort() from exc
 
-    cfg.add_profile(profile, set_default=set_default or (len(cfg.profiles) == 0))
+    cfg.add_profile(profile)
     path = save_config(cfg, cfg_path)
     console.print(
         f"\n[green]✓[/green] Wrote profile [bold]{profile.name}[/bold] to {path}"
     )
+
+    # Best-effort: mirror into neo4j-cli's credential store so agents can run
+    # delegated graph-reasoning Cypher (`neo4j-cli query --credential <name>`)
+    # without ever handling the password. neo4j-cli is optional — skip cleanly.
+    if neo4j_cli.is_available():
+        try:
+            neo4j_cli.register_credential(profile)
+            console.print(
+                f"[dim]Registered neo4j-cli credential '{profile.name}' "
+                f"(for graph-reasoning queries).[/dim]"
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(
+                f"[yellow]note:[/yellow] couldn't register a neo4j-cli "
+                f"credential ({exc}); graph-reasoning delegation unavailable "
+                f"until `ki profile sync`."
+            )
+    else:
+        console.print(
+            "[dim]Install neo4j-cli for graph-reasoning delegation, "
+            "then `ki profile sync`.[/dim]"
+        )
     return profile
 
 
 def _configure_local(name: str) -> Profile:
     if not neo4j_podman.is_installed():
         raise click.ClickException(
-            "`podman` is not installed. See references/neo4j-podman.md "
+            "`podman` is not installed. See skills/knowledge-base/references/neo4j-podman.md "
             "(Preflight) for install steps — on macOS: `brew install podman` "
             "then `podman machine init && podman machine start`."
         )
@@ -137,8 +158,6 @@ def _configure_local(name: str) -> Profile:
         )
     try:
         creds = neo4j_podman.ensure_running()
-    except neo4j_podman.PortInUseError as exc:
-        raise click.ClickException(str(exc)) from exc
     except neo4j_podman.PodmanError as exc:
         raise click.ClickException(str(exc)) from exc
     console.print(f"[green]✓[/green] Neo4j ready at {creds.uri}")
@@ -148,6 +167,7 @@ def _configure_local(name: str) -> Profile:
         user=creds.user,
         password=creds.password,
         source="local-podman",
+        database="neo4j",  # the container's default db; known and safe to pin.
     )
 
 
@@ -181,4 +201,16 @@ def _configure_existing(name: str) -> Profile:
     uri = Prompt.ask("Neo4j URI", default="bolt://localhost:7687")
     user = Prompt.ask("User", default="neo4j")
     password = Prompt.ask("Password", password=True)
-    return Profile(name=name, uri=uri, user=user, password=password, source="existing")
+    # Blank → use the server's home database. Don't default to "neo4j": that
+    # name doesn't exist on Aura Free (home db is the instance DBID).
+    database = Prompt.ask(
+        "Database [blank = server's home database]", default=""
+    ).strip() or None
+    return Profile(
+        name=name,
+        uri=uri,
+        user=user,
+        password=password,
+        source="existing",
+        database=database,
+    )

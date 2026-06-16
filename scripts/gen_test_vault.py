@@ -20,7 +20,7 @@ For ad-hoc runs outside the project venv:
     uv run --with python-frontmatter --with pyyaml \\
         python scripts/gen_test_vault.py ...
 
-See prompts/build-test-vault.md and docs/requirements_v01_mvp.md §Scalability for the
+See prompts/build-test-vault.md and docs/archive/requirements_v01_mvp.md §Scalability for the
 sizing contract this script implements.
 """
 from __future__ import annotations
@@ -90,7 +90,7 @@ CORPUS_PATH = Path(__file__).parent / "test_vault_corpus.txt"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Slugification — matches docs/data-model.md Path conventions
+# Slugification — matches docs/data-model/schema.md Path conventions
 # ──────────────────────────────────────────────────────────────────────────────
 
 def slugify(s: str) -> str:
@@ -288,7 +288,7 @@ def build_topic_graph(size_cfg: dict, rng: random.Random) -> list[Topic]:
 
 # Order matters for determinism. Paths are POSIX-relative within the vault.
 # Some folders intentionally include spaces and capitals to exercise URI
-# slugification (Path conventions in docs/data-model.md).
+# slugification (Path conventions in docs/data-model/schema.md).
 FIXED_EDGE_CASE_PATHS: list[str] = [
     "Notes/My Projects/big-idea.md",        # 3-level nesting + slugified folder names
     "Notes/People/Jane Doe/bio.md",         # 4-level nesting + slugified folder
@@ -896,7 +896,7 @@ def generate_vault(size: str, output: Path, seed: int, zip_out: bool) -> dict:
         f"- Vault UUID: `{vault_uuid}`\n"
         f"- Generated at: {generation_ts}\n\n"
         f"This vault exercises every node property and edge type in "
-        f"`docs/data-model.md`. See `prompts/build-test-vault.md` for the "
+        f"`docs/data-model/schema.md`. See `prompts/build-test-vault.md` for the "
         f"contract this fixture satisfies.\n"
     )
     (output / "README.md").write_text(readme, encoding="utf-8")

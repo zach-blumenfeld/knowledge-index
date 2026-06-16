@@ -1,7 +1,7 @@
 """Thin wrapper around `podman` for the `ki configure → Local` path.
 
 The full runbook (commands, recovery, teardown) lives in
-`references/neo4j-podman.md` — this module mirrors the same canonical values
+`skills/knowledge-base/references/neo4j-podman.md` — this module mirrors the same canonical values
 (container name, volume, image, plugins, auth) so the doc and the code agree.
 
 Surface kept intentionally narrow:
@@ -32,7 +32,7 @@ PLUGINS_ENV = '["apoc","genai"]'
 # personal-laptop tool — total Neo4j footprint (heap + pagecache + native
 # overhead) lands around ~2 GB so `ki` is a good citizen alongside the
 # user's other apps. Covers the documented v1 envelope (10k docs / 1 GB
-# per vault, ingest-dominated; see docs/requirements_v01_mvp.md
+# per vault, ingest-dominated; see docs/archive/requirements_v01_mvp.md
 # § Scalability) because the batcher's existing OOM auto-recovery
 # (halve-and-retry at floor 16) absorbs the occasional fat transaction.
 # Users hitting "batch size shrunk to N" warnings on huge vaults can
@@ -56,10 +56,6 @@ class PodmanError(RuntimeError):
     """Raised when a `podman` subcommand fails."""
 
 
-class PortInUseError(RuntimeError):
-    """Raised when :7687 is bound by something that isn't our container."""
-
-
 @dataclass
 class PodmanCredentials:
     uri: str
@@ -76,7 +72,7 @@ def is_installed() -> bool:
 def _require() -> None:
     if not is_installed():
         raise PodmanNotInstalled(
-            "`podman` is not installed. See references/neo4j-podman.md "
+            "`podman` is not installed. See skills/knowledge-base/references/neo4j-podman.md "
             "(Preflight) for install steps — on macOS: `brew install podman` "
             "then `podman machine init && podman machine start`."
         )
@@ -123,6 +119,31 @@ def _port_bound(port: int) -> bool:
             return False
 
 
+def _find_free_port(start: int, *, limit: int = 200) -> int:
+    """First port at or above `start` that nothing is listening on."""
+    for port in range(start, start + limit):
+        if not _port_bound(port):
+            return port
+    raise PodmanError(f"no free port found in [{start}, {start + limit}).")
+
+
+def _published_bolt_port() -> int:
+    """Host port mapped to the container's internal Bolt port (`7687`).
+
+    A relocated container (created when `:7687` was busy) publishes Bolt on a
+    different host port; read it back from podman rather than assuming 7687.
+    """
+    proc = _run(["port", CONTAINER_NAME, str(BOLT_PORT)])
+    out = proc.stdout.strip()
+    if proc.returncode == 0 and out:
+        # e.g. "0.0.0.0:7688" (a "[::]:7688" line may follow).
+        try:
+            return int(out.splitlines()[0].rsplit(":", 1)[1])
+        except (ValueError, IndexError):
+            pass
+    return BOLT_PORT
+
+
 def _bolt_ready() -> bool:
     """Return True if Neo4j is actually serving Bolt queries (not just port-open).
 
@@ -144,24 +165,25 @@ def _bolt_ready() -> bool:
     return proc.returncode == 0
 
 
-def _wait_for_ready(timeout: int = 120) -> None:
+def _wait_for_ready(bolt_port: int, timeout: int = 90) -> None:
     """Poll Neo4j until it accepts Bolt queries, or raise.
 
-    Two-phase: first wait for :7687 to be bound (cheap), then for
+    Two-phase: first wait for the host Bolt port to be bound (cheap), then for
     `cypher-shell RETURN 1` to succeed (the real readiness gate). Default
-    timeout is 120s — first-run image pull + plugin load + kernel start
-    can take well over a minute on a fresh machine.
+    timeout is 90s — kernel start + plugin load (APOC + GenAI) can take a
+    while on a fresh machine. (The image pull happens earlier, inside
+    `podman run`'s own timeout.)
     """
     deadline = time.monotonic() + timeout
-    # Phase 1: wait for the port to open.
+    # Phase 1: wait for the host port to open.
     while time.monotonic() < deadline:
-        if _port_bound(BOLT_PORT):
+        if _port_bound(bolt_port):
             break
         time.sleep(1)
     else:
         raise PodmanError(
-            f"Neo4j did not open :{BOLT_PORT} within {timeout}s. "
-            "Check `podman logs neo4j-ki` and references/neo4j-podman.md."
+            f"Neo4j did not open :{bolt_port} within {timeout}s. "
+            "Check `podman logs neo4j-ki` and skills/knowledge-base/references/neo4j-podman.md."
         )
     # Phase 2: wait for actual query readiness.
     while time.monotonic() < deadline:
@@ -169,44 +191,44 @@ def _wait_for_ready(timeout: int = 120) -> None:
             return
         time.sleep(2)
     raise PodmanError(
-        f"Neo4j opened :{BOLT_PORT} but is not yet serving queries after "
+        f"Neo4j opened :{bolt_port} but is not yet serving queries after "
         f"{timeout}s. Check `podman logs neo4j-ki` and "
-        "references/neo4j-podman.md."
+        "skills/knowledge-base/references/neo4j-podman.md."
     )
 
 
-def ensure_running(*, wait_seconds: int = 120) -> PodmanCredentials:
+def ensure_running(*, wait_seconds: int = 90) -> PodmanCredentials:
     """Bring the `neo4j-ki` container to a running state. Idempotent.
 
     Handles three input states:
-      - running  → return creds immediately.
+      - running  → return creds at the container's actual published port.
       - stopped  → `podman start`, wait for ready, return creds.
-      - missing  → `podman run` (preflight: :7687 must be free), wait, return.
+      - missing  → `podman run`; if `:7687` is busy, bind the next free host
+                   port instead so a stranger on 7687 never blocks bring-up.
 
     Raises:
       PodmanNotInstalled — `podman` binary missing.
-      PortInUseError     — :7687 is bound by something that isn't ours.
-      PodmanError        — any other podman failure.
+      PodmanError        — any podman failure (incl. no free port found).
     """
     state = container_state()
 
     if state == "running":
-        return _credentials()
+        return _credentials(_published_bolt_port())
 
     if state == "stopped":
         proc = _run(["start", CONTAINER_NAME])
         _check_ok(proc, "start")
-        _wait_for_ready(wait_seconds)
-        return _credentials()
+        bolt_port = _published_bolt_port()
+        _wait_for_ready(bolt_port, wait_seconds)
+        return _credentials(bolt_port)
 
-    # state == "missing" — fresh `podman run`.
-    if _port_bound(BOLT_PORT):
-        raise PortInUseError(
-            f"Port :{BOLT_PORT} is already in use by something other than the "
-            f"`{CONTAINER_NAME}` container. Either stop that process, or use "
-            "`ki configure → 3) Existing` to point at it. See "
-            "references/neo4j-podman.md (Preflight)."
-        )
+    # state == "missing" — fresh `podman run`. Use the canonical ports when
+    # free; otherwise relocate to the next free host port(s) so an unrelated
+    # service on 7687 doesn't block us.
+    bolt_port = BOLT_PORT if not _port_bound(BOLT_PORT) else _find_free_port(BOLT_PORT + 1)
+    browser_port = (
+        BROWSER_PORT if not _port_bound(BROWSER_PORT) else _find_free_port(BROWSER_PORT + 1)
+    )
 
     proc = _run(
         [
@@ -214,8 +236,8 @@ def ensure_running(*, wait_seconds: int = 120) -> PodmanCredentials:
             "-d",
             "--name", CONTAINER_NAME,
             "--restart", "unless-stopped",
-            "-p", f"{BROWSER_PORT}:{BROWSER_PORT}",
-            "-p", f"{BOLT_PORT}:{BOLT_PORT}",
+            "-p", f"{browser_port}:{BROWSER_PORT}",
+            "-p", f"{bolt_port}:{BOLT_PORT}",
             "-v", f"{VOLUME_NAME}:/data",
             "-e", f"NEO4J_AUTH={DEFAULT_USER}/{DEFAULT_PASSWORD}",
             "-e", f"NEO4J_PLUGINS={PLUGINS_ENV}",
@@ -226,13 +248,13 @@ def ensure_running(*, wait_seconds: int = 120) -> PodmanCredentials:
         timeout=300,  # first-run image pull can be slow.
     )
     _check_ok(proc, "run")
-    _wait_for_ready(wait_seconds)
-    return _credentials()
+    _wait_for_ready(bolt_port, wait_seconds)
+    return _credentials(bolt_port)
 
 
-def _credentials() -> PodmanCredentials:
+def _credentials(bolt_port: int = BOLT_PORT) -> PodmanCredentials:
     return PodmanCredentials(
-        uri=f"bolt://localhost:{BOLT_PORT}",
+        uri=f"bolt://localhost:{bolt_port}",
         user=DEFAULT_USER,
         password=DEFAULT_PASSWORD,
     )

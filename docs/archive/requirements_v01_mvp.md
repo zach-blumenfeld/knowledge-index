@@ -1,3 +1,10 @@
+> **⚠️ ARCHIVED — historical, not current truth.** This is the original v0.1 MVP
+> design spec, kept for provenance. Its role is now split across the live canon:
+> [`docs/scoping.md`](../scoping.md) (profiles/vaults/config/command surface),
+> [`docs/general-philosophy.md`](../general-philosophy.md) (design principles),
+> [`docs/data-model/schema.md`](../data-model/schema.md) (schema), and
+> [`docs/commands/`](../commands/) (per-command behavior). Read those for anything current.
+
 # Knowledge Index (`ki`)
 > Search index for agent memory — knowledge graph index for your documents
 
@@ -30,8 +37,8 @@ Two working commands: `ki index` (sync a folder into the graph) and `ki search` 
 `ki` **never mutates source documents.** The user's markdown files are owned by the user (and by their editor, their git, their Dropbox sync, their Obsidian vault) — `ki` only reads them and maintains a *derived index* in Neo4j. Anything `ki` writes lives in `~/.config/ki/` (config) or in Neo4j (the index), or — in the single exception — in `.ki/vault.yaml`, a small file carrying vault identity (`uri:`, written once on first ingest) plus optional user-authored vault-level metadata such as `description:`. `ki` writes `uri:` on first creation, and writes other user-authored fields **only when the user explicitly asks** via a flag (e.g. `ki index --description "..."`). Without such a flag, every key besides `uri:` is read-only.
 
 Practical consequences:
-- No `ki rm --purge`, no `ki rewrite`, no "fix this frontmatter," no "auto-organize my notes." If a feature requires writing into a `.md` file, it's out of scope.
-- A vault can be deleted entirely from the index (`ki rm --vault`) and the source files are untouched.
+- No `ki drop --purge`, no `ki rewrite`, no "fix this frontmatter," no "auto-organize my notes." If a feature requires writing into a `.md` file, it's out of scope.
+- A vault can be deleted entirely from the index (`ki drop`) and the source files are untouched.
 - Conversely, `rm -rf my-vault/` leaves the graph in Neo4j stale until the next `ki index` — that's fine, the user is in charge of their files.
 - This is what makes the tool safe to point at an Obsidian vault, a git repo, or a research folder without thinking twice.
 
@@ -90,18 +97,19 @@ mkdir my-vault              # plain folder, no special tooling
 echo "some ideas" >> my-vault/ideas.md
 ki index ./my-vault         # syncs to Neo4j (idempotent; auto-creates .ki/vault.yaml on first run)
 ki search "..." [flags]     # fulltext across {Document,Section,Vault} (B.1+B.2+B.11); --types narrows
-ki tree [--at "<uri>"]      # render the containment hierarchy (Vault → Folder → Doc → Section) — see docs/tree-format.md
+ki outline ["<uri>"]        # render the containment hierarchy (Vault → Folder → Doc → Section) — see docs/outline-format.md
+                            #   `ki tree` is a permanent alias; `--at <uri>` still works as a back-compat flag.
 ki get "<uri>" [flags]      # fetch metadata + content at a Doc / Section URI; --type {path,content,full}
-ki rm ./my-vault                    # remove an entire vault from the index (vault-only; source files untouched)
+ki drop ./my-vault                    # remove an entire vault from the index (vault-only; source files untouched)
 ki nuke                             # reset the entire graph + schema (typed confirmation required)
 
 ki index ./my-vault --profile work    # explicit profile override
 KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents / cron)
 ```
 
-**Navigation + fetch loop.** `ki search` and `ki tree` return URIs; `ki get <uri>` fetches what those URIs point to. `--type content` (default) returns the node's stored content + `uri:` references to direct children (per Rule 1 in `docs/data-model.md`); `--type full` returns the full reading-order body via B.4 / B.14; `--type path` returns the metadata shell only, so the agent can `Read` the file via the `path` property. `ki get` only accepts `:Document` and `:Section` URIs — `:Folder` and `:Vault` URIs error with a hint pointing at `ki tree` / `ki vault list`.
+**Navigation + fetch loop.** `ki search` and `ki outline` return URIs; `ki get <uri>` fetches what those URIs point to. `--type content` (default) returns the node's stored content + `uri:` references to direct children (per Rule 1 in `docs/data-model.md`); `--type full` returns the full reading-order body via B.4 / B.14; `--type path` returns the metadata shell only, so the agent can `Read` the file via the `path` property. `ki get` only accepts `:Document` and `:Section` URIs — `:Folder` and `:Vault` URIs error with a hint pointing at `ki outline` / `ki vault list`.
 
-**Three commands users actually need: `ki configure`, `ki index`, `ki rm`.** `ki configure` is run once per machine (or per new Neo4j connection); `ki index` and `ki rm` are the working verbs.
+**Three commands users actually need: `ki configure`, `ki index`, `ki drop`.** `ki configure` is run once per machine (or per new Neo4j connection); `ki index` and `ki drop` are the working verbs.
 
 ### Auto-sense on `ki index`
 
@@ -115,34 +123,34 @@ KI_PROFILE=work ki index ./my-vault   # env-var override (for scripts / agents /
 
 A thin alias that writes `.ki/vault.yaml` *without* indexing. Useful only in narrow cases — e.g., pre-creating the marker so it's committed to git before any content exists. Not part of the quick-start; most users never run it.
 
-### Removal (`ki rm`, `ki nuke`)
+### Removal (`ki drop`, `ki nuke`)
 
-ki keeps the **vault** as the only unit of sync. `ki rm` operates only on vault-level targets; sub-vault granularity (doc, subtree) is not exposed. The motivation and the full removal-routine spec live in **`docs/index_rm_behavior.md`** — read that for the design.
+ki keeps the **vault** as the only unit of sync. `ki drop` operates only on vault-level targets; sub-vault granularity (doc, subtree) is not exposed. The motivation and the full removal-routine spec live in **`docs/index_rm_behavior.md`** — read that for the design.
 
 ```bash
-ki rm ./my-vault                       # remove a whole vault by path (typed confirmation required)
-ki rm my-vault-slug                    # same, by Vault.uri slug
-ki rm <target> --dry-run               # show what would be removed; touch nothing
-ki rm <target> --yes                   # skip the typed-display-name confirm
-ki rm <target> --keep-marker           # remove vault data but keep .ki/vault.yaml
+ki drop ./my-vault                       # remove a whole vault by path (typed confirmation required)
+ki drop my-vault-slug                    # same, by Vault.uri slug
+ki drop <target> --dry-run               # show what would be removed; touch nothing
+ki drop <target> --yes                   # skip the typed-display-name confirm
+ki drop <target> --keep-marker           # remove vault data but keep .ki/vault.yaml
                                        #   (next `ki index` rebuilds onto the same Vault.uri)
-ki rm <target> --chunk-size N          # rows per batched-remove transaction (default 1000)
+ki drop <target> --chunk-size N          # rows per batched-remove transaction (default 1000)
 
 ki nuke                                # reset the entire graph + drop ki-owned schema
 ki nuke --keep-marker                  # same, but keep every .ki/vault.yaml on disk
 ki nuke --dry-run / --yes / --chunk-size N
 ```
 
-**Sub-vault `ki rm` is rejected with a clear error** pointing the user at `ki index <vault>` — that's the only way to sync content at file granularity (a full re-index nukes + re-ingests the vault).
+**Sub-vault `ki drop` is rejected with a clear error** pointing the user at `ki index <vault>` — that's the only way to sync content at file granularity (a full re-index nukes + re-ingests the vault).
 
 **Defaults driven by safety and reversibility:**
 
-- **Source files are never touched.** `ki rm` / `ki nuke` remove nodes from Neo4j; that's all. If the user wants files gone, they use `rm`. (See *Core design principle*.)
+- **Source files are never touched.** `ki drop` / `ki nuke` remove nodes from Neo4j; that's all. If the user wants files gone, they use `rm`. (See *Core design principle*.)
 - **Vault removal requires typed display-name confirmation**; `ki nuke` requires typed `"nuke"` confirmation. Both bypass with `--yes`.
-- **Marker stays unless `--keep-marker=False`.** `ki rm` removes `.ki/vault.yaml` by default; `ki nuke` removes every known marker by default. Pass `--keep-marker` to preserve so the next `ki index` rebuilds onto the same `Vault.uri` — the "reset this vault" idiom.
+- **Marker stays unless `--keep-marker=False`.** `ki drop` removes `.ki/vault.yaml` by default; `ki nuke` removes every known marker by default. Pass `--keep-marker` to preserve so the next `ki index` rebuilds onto the same `Vault.uri` — the "reset this vault" idiom.
 - **`LOADED` provenance edges are removed with their endpoints** via `DETACH DELETE`. Provenance is moot once the entity is gone; if anyone needs ingest history, it's reconstructable from logs.
 
-**Agent auto-mode handling:** `ki rm` (whole vault) and `ki nuke` require explicit user consent every time, regardless of harness permission, because they destroy graph state. See *Agent auto-mode behavior* for the full partition.
+**Agent auto-mode handling:** `ki drop` (whole vault) and `ki nuke` require explicit user consent every time, regardless of harness permission, because they destroy graph state. See *Agent auto-mode behavior* for the full partition.
 
 ## Configuration & Neo4j setup
 
@@ -161,7 +169,7 @@ ki nuke --dry-run / --yes / --chunk-size N
 $ ki configure
 No Neo4j connection found. Set one up?
 
-  1) Local (neo4j w/ podman) → runs `neo4j:latest` in a local Podman container (APOC + GenAI plugins); full runbook at `references/neo4j-podman.md`
+  1) Local (neo4j w/ podman) → runs `neo4j:latest` in a local Podman container (APOC + GenAI plugins); full runbook at `skills/knowledge-index/references/neo4j-podman.md`
      Best for: solo work on this laptop
   2) Aura                    → wraps `neo4j-cli aura create` (cloud — billable; creates a real instance) see https://github.com/neo4j-labs/neo4j-cli
      Best for: sharing an index across machines or a team
@@ -171,14 +179,14 @@ No Neo4j connection found. Set one up?
 Choice [1]:
 ```
 
-Option 1 shells out to `podman` (canonical container `neo4j-ki`, named volume `neo4j-ki-data`, `--restart unless-stopped`); option 2 shells out to `neo4j-cli`. Neither reimplements lifecycle / version pinning / health checks. The Podman path is preferred over a raw `docker run` because (a) Podman is rootless by default, (b) the named volume + `--restart` policy give data persistence and reboot-survival without systemd plumbing, and (c) the agent runbook in `references/neo4j-podman.md` covers recovery for the three failure modes (container stopped / removed / volume wiped) the agent has to handle on auto-mode.
+Option 1 shells out to `podman` (canonical container `neo4j-ki`, named volume `neo4j-ki-data`, `--restart unless-stopped`); option 2 shells out to `neo4j-cli`. Neither reimplements lifecycle / version pinning / health checks. The Podman path is preferred over a raw `docker run` because (a) Podman is rootless by default, (b) the named volume + `--restart` policy give data persistence and reboot-survival without systemd plumbing, and (c) the agent runbook in `skills/knowledge-index/references/neo4j-podman.md` covers recovery for the three failure modes (container stopped / removed / volume wiped) the agent has to handle on auto-mode.
 
 ## Agent auto-mode behavior
 
 **Principle: autonomy ≠ permission to do irreversible things on someone's behalf.** Auto-mode lifts UX friction; it doesn't lift agent judgment about real-world side effects.
 
 **Auto without asking** (reversible, local, no cost):
-- Bring up the Local Neo4j container via `podman` (the `ki configure → Local` path; reversible via `podman stop neo4j-ki && podman rm neo4j-ki && podman volume rm neo4j-ki-data`). See `references/neo4j-podman.md`.
+- Bring up the Local Neo4j container via `podman` (the `ki configure → Local` path; reversible via `podman stop neo4j-ki && podman rm neo4j-ki && podman volume rm neo4j-ki-data`). See `skills/knowledge-index/references/neo4j-podman.md`.
 - Write `~/.config/ki/config.yaml` with the resulting credentials.
 - Write `.ki/vault.yaml` markers (auto-create with `uri:` only — leave any user-authored fields alone).
 - Index the vault.
@@ -193,7 +201,7 @@ Option 1 shells out to `podman` (canonical container `neo4j-ki`, named volume `n
 
 **Surface even on auto-mode**:
 - One-line after-the-fact notice: *"Started Neo4j locally via podman; credentials in `~/.config/ki/config.yaml`."* Transparency, not approval-gating.
-- Errors (port `:7687` in use, `podman` not installed). Auto-mode should not mean silent failure — pause and surface the install one-liner / port-collision diagnosis from `references/neo4j-podman.md`.
+- Errors (port `:7687` in use, `podman` not installed). Auto-mode should not mean silent failure — pause and surface the install one-liner / port-collision diagnosis from `skills/knowledge-index/references/neo4j-podman.md`.
 - The fact that I made a local-vs-cloud decision, so the user can override.
 
 **Preference learning**: if the user says once "always default to Aura for ki" or "never use cloud Neo4j," save a feedback memory and honor it across sessions without re-asking.
@@ -231,7 +239,7 @@ Documents, sections, and edges all use the standard `UNWIND` pattern — driver-
 - Single vault: up to **10,000 markdown files** / **1 GB of content**.
 - Single document: up to **1 MB** / **~10,000 sections**. Files above the threshold are skipped with a warning, not silently truncated (see lever 6).
 - Re-index of an **unchanged** vault: **< 5 seconds** (fileHash skip makes this near-instant).
-- Initial index of a **10k-document vault**: **< 5 minutes** on a developer laptop against local Neo4j (Podman container per `references/neo4j-podman.md`).
+- Initial index of a **10k-document vault**: **< 5 minutes** on a developer laptop against local Neo4j (Podman container per `skills/knowledge-index/references/neo4j-podman.md`).
 
 ### Neo4j heap sizing
 
@@ -244,7 +252,7 @@ The canonical Local-Podman container ships with **`heap_max__size=1G` + `pagecac
 
 Always set heap and page cache **together** — Neo4j's pre-flight refuses to start if `heap + pagecache + native overhead > container memory`. Setting only heap leaves the page cache to auto-tune, which can blow the budget on a constrained Podman VM and crash-loop the container.
 
-On macOS, the Podman machine's RAM is the outer constraint: `podman machine init --memory 4096` (4 GB) leaves enough headroom for the canonical ~2 GB Neo4j commit plus container overhead. See `references/neo4j-podman.md` *Preflight* and *Resizing the Podman machine*.
+On macOS, the Podman machine's RAM is the outer constraint: `podman machine init --memory 4096` (4 GB) leaves enough headroom for the canonical ~2 GB Neo4j commit plus container overhead. See `skills/knowledge-index/references/neo4j-podman.md` *Preflight* and *Resizing the Podman machine*.
 
 ### Levers (in order of impact)
 

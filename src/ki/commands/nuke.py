@@ -1,6 +1,6 @@
 """`ki nuke` — reset the entire graph and remove every `.ki/vault.yaml` ki knows about.
 
-See `docs/index_rm_behavior.md` *ki nuke* for the full spec. Behavior:
+See `docs/data-model/index_rm_behavior.md` *ki nuke* for the full spec. Behavior:
   1. Snapshot every Vault's (uri, path) from the graph.
   2. Typed-confirmation prompt (unless --yes).
   3. Batched DETACH DELETE every node.
@@ -26,6 +26,7 @@ from ..ingest.remove import (
     remove_all_nodes_and_schema,
 )
 from ..neo4j_client import driver_for
+from ..profile_resolve import resolve_profile
 from ..vault import remove_vault_marker, vault_marker_path
 
 console = Console()
@@ -43,7 +44,7 @@ def cmd_nuke(
     if cfg_path is None:
         raise click.ClickException("no ki config found — run `ki configure` first")
     cfg = load_config(cfg_path)
-    prof = cfg.get_profile(profile)
+    prof = resolve_profile(cfg, profile)
 
     with driver_for(prof) as driver, driver.session() as session:
         vaults = list_all_vaults(session)
