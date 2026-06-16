@@ -24,6 +24,9 @@ Per-command depth docs.
   (`--type path` / `content` / `full`).
 - [commands/outline.md](commands/outline.md) — `ki outline` (alias `ki tree`): the
   rendered containment outline and its scoping.
+- [commands/add-rm.md](commands/add-rm.md) — `ki add` / `ki rm`: the incremental
+  write surface (index-only; never touches disk), the rename workflow, and why
+  there's no `ki mv`.
 - [commands/theme-format.md](commands/theme-format.md) — `ki theme` output format.
   **Draft — not yet shipped.**
 

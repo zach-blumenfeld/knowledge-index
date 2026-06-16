@@ -185,27 +185,17 @@ Sometimes the user wants analysis, not just retrieval:
 
 Gather context with `ki outline` / `ki search` / `ki get`, but **lean on `neo4j-cli` (`--credential <profile>`, schema first — see above)** — these questions are about the *relationships and aggregates* the graph encodes (link paths, co-occurrence, centrality, clusters) that flat search can't surface: shortest path between two docs, most-linked sections, a node's link neighborhood. Scope to a vault or any other subtree with the hierarchical uri `STARTS WITH` filter noted above.
 
-### Updating & Adding Content
+### Adding, Updating & Removing Content (incremental)
 
-When you or the user creates or edits a document or folder, sync **just that target** — fast and incremental, no full rebuild:
+When you or the user creates, edits, or deletes a document or folder, sync **just that target** — fast and incremental, no full rebuild. These are *index-only*: they never touch the user's files.
 ```sh
-ki add <doc|folder path or uri>      # add or update one document or folder (incremental upsert)
+ki add <doc|folder path>      # (re)index one new/edited document or folder — local, path only
+ki rm  <doc|folder uri/path>  # remove one document or folder from the index (a folder takes its subtree)
 ```
-This is the default for routine edits. For bulk edits or structural refactors (see *Re-Indexing Entire Vaults*).
+- **`ki add`** is an upsert — run it on a new file to add it, on an edited file to refresh it. It reads files off disk, so it is **local-only** (the vault you're in, or `-C <dir>`) and takes a **path**, not a uri. A new note's outbound `[[links]]` resolve against the whole vault; still-valid inbound links survive a refresh (a stale one — e.g. after a rename — correctly drops).
+- **`ki rm`** removes a **document or folder** (a folder takes its contents with it). It does **not** remove a whole vault — that's `ki drop` (see *Other Operations*) — and it does **not** remove a bare section (edit the document and `ki add` it instead). Like `git rm --cached`, it drops the index entry, **not** the file on disk.
 
-### Removing & Moving Content
-
-Keep the index in step with the filesystem **per document or folder**, so you avoid paying for full rebuilds:
-```sh
-ki rm <doc|folder uri or path>     # remove one document or folder from the index
-ki mv <old uri/path> <new path>    # rename / move a document or folder — updates the graph in place, links preserved
-```
-`ki rm` removes a **document or folder** from the index (a folder takes its contents with it). It does **not** remove whole vaults — that's `ki drop` (see *Other Operations*). `ki mv <old> <new>` moves/renames a document or folder in the index — subtree-scoped.
-
-<!-- impl note for add/rm/mv (all must be incremental, NOT full-vault rebuilds):
-  - `ki add <doc|folder>`: incremental upsert of one document or folder.
-  - `ki rm <doc|folder>`: document- and folder-level removal (whole-vault removal is `ki drop`; see docs/data-model/index_rm_behavior.md).
-  - `ki mv <old> <new>`: re-key the moved node + descendant section URIs, re-attach HAS to the new parent, re-resolve the moved file's outbound links. Inbound LINKS_TO survive only if the existing node is mutated in place — a rm+reindex drops them and would need referrer re-resolution. Keep it scoped to the moved subtree, not a full rebuild. -->
+**Renaming or moving:** there is **no `ki mv`** — `ki` can't move the user's files (it owns the index, not the source), and to `ki` a move is just remove + add. After the file is moved on disk, run `ki rm <old>` then `ki add <new>`. Other notes that linked to the old name now have a stale `[[old]]` link; `ki` will **not** rewrite them (it never invents links) — fix those references in the source notes, then `ki add` them (or re-index).
 
 ### Re-Indexing Entire Vaults
 
@@ -232,7 +222,7 @@ During indexing, the entire vault is removed from Neo4j then rebuilt to reflect 
 
 1. **Raw file ops on vault content** — reading/searching a vault with `Read` / `grep` / `cat` instead of `ki`, and spawning sub-agents that default to file reads. Burns the tokens `ki` exists to save.
 2. **Auto-binding a profile** — binding a fresh vault to whatever profile happens to be around (e.g. a stray `$KI_PROFILE`) without confirming. `ki` has **no default profile** — you must `ki index` a new vault with an explicit `--profile`. Profiles are privacy boundaries; confirm the profile once, at first index.
-3. **Full re-index for a small change** — running `ki index .` (full nuke + rebuild) after editing one file. Use per-target `ki add` / `ki rm` / `ki mv`; reserve `ki index .` for bulk edits or refactors.
+3. **Full re-index for a small change** — running `ki index .` (full nuke + rebuild) after editing one file. Use per-target `ki add` / `ki rm`; reserve `ki index .` for bulk edits or refactors.
 4. **Cold-starting Neo4j just to look around** — spinning up a stopped profile's instance only to enumerate vaults.
 5. **Switching vault or profile mid-task without confirming** — work one vault + one profile per session; confirm any switch with the user.
 6. **Querying a vault while it's re-indexing**, or **fabricating URIs** — copy URIs from `ki outline` / `ki search`; never guess them.

@@ -116,7 +116,7 @@ files on disk are untouched. (See `docs/general-philosophy.md`.)
 
 | Group | Commands | What they do |
 |---|---|---|
-| **Index & update (write)** | `index`, `add`\*, `rm`\*, `mv`\* | Build/refresh the graph from source markdown. `index` = full (re)build of a vault; `add`/`rm`/`mv` = incremental per-target. (\* planned) |
+| **Index & update (write)** | `index`, `add`, `rm` | Build/refresh the graph from source markdown. `index` = full (re)build of a vault; `add`/`rm` = incremental per-target (see `docs/commands/add-rm.md`). There is no `mv` — to ki a move is just `rm` + `add`. |
 | **Search & retrieval (read)** | `search`, `outline`, `get`, `status` | Query and read the index. No source files needed. |
 | **Remove from index** | `drop`, `nuke` | `drop` = one vault; `nuke` = a whole profile. Index only — source files stay. |
 | **Admin & info** | `configure`, `profile list`, `vault list`, `init`, `skill` | Manage profiles, inspect what exists, install the agent skill. |
@@ -168,8 +168,9 @@ and for powering production systems and apps.
   **`--profile`** (always) and identify the vault with **`--vault <uri>`** (search)
   or the **uri argument** (`outline`/`get`).
 - **Reads work; source-dependent writes don't.** `search`/`outline`/`get` are fine.
-  `index`/`add`/`mv` need the source files, so **you can't update data in this
-  mode**. `drop`/`nuke` (index removal) *are* allowed — they don't need source.
+  `index`/`add` need the source files, so **you can't add/update data in this
+  mode**. `drop`/`nuke`/`rm` (index removal) *are* allowed — they don't need source
+  (`rm` takes a uri here).
 - **Read-only is enforced by Neo4j, not `ki`.** For true read-only access, use the
   instance's [role-based access controls](https://neo4j.com/docs/operations-manual/current/authentication-authorization/manage-privileges/).
 
