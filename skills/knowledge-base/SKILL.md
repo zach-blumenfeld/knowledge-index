@@ -192,10 +192,12 @@ When you or the user creates, edits, or deletes a document or folder, sync **jus
 ki add <doc|folder path>      # (re)index one new/edited document or folder — local, path only
 ki rm  <doc|folder uri/path>  # remove one document or folder from the index (a folder takes its subtree)
 ```
-- **`ki add`** is an upsert — run it on a new file to add it, on an edited file to refresh it. It reads files off disk, so it is **local-only** (the vault you're in, or `-C <dir>`) and takes a **path**, not a uri. A new note's outbound `[[links]]` resolve against the whole vault; still-valid inbound links survive a refresh (a stale one — e.g. after a rename — correctly drops).
+- **`ki add`** is an upsert — run it on a new file to add it, on an edited file to refresh it. It takes a **path**, not a uri.
 - **`ki rm`** removes a **document or folder** (a folder takes its contents with it). It does **not** remove a whole vault — that's `ki drop` (see *Other Operations*) — and it does **not** remove a bare section (edit the document and `ki add` it instead). Like `git rm --cached`, it drops the index entry, **not** the file on disk.
 
-**Renaming or moving:** there is **no `ki mv`** — `ki` can't move the user's files (it owns the index, not the source), and to `ki` a move is just remove + add. After the file is moved on disk, run `ki rm <old>` then `ki add <new>`. Other notes that linked to the old name now have a stale `[[old]]` link; `ki` will **not** rewrite them (it never invents links) — fix those references in the source notes, then `ki add` them (or re-index).
+**Renaming or moving:** After a file or folder is moved on disk, run `ki rm <old>` then `ki add <new>`. Other documents that linked to the old name now have a stale `[[old]]` link; `ki` will **not** rewrite them (it never invents links) — do link sweeps to fix those references in the source, then `ki add` (or re-index).
+
+Use `ki status -v` to check what documents & folders need add/rm updates.
 
 ### Re-Indexing Entire Vaults
 
@@ -203,7 +205,7 @@ Re-indexing entire vaults can become an expensive operations with more documents
 
 After significant changes or refactors to knowledge base content
 
-Run `ki status` (add `-v` to see exactly which files drifted); if it reports `STALE`, run `ki index .` — preferably in a sub-agent.
+Run `ki status` (add `-v` to see exactly which files drifted); if it reports `STALE` with many drifts, run `ki index .` — preferably in a sub-agent.
 
 > **`STALE`/`READY` is markdown-only — not bulletproof.** It does **not** notice changes to linked non-markdown attachments (PDFs, decks, images captured as stub nodes), and a vault indexed with a non-default `--max-file-size` can skew the diff. So `READY` guarantees the **markdown** is in sync, not necessarily every attachment. When in doubt — or after bulk/attachment changes — a full `ki index .` is the source of truth.
 
