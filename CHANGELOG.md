@@ -15,7 +15,7 @@ exact pattern. Editorial prose is fine; just don't change the heading.
 
 ## [Unreleased]
 
-## [0.5.0] — 2026-06-16
+## [0.5.0a0] — 2026-06-16
 
 ### Added
 
