@@ -24,6 +24,7 @@ from pathlib import Path
 
 import yaml
 
+
 def _excluded(alias: str) -> str:
     """Exclusion predicate: matches basename or vault-relative path, case-insensitive
     ($exclude is lowercased client-side; ki URIs are already lowercase)."""
