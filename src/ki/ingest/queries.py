@@ -340,6 +340,47 @@ CALL (n) {
 """.strip()
 
 
+# --- `ki rm` — subtree removal --------------------------------------------
+#
+# Same three-step routine as the vault removal above, but scoped to one
+# document/folder *subtree* instead of a whole vault. The scope predicate is
+# the **3-part containment test** (`= $root OR STARTS WITH $root + '/' OR
+# STARTS WITH $root + '#'`) — identical to `ki search --under` — so a folder
+# takes its `/`-descendants and a document takes its `#`-sections. `ki rm`
+# guards that `$root` is a Document or Folder (never a Vault → `ki drop`, never
+# a bare Section), so the `#` branch only ever fires for a document target.
+
+# `ki rm` step 1 — outbound external LINKS_TO targets from inside the subtree
+# (so they can be GC'd if the subtree was their only referrer). Excludes
+# targets that are themselves inside the subtree (those go with it).
+COLLECT_EXTERNAL_LINKS_TARGETS_SUBTREE = """
+MATCH (src)-[:LINKS_TO]->(tgt)
+WHERE (src.uri = $root OR src.uri STARTS WITH $root + '/' OR src.uri STARTS WITH $root + '#')
+  AND NOT (tgt.uri = $root OR tgt.uri STARTS WITH $root + '/' OR tgt.uri STARTS WITH $root + '#')
+RETURN DISTINCT tgt.uri AS uri
+""".strip()
+
+
+# `ki rm` step 2 — batched DETACH DELETE of the subtree. `$chunkSize` is
+# substituted client-side (CALL IN TRANSACTIONS rejects it as a param); run
+# from an implicit transaction (`session.run`), never inside `execute_write`.
+REMOVE_SUBTREE_BATCHED = """
+MATCH (n) WHERE n.uri = $root OR n.uri STARTS WITH $root + '/' OR n.uri STARTS WITH $root + '#'
+CALL (n) {
+  DETACH DELETE n
+} IN TRANSACTIONS OF $chunkSize ROWS
+""".strip()
+
+
+# `ki rm` — count the subtree by label (for the removal report / `--dry-run`
+# preview). Plain read; safe in a managed transaction.
+COUNT_SUBTREE_BY_LABEL = """
+MATCH (n) WHERE n.uri = $root OR n.uri STARTS WITH $root + '/' OR n.uri STARTS WITH $root + '#'
+RETURN labels(n)[0] AS label, count(n) AS n
+ORDER BY label
+""".strip()
+
+
 # `ki nuke` — enumerate every vault's URI and machine-scoped path so the
 # caller can clean `.ki/vault.yaml` markers from disk after the graph wipe.
 LIST_ALL_VAULTS = """

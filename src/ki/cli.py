@@ -31,6 +31,7 @@ from .commands.init import cmd_init
 from .commands.nuke import cmd_nuke
 from .commands.outline import cmd_outline
 from .commands.profile import cmd_profile_list, cmd_profile_sync
+from .commands.rm import cmd_rm
 from .commands.search import cmd_search
 from .commands.skill import cmd_install as cmd_skill_install
 from .commands.skill import cmd_list as cmd_skill_list
@@ -377,6 +378,46 @@ def drop_cmd(
             dry_run=dry_run,
             yes=yes_flag,
             keep_marker=keep_marker,
+            chunk_size=chunk_size,
+        )
+    )
+
+
+@main.command(
+    "rm",
+    help="Remove a single document or folder (and its subtree) from the index. "
+         "Source files untouched. Whole vaults use `ki drop`; sections can't be "
+         "removed on their own (edit the doc + re-index).",
+)
+@click.argument("target")
+@click.option(
+    "--profile", default=None,
+    help="Remote profile; the target must then be a uri. Else the local vault's "
+         ".ki binding (walk-up from -C / cwd).",
+)
+@_directory_option
+@click.option("--dry-run", is_flag=True, default=False, help="Report what would be removed; no Neo4j writes.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Machine-readable result.")
+@click.option(
+    "--chunk-size", "chunk_size", type=int, default=1000,
+    help="Rows per batched-remove transaction (default 1000). "
+         "Lower it (e.g. 200) if you see Neo4j OOM during removal.",
+)
+def rm_cmd(
+    target: str,
+    profile: str | None,
+    directory: Path | None,
+    dry_run: bool,
+    as_json: bool,
+    chunk_size: int,
+) -> None:
+    sys.exit(
+        cmd_rm(
+            target,
+            profile=profile,
+            directory=directory,
+            dry_run=dry_run,
+            as_json=as_json,
             chunk_size=chunk_size,
         )
     )

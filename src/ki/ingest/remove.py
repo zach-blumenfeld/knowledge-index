@@ -85,6 +85,72 @@ def remove_vault(
     }
 
 
+def count_subtree(session, root_uri: str) -> dict[str, int]:
+    """`{label: count}` for the subtree rooted at `root_uri` (3-part containment).
+
+    Used by `ki rm --dry-run` to preview what removal would touch without
+    deleting. Empty dict means nothing is indexed at that uri.
+    """
+    rows = session.run(Q.COUNT_SUBTREE_BY_LABEL, root=root_uri)
+    return {r["label"]: r["n"] for r in rows}
+
+
+def remove_subtree(
+    session,
+    root_uri: str,
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> dict[str, int]:
+    """Remove a document/folder subtree (root + descendants), GC'ing orphaned externals.
+
+    The subtree is the 3-part containment scope (`root`, its `/`-descendants,
+    and a document's `#`-sections) — the same scope `ki search --under` uses.
+    The caller (`ki rm`) must guard that `root_uri` is a Document or Folder:
+    a Vault belongs to `remove_vault`, and a bare Section isn't a removable
+    on-disk object.
+
+    Same three-step routine as `remove_vault` (snapshot externals → batched
+    DETACH DELETE → orphan GC). Returns
+    `{nodes_removed, orphans_collected, orphans_removed}`.
+    """
+    # Step 0 — count the subtree before we delete it (for the report).
+    nodes_removed = sum(count_subtree(session, root_uri).values())
+
+    # Step 1 — snapshot external LINKS_TO targets reachable from the subtree.
+    candidate_uris = [
+        r["uri"]
+        for r in session.run(Q.COLLECT_EXTERNAL_LINKS_TARGETS_SUBTREE, root=root_uri)
+    ]
+
+    # Step 2 — batched DETACH DELETE of the subtree (implicit tx; see remove_vault).
+    session.run(
+        _substitute_chunk_size(Q.REMOVE_SUBTREE_BATCHED, chunk_size),
+        root=root_uri,
+    ).consume()
+
+    # Step 3 — orphan GC on the snapshot only (skip if nothing to check).
+    orphans_removed = 0
+    if candidate_uris:
+        session.run(
+            _substitute_chunk_size(Q.REMOVE_ORPHAN_TARGETS_BATCHED, chunk_size),
+            candidateUris=candidate_uris,
+        ).consume()
+        survivors = list(
+            session.run(
+                "UNWIND $uris AS u MATCH (n {uri: u}) RETURN count(n) AS n",
+                uris=candidate_uris,
+            )
+        )
+        survivor_count = survivors[0]["n"] if survivors else 0
+        orphans_removed = max(0, len(candidate_uris) - survivor_count)
+
+    return {
+        "nodes_removed": nodes_removed,
+        "orphans_collected": len(candidate_uris),
+        "orphans_removed": orphans_removed,
+    }
+
+
 def remove_all_nodes_and_schema(
     session,
     *,
