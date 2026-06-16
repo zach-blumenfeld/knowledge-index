@@ -47,6 +47,10 @@ docs/.docusaurus/
 /foobar/
 /out/
 
+# Landing-page build output (assembled from site/ + install.sh + img/ by the
+# Cloudflare Pages build command; site/ is the source of truth)
+/_site/
+
 tmp-e2e-tests/
 tmp*/
 var-folders*/

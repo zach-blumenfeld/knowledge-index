@@ -48,6 +48,8 @@ These constrain every change you make. If a proposed feature violates one of the
 | `docs/commands/`                  | Per-command depth docs — `search.md`, `get.md`, `outline.md` (+ `theme-format.md`, draft).                                                                              |
 | `skills/knowledge-base/SKILL.md`  | Agent-as-user routing rules (Trigger / Do-Not-Use / On-First-Use). Ships with the published tool. Covers the local single-vault workflow (see `docs/skills.md`).        |
 | `skills/knowledge-base/references/neo4j-podman.md` | Agent-followable runbook for the `ki configure → Local` path (Podman). Canonical values (container, volume, image, plugins, auth) here are the source of truth — `src/ki/neo4j_podman.py` must match. |
+| `install.sh`                      | One-command installer (`curl -sSfL https://knowledge-index.ai/install.sh \| bash`): uv → `ki` → `neo4j-cli` → agent skills. Idempotent. Served verbatim at the install URL. |
+| `site/`                           | Static landing page for `knowledge-index.ai` (`index.html` + logo-derived favicons). Source of truth; Cloudflare Pages assembles `site/` + `install.sh` + `img/ki.png` into `_site/` (gitignored) on each push to `main`. |
 | `CLAUDE.md`                       | Claude-Code-specific notes; defers to this file.                                                                                                                        |
 
 ### Markdown parser choice — `markdown-it-py`
@@ -110,6 +112,20 @@ The generator enforces the size envelopes (see `docs/architecture.md` *Scalabili
 envelopes*) and exercises every node property / edge type in
 `docs/data-model/schema.md`. Tests live at `tests/unit/test_gen_test_vault.py` —
 if you change the generator, run them.
+
+## Releasing
+
+Releases are cut by the **`.github/workflows/release.yml`** workflow, **triggered manually**
+(Actions → *Release to PyPI* → Run) by a maintainer **after the release PR is merged to `main`**.
+The workflow reads the version from `pyproject.toml`, refuses if that tag already exists, then
+builds, tags `vX.Y.Z`, publishes to PyPI (Trusted Publishing), and cuts a GitHub Release whose
+body is the matching `## [X.Y.Z]` section of `CHANGELOG.md`.
+
+So an agent's job for a release is **prep only — never build, tag, or publish by hand:**
+
+1. **Align the version** in `pyproject.toml` (`version = "X.Y.Z"`; SemVer, pre-1.0 → breaking changes bump the minor).
+2. **Finalize `CHANGELOG.md`**: roll `## [Unreleased]` into a single `## [X.Y.Z] — <date>` section (one section per release — the workflow extracts just that one). The `## [X.Y.Z]` heading format is **load-bearing** (awk-matched); leave a fresh empty `## [Unreleased]` above it.
+3. Open the release PR. The maintainer merges it and triggers the workflow.
 
 ## When you're unsure
 

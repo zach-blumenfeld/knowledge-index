@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Index (ki) — the safe, easy, fast search engine for your knowledge base</title>
+<meta name="description" content="Point ki at a folder of markdown and it syncs to a Neo4j knowledge-graph index you can search and navigate in seconds — from the CLI or any AI agent. A search index, not a store: your source files are never modified.">
+
+<!-- Open Graph / social -->
+<meta property="og:title" content="Knowledge Index (ki)">
+<meta property="og:description" content="The safe, easy, fast search engine for your knowledge base.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://knowledge-index.ai/">
+<meta property="og:image" content="https://knowledge-index.ai/ki.png">
+
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --surface: #ffffff;
+    --ink: #1b1f24;
+    --muted: #5c636e;
+    --line: #e4e4df;
+    --code-bg: #1b1f24;
+    --code-ink: #f3f3ee;
+    --radius: 14px;
+    --maxw: 720px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b;
+      --surface: #1b1f24;
+      --ink: #f3f3ee;
+      --muted: #9aa1ac;
+      --line: #2a2f36;
+      --code-bg: #0e1013;
+      --code-ink: #f3f3ee;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  main {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 7vh 24px 10vh;
+  }
+
+  .logo {
+    width: 104px;
+    height: 104px;
+    display: block;
+    margin: 0 auto 28px;
+    border-radius: 24px;
+  }
+
+  .kicker {
+    text-align: center;
+    margin: 0 0 14px;
+  }
+  .kicker .ki {
+    display: inline-block;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 1.15rem;
+    background: var(--ink);
+    color: var(--bg);
+    padding: 4px 12px;
+    border-radius: 9px;
+    letter-spacing: -0.01em;
+  }
+  h1 {
+    font-size: clamp(2.1rem, 6vw, 3rem);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    text-align: center;
+    margin: 0 0 6px;
+  }
+  h1 code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .tagline {
+    text-align: center;
+    font-size: clamp(1.05rem, 3vw, 1.3rem);
+    color: var(--muted);
+    margin: 0 auto 40px;
+    max-width: 30ch;
+  }
+
+  /* install block */
+  .install {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: var(--radius);
+    padding: 18px 18px 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-family: var(--mono);
+    font-size: .95rem;
+    overflow-x: auto;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.08);
+  }
+  .install code { white-space: nowrap; }
+  .install .prompt { color: #7f8794; user-select: none; }
+  .copy {
+    margin-left: auto;
+    flex: 0 0 auto;
+    background: rgba(255,255,255,.1);
+    color: var(--code-ink);
+    border: 1px solid rgba(255,255,255,.16);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: .82rem;
+    cursor: pointer;
+    transition: background .15s ease;
+  }
+  .copy:hover { background: rgba(255,255,255,.2); }
+  .copy.copied { background: #3f8f5b; border-color: #3f8f5b; color: #fff; }
+
+  .alt {
+    text-align: center;
+    color: var(--muted);
+    font-size: .92rem;
+    margin: 16px 0 0;
+  }
+  .alt code {
+    font-family: var(--mono);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1px 6px;
+    font-size: .88em;
+  }
+
+  /* what it is */
+  .about {
+    margin: 56px 0 0;
+    display: grid;
+    gap: 18px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+  }
+  .card h3 { margin: 0 0 4px; font-size: 1.02rem; letter-spacing: -0.01em; }
+  .card p { margin: 0; color: var(--muted); font-size: .96rem; }
+
+  /* footer / cta */
+  .cta {
+    margin-top: 48px;
+    text-align: center;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--ink);
+    color: var(--bg);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: .95rem;
+    padding: 11px 20px;
+    border-radius: 10px;
+    transition: opacity .15s ease;
+  }
+  .btn:hover { opacity: .85; }
+
+  footer {
+    margin-top: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-size: .85rem;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="ki.png" alt="Knowledge Index logo — a yin-yang of a document and a knowledge graph">
+
+<!--  <div class="kicker"><span class="ki">ki</span></div>-->
+  <h1>Knowledge Index <code>(ki)</code></h1>
+  <p class="tagline">The safe, easy, fast search engine for your knowledge base.</p>
+
+  <div class="install" id="install">
+    <span class="prompt">$</span>
+    <code id="cmd">curl -sSfL https://knowledge-index.ai/install.sh | bash</code>
+    <button class="copy" id="copy" type="button" aria-label="Copy install command">Copy</button>
+  </div>
+  <p class="alt">Prefer Python tooling? <code>uv tool install knowledge-index</code></p>
+
+  <section class="about">
+    <div class="card">
+      <h3>Built for agents and humans</h3>
+      <p>Wire it into any AI coding agent, or query straight from the CLI. Understand → search → retrieve, with no prior graph expertise required.</p>
+    </div>
+    <div class="card">
+      <h3>Vendor-neutral, instant to set up</h3>
+      <p>No LLM work or embeddings at index time. The index is disposable cache you can rebuild with one <code>ki index</code> call — free, fast, and yours.</p>
+    </div>
+    <div class="card">
+      <h3>A search index, not a store</h3>
+      <p>Point <code>ki</code> at a folder of markdown — notes, docs, a wiki — and it syncs to a Neo4j knowledge-graph index you can search and navigate in seconds. Your source files are never modified.</p>
+    </div>
+  </section>
+
+  <div class="cta">
+    <a class="btn" href="https://github.com/zach-blumenfeld/knowledge-index">
+      View on GitHub →
+    </a>
+  </div>
+
+  <footer>
+    <a href="https://github.com/zach-blumenfeld/knowledge-index">Docs</a> ·
+    <a href="https://pypi.org/project/knowledge-index/">PyPI</a>
+  </footer>
+</main>
+
+<script>
+  (function () {
+    var btn = document.getElementById('copy');
+    var cmd = document.getElementById('cmd').textContent;
+    btn.addEventListener('click', function () {
+      navigator.clipboard.writeText(cmd).then(function () {
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(function () {
+          btn.textContent = 'Copy';
+          btn.classList.remove('copied');
+        }, 1600);
+      });
+    });
+  })();
+</script>
+</body>
+</html>
