@@ -381,6 +381,24 @@ ORDER BY label
 """.strip()
 
 
+# `ki add` edge-restore — snapshot LINKS_TO edges that point INTO the subtree
+# from OUTSIDE it, *before* the subtree is removed. After the subtree is
+# re-ingested, these rows are replayed through WRITE_LINKS_TO: a referrer's
+# edge is restored iff its target uri exists again (the section/doc came back),
+# and dropped otherwise (e.g. an `mv` moved the target, or an edit deleted the
+# section). This preserves still-valid inbound links (matching a full
+# `ki index`) without re-resolving the referrers' markdown — every restored
+# edge already existed from a real prior ingest, so nothing is invented.
+# Intra-subtree links (src also inside) are excluded — those are rebuilt by the
+# re-ingest's own link resolution.
+SNAPSHOT_INBOUND_LINKS_TO_SUBTREE = """
+MATCH (src)-[r:LINKS_TO]->(tgt)
+WHERE (tgt.uri = $root OR tgt.uri STARTS WITH $root + '/' OR tgt.uri STARTS WITH $root + '#')
+  AND NOT (src.uri = $root OR src.uri STARTS WITH $root + '/' OR src.uri STARTS WITH $root + '#')
+RETURN src.uri AS srcUri, tgt.uri AS tgtUri, r.wikilink AS wikilink, r.embed AS embed
+""".strip()
+
+
 # `ki nuke` — enumerate every vault's URI and machine-scoped path so the
 # caller can clean `.ki/vault.yaml` markers from disk after the graph wipe.
 LIST_ALL_VAULTS = """

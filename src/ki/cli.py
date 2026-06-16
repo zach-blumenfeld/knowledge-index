@@ -23,6 +23,7 @@ from pathlib import Path
 import click
 
 from . import __version__
+from .commands.add import cmd_add
 from .commands.configure import configure as configure_flow
 from .commands.drop import cmd_drop
 from .commands.get import cmd_get
@@ -378,6 +379,50 @@ def drop_cmd(
             dry_run=dry_run,
             yes=yes_flag,
             keep_marker=keep_marker,
+            chunk_size=chunk_size,
+        )
+    )
+
+
+@main.command(
+    "add",
+    help="Incrementally (re)index one document or folder into an existing vault "
+         "(without re-indexing the whole vault). Local-only. Whole vaults use "
+         "`ki index`.",
+)
+@click.argument("target")
+@click.option(
+    "--profile", default=None,
+    help="Pick/override the vault's profile; else its .ki binding, else $KI_PROFILE.",
+)
+@_directory_option
+@click.option("--dry-run", is_flag=True, default=False, help="List what would be indexed; no Neo4j writes.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Machine-readable result.")
+@click.option(
+    "--batch-size", "batch_size", type=int, default=1000,
+    help="Rows per write transaction (default 1000).",
+)
+@click.option(
+    "--chunk-size", "chunk_size", type=int, default=1000,
+    help="Rows per batched-remove transaction for the pre-ingest clear (default 1000).",
+)
+def add_cmd(
+    target: str,
+    profile: str | None,
+    directory: Path | None,
+    dry_run: bool,
+    as_json: bool,
+    batch_size: int,
+    chunk_size: int,
+) -> None:
+    sys.exit(
+        cmd_add(
+            target,
+            profile=profile,
+            directory=directory,
+            dry_run=dry_run,
+            as_json=as_json,
+            batch_size=batch_size,
             chunk_size=chunk_size,
         )
     )

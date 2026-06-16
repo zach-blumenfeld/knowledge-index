@@ -92,7 +92,7 @@ from .provenance import (
     detect_user_id,
     now_utc,
 )
-from .remove import remove_vault
+from .remove import remove_subtree, remove_vault
 
 log = logging.getLogger(__name__)
 
@@ -820,6 +820,290 @@ def ingest_vault(vault_root: Path, opts: IngestOptions) -> IngestResult:
                 + result.docs_updated
                 + result.docs_skipped_unchanged
             ),
+            docs_total=result.docs_total,
+            profile_source=opts.profile.source,
+        ) from exc
+
+    progress.finalize_done()
+    result.batch_shrunk_to = shrink_state["size"]
+    return result
+
+
+def ingest_subtree(
+    vault_root: Path,
+    target_path: Path,
+    opts: IngestOptions,
+) -> IngestResult:
+    """Incrementally (re)index one document or folder subtree into an EXISTING vault.
+
+    The engine behind `ki add`, and the composition the write-surface model
+    names: `ki add` == the `ki rm` core (`remove_subtree`) + ingest just the
+    subtree's files. The vault, its `.ki` marker, and everything outside the
+    subtree are left untouched.
+
+    Differences from `ingest_vault`:
+      - the vault must ALREADY exist — no slug assignment, no marker write; a
+        missing vault errors, pointing at `ki index`.
+      - file discovery + the pre-ingest remove are scoped to the subtree
+        (`remove_subtree`, not `remove_vault`).
+      - no fileHash-skip: the subtree is cleared first, so every kept file is a
+        fresh write.
+
+    Links FROM the subtree resolve against the whole vault (the resolver is
+    vault-wide). Links INTO the subtree from outside are *edge-restored*:
+    snapshotted before the remove and replayed through WRITE_LINKS_TO after the
+    re-ingest, so a referrer's edge survives iff its target uri still exists
+    (matching a full `ki index`) and drops otherwise (the `mv`/stale case). No
+    referrer markdown is re-read — nothing is invented; see
+    `SNAPSHOT_INBOUND_LINKS_TO_SUBTREE` and `docs/general-philosophy.md`.
+
+    Shares every heavy step with `ingest_vault` via the module-level helpers —
+    keep the two orchestrations in sync.
+    """
+    if opts.profile is None:
+        raise ValueError("IngestOptions.profile is required")
+    vault_root = Path(vault_root).resolve()
+    target_path = Path(target_path).resolve()
+    marker = read_vault_marker(vault_root)
+    if marker is None:
+        raise ValueError(
+            f"{vault_root} is not an indexed vault (no .ki/vault.yaml). "
+            f"Run `ki index` to create the vault first."
+        )
+    vault_uri = str(marker["uri"]).strip()
+    # ValueError if the target is outside the vault — the caller (cmd_add) guards.
+    rel = target_path.relative_to(vault_root)
+
+    # Resolve the subtree root uri + its markdown file set.
+    if target_path.is_dir():
+        target_uri = folder_uri(vault_uri, rel.parts)
+        all_paths = iter_markdown_files(target_path)
+    else:
+        target_uri = document_uri(vault_uri, rel)
+        all_paths = [target_path]
+    keep, oversize = _split_oversize(all_paths, opts.max_file_size)
+    for p in oversize:
+        log.warning("skipping oversize file (> %d bytes): %s", opts.max_file_size, p)
+
+    progress: ProgressReporter = opts.progress or NullProgressReporter()
+    user_id = opts.user_id or detect_user_id()
+    user_mutable = build_user_mutable()
+    load_provenance = build_load_provenance(agent_name=opts.agent_name)
+    load_id = str(uuid.uuid4())
+    now = now_utc()
+
+    result = IngestResult(vault_uri=vault_uri, vault_created=False)
+    result.docs_total = len(keep)
+    result.docs_skipped_oversize = len(oversize)
+    result.oversize_files = oversize
+
+    shrink_state: dict[str, int | None] = {"size": None}
+
+    def on_shrink(new_size: int) -> None:
+        if shrink_state["size"] is None:
+            log.warning(
+                "Neo4j reported OOM mid-batch — shrinking to %d rows/batch.",
+                new_size,
+            )
+        shrink_state["size"] = new_size
+
+    try:
+        with driver_for(opts.profile) as driver:
+            with driver.session() as session:
+                ensure_schema(session)
+
+                # ki add is incremental, not a vault creator: the vault must
+                # already be in the graph.
+                if session.run(
+                    "MATCH (v:Vault {uri: $u}) RETURN v.uri AS uri", u=vault_uri
+                ).single() is None:
+                    raise ValueError(
+                        f"vault {vault_uri!r} is not in the index yet — run "
+                        f"`ki index` to create it before `ki add`."
+                    )
+
+                # 0. Snapshot inbound LINKS_TO (from outside the subtree) before
+                # we remove anything — replayed in step 8 to edge-restore.
+                inbound_link_rows = [
+                    dict(r)
+                    for r in session.run(
+                        Q.SNAPSHOT_INBOUND_LINKS_TO_SUBTREE, root=target_uri
+                    )
+                ]
+
+                # 1. Clear the subtree (the `ki rm` core). Handles edits and
+                # intra-subtree deletions; a brand-new path is a no-op.
+                remove_subtree(session, target_uri, chunk_size=opts.chunk_size)
+
+                # 2. Re-stamp user/vault provenance + a fresh LOADED for this run.
+                vault_mutable: dict[str, Any] = {
+                    "name": vault_root.name,
+                    "displayName": vault_root.name,
+                    "path": vault_root.as_posix(),
+                    "isObsidianVault": (vault_root / ".obsidian").exists(),
+                }
+                existing_description = (marker or {}).get("description")
+                if isinstance(existing_description, str) and existing_description.strip():
+                    vault_mutable["description"] = existing_description
+                session.run(
+                    Q.PER_VAULT_WRITE,
+                    userId=user_id,
+                    userMutable=user_mutable,
+                    vaultUri=vault_uri,
+                    vaultMutable=vault_mutable,
+                    vaultLoadId=load_id,
+                    loadProvenance=load_provenance,
+                    now=now,
+                ).consume()
+
+                # 3. Folder layer for the subtree's files (idempotent against the
+                # vault's existing ancestor folders).
+                folder_rows, tree_edge_rows = _build_folder_and_tree_rows(
+                    vault_uri, vault_root, keep
+                )
+                result.folders_total = len(folder_rows)
+                if folder_rows:
+                    run_batched(
+                        session, Q.WRITE_FOLDERS, "folderRows", folder_rows,
+                        batch_size=opts.batch_size, extra_params={"now": now},
+                        on_shrink=on_shrink,
+                    )
+
+                # 4. Resolver from the whole vault, so subtree links resolve
+                # against every doc (not just the subtree).
+                resolver = _load_resolver(session, vault_uri)
+
+                # 5. Per-document loop. No fileHash-skip — the subtree was just
+                # cleared, so every kept file is a fresh write.
+                progress.reading_start(len(keep))
+                files_stream = _stream_file_bytes(
+                    keep, opts.concurrency, on_batch_read=progress.reading_advance,
+                )
+                pending_links: list[
+                    tuple[str, Path, list[ParsedLink], list[tuple[str, list[ParsedLink]]]]
+                ] = []
+                doc_uris_loaded_this_run: list[str] = []
+                progress.docs_start(len(keep))
+                for path, content_bytes in files_stream:
+                    rel_path = path.relative_to(vault_root)
+                    doc_uri = document_uri(vault_uri, rel_path)
+                    fh = hash_bytes(content_bytes)
+                    try:
+                        text = content_bytes.decode("utf-8", errors="replace")
+                    except Exception:  # noqa: BLE001
+                        log.warning("failed to decode %s; skipping", path)
+                        progress.doc_processed("skipped")
+                        continue
+                    parsed = parse_markdown(text, filename=path.name)
+                    parsed.file_hash = fh
+                    assign_uris_and_content(
+                        parsed,
+                        document_uri=doc_uri,
+                        section_uri_fn=lambda hp, _d=doc_uri: section_uri(_d, hp),
+                    )
+                    _write_one_document(
+                        session, parsed=parsed, doc_uri=doc_uri, vault_uri=vault_uri,
+                        file_path=str(path), batch_size=opts.batch_size, on_shrink=on_shrink,
+                    )
+                    doc_uris_loaded_this_run.append(doc_uri)
+                    result.docs_added += 1
+                    result.sections_written += len(parsed.flat_sections)
+                    resolver.add(parsed.name, parsed.aliases, doc_uri)
+                    pending_links.append(
+                        (
+                            doc_uri,
+                            path,
+                            parsed.document_links,
+                            [(s.uri, s.links) for s in parsed.flat_sections if s.links],
+                        )
+                    )
+                    progress.doc_processed("added")
+                progress.reading_done()
+                progress.docs_done()
+                progress.finalize_start()
+
+                # 6. Tree HAS edges (idempotent — Document targets now exist).
+                if tree_edge_rows:
+                    run_batched(
+                        session, Q.WRITE_TREE_EDGES, "treeEdgeRows", tree_edge_rows,
+                        batch_size=opts.batch_size, on_shrink=on_shrink,
+                    )
+
+                # 7. Per-doc LOADED provenance.
+                if doc_uris_loaded_this_run:
+                    run_batched(
+                        session, Q.WRITE_DOC_LOADED, "docLoadRows",
+                        [{"docUri": u} for u in doc_uris_loaded_this_run],
+                        batch_size=opts.batch_size,
+                        extra_params={
+                            "userId": user_id, "loadId": load_id,
+                            "loadProps": load_provenance, "now": now,
+                        },
+                        on_shrink=on_shrink,
+                    )
+
+                # 8. Resolve the subtree's own links (wikilinks, md, stubs,
+                # externals) + derived aliases — same helper sequence as
+                # ingest_vault steps 10–11.
+                link_rows, stub_doc_rows, external_doc_rows, display_texts_per_target = (
+                    _build_links_to_rows(
+                        pending_links, resolver, vault_uri=vault_uri, vault_root=vault_root,
+                    )
+                )
+                if stub_doc_rows:
+                    stub_paths = [Path(r["path"]) for r in stub_doc_rows]
+                    stub_folder_rows, stub_tree_edges = _build_folder_and_tree_rows(
+                        vault_uri, vault_root, stub_paths,
+                    )
+                    if stub_folder_rows:
+                        run_batched(
+                            session, Q.WRITE_FOLDERS, "folderRows", stub_folder_rows,
+                            batch_size=opts.batch_size, extra_params={"now": now},
+                            on_shrink=on_shrink,
+                        )
+                    run_batched(
+                        session, Q.WRITE_STUB_DOCUMENTS, "stubDocRows", stub_doc_rows,
+                        batch_size=opts.batch_size, extra_params={"now": now},
+                        on_shrink=on_shrink,
+                    )
+                    if stub_tree_edges:
+                        run_batched(
+                            session, Q.WRITE_TREE_EDGES, "treeEdgeRows", stub_tree_edges,
+                            batch_size=opts.batch_size, on_shrink=on_shrink,
+                        )
+                if external_doc_rows:
+                    run_batched(
+                        session, Q.WRITE_EXTERNAL_DOCUMENTS, "externalDocRows",
+                        external_doc_rows, batch_size=opts.batch_size,
+                        extra_params={"now": now}, on_shrink=on_shrink,
+                    )
+                result.links_written = run_batched(
+                    session, Q.WRITE_LINKS_TO, "linksToRows", link_rows,
+                    batch_size=opts.batch_size, on_shrink=on_shrink,
+                )
+
+                # 8b. Edge-restore inbound links (step 0 snapshot). WRITE_LINKS_TO
+                # MATCHes both endpoints, so a row whose target didn't come back
+                # (mv'd, or a deleted section) is silently skipped — exactly the
+                # restore-iff-target-exists semantics.
+                if inbound_link_rows:
+                    run_batched(
+                        session, Q.WRITE_LINKS_TO, "linksToRows", inbound_link_rows,
+                        batch_size=opts.batch_size, on_shrink=on_shrink,
+                    )
+
+                # 9. Display-text → target aliases.
+                alias_rows = _build_display_text_alias_rows(
+                    session, display_texts_per_target
+                )
+                if alias_rows:
+                    run_batched(
+                        session, Q.WRITE_DISPLAY_TEXT_ALIASES, "aliasRows", alias_rows,
+                        batch_size=opts.batch_size, on_shrink=on_shrink,
+                    )
+    except ServiceUnavailable as exc:
+        raise IngestServiceUnavailable(
+            docs_processed=result.docs_added,
             docs_total=result.docs_total,
             profile_source=opts.profile.source,
         ) from exc
