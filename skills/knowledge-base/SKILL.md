@@ -90,7 +90,7 @@ Act on the reported state, then re-run until READY:
 | `AUTH_ERROR` | connect → authentication failure | profile credentials wrong → `references/configure-profile.md` (re-enter creds) — **not** a restart |
 | `NOT_INDEXED` | reachable, but no `:Vault` node | `ki index .` (profile already bound) |
 | `STALE` | indexed, but the set or content-hash of `.md` files no longer matches the graph | `ki status -v` shows which files drifted; `ki index .` to resync (see *Re-Indexing*) |
-| `READY` | indexed + in sync | proceed to Step 3 |
+| `READY` | indexed + in sync | done — start using it (*Usage*) |
 
 Layers 1–2 work even when Neo4j is down (that's how `ki status` reports the Neo4j rows at all). The graph rows below require a reachable Neo4j.
 
@@ -98,21 +98,14 @@ Edges:
 - Bound profile missing from `config.yaml` (renamed / cloned to another machine) → surface to user; add it with `ki configure` or re-bind by re-indexing (`ki index . --profile <p>`).
 - Source dir moved → `cd` to the new path and `ki index .`.
 
-### Step 3 — Use it
-
-ALWAYS start with the outline — a table-of-contents view that saves considerable navigation/search tokens:
-
-```sh
-ki outline <vault uri> --full
-```
-
-Then search / get (see *Search & Retrieve* under *Usage*).
-
+> **Starting a knowledge base from scratch?** If the directory is empty/sparse — the user wants to *build* a KB, not point at an existing one — or they have no strong layout opinions, see `references/structuring-a-knowledge-base.md` for a light, link-friendly layout to propose before indexing (inbox + read-only `raw/` sources + interconnected LLM-authored pages + `outputs/`). General guidance — adapt to the user; their conventions win.
 
 ## Usage
 
 
 This skill covers *when* and *why* to reach for each command; **`ki <cmd> --help` is the source of truth for exact flags.** Check it when a flag is unclear rather than guessing — it's read-only and safe to allowlist.
+
+**Orient first.** Opening a READY vault, map its structure with `ki outline <vault uri>` before searching — it gives you the shape and the URIs to drill into. Depth defaults to 4; on a **large or wide** vault that's a lot of context, so start shallow (`--depth 1`–`2`) and recurse into the branches you care about (`ki outline <folder/doc uri>`) rather than rendering the whole tree at once.
 
 > **In a vault, read files through `ki` (`search`/`outline`/`get`), not `Read`/`grep`/`cat` — and tell any sub-agents you spawn to do the same (pass them the vault uri).**
 
