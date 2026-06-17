@@ -24,11 +24,8 @@ fi
 ok "uv"
 
 # 2. ki (knowledge-index) CLI.
-# NOTE: `--prerelease allow` pulls the 0.5.0 alpha during the test window.
-# Revert to plain `uv tool install --force knowledge-index` for the 0.5.0
-# final so the public installer tracks stable-only.
 info "Installing ki…"
-uv tool install --force --prerelease allow knowledge-index
+uv tool install --force knowledge-index
 hash -r 2>/dev/null || true
 ok "ki"
 

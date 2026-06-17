@@ -49,7 +49,8 @@ These constrain every change you make. If a proposed feature violates one of the
 | `skills/knowledge-base/SKILL.md`  | Agent-as-user routing rules (Trigger / Do-Not-Use / On-First-Use). Ships with the published tool. Covers the local single-vault workflow (see `docs/skills.md`).        |
 | `skills/knowledge-base/references/neo4j-podman.md` | Agent-followable runbook for the `ki configure → Local` path (Podman). Canonical values (container, volume, image, plugins, auth) here are the source of truth — `src/ki/neo4j_podman.py` must match. |
 | `install.sh`                      | One-command installer (`curl -sSfL https://knowledge-index.ai/install.sh \| bash`): uv → `ki` → `neo4j-cli` → agent skills. Idempotent. Served verbatim at the install URL. |
-| `site/`                           | Static landing page for `knowledge-index.ai` (`index.html` + logo-derived favicons). Source of truth; Cloudflare Pages assembles `site/` + `install.sh` + `img/ki.png` into `_site/` (gitignored) on each push to `main`. |
+| `site/`                           | Static landing page for `knowledge-index.ai` (`index.html` + logo-derived favicons). Source of truth. Deployed **manually** to Cloudflare Pages via `scripts/deploy-site.sh` (direct upload — no Git integration / no auto-deploy-on-push), which assembles `site/` + `install.sh` + `img/ki.png` into `_site/` (gitignored) and uploads it. |
+| `scripts/deploy-site.sh`          | Build + deploy the landing page to Cloudflare Pages (manual direct upload). Run after editing `site/` or `install.sh`; needs `npx wrangler login` once. |
 | `CLAUDE.md`                       | Claude-Code-specific notes; defers to this file.                                                                                                                        |
 
 ### Markdown parser choice — `markdown-it-py`
