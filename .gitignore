@@ -50,6 +50,8 @@ docs/.docusaurus/
 # Landing-page build output (assembled from site/ + install.sh + img/ by the
 # Cloudflare Pages build command; site/ is the source of truth)
 /_site/
+# Wrangler (Cloudflare Pages CLI) local cache/state from scripts/deploy-site.sh
+/.wrangler/
 
 tmp-e2e-tests/
 tmp*/
