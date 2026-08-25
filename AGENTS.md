@@ -4,7 +4,7 @@ Instructions for AI agents (Claude, Codex, Cursor, etc.) working **on** the `kno
 
 ## What this repo is
 
-`knowledge-index` (CLI: `ki`) is a **search index** over a folder of markdown, backed by Neo4j — it syncs the filesystem into a knowledge graph and serves fast search / navigation / retrieval. The primitive verbs are `ki index` (sync) and `ki search` (query); read/navigation (`ki outline` [alias `ki tree`], `ki get`, `ki status`, `ki vault list`), index removal (`ki drop`, `ki nuke`), and setup (`ki configure`, `ki profile list`, `ki init`, `ki skill`) sit on top.
+`knowledge-index` (CLI: `ki`) is a **search index** over a folder of markdown, backed by Neo4j — it syncs the filesystem into a knowledge graph and serves fast search / navigation / retrieval. The primitive verbs are `ki index` (sync) and `ki search` (query); read/navigation (`ki outline` [alias `ki tree`], `ki get`, `ki status`, `ki vault list`), thematic grouping (`ki theme`), index removal (`ki drop`, `ki nuke`), and setup (`ki configure`, `ki profile list`, `ki init`, `ki skill`) sit on top.
 
 Canonical design lives in `docs/scoping.md` (profiles, vaults, config, the command surface, and the local/remote scoping model) and `docs/general-philosophy.md` (the tenets); the schema is `docs/data-model/schema.md`. `docs/README.md` indexes everything.
 
@@ -21,7 +21,7 @@ These constrain every change you make. If a proposed feature violates one of the
 
 | Path                              | What's there                                                                                                                                                            |
 |-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/ki/cli.py`                   | Click entry point. Top-level commands (`configure`, `index`, `search`, `get`, `outline` [alias `tree`], `status`, `drop`, `nuke`, `init`) + subcommand groups (`profile list`, `vault list`, `skill {list,install,remove,print}`). Each command lives in its own module under `src/ki/commands/`. |
+| `src/ki/cli.py`                   | Click entry point. Top-level commands (`configure`, `index`, `search`, `get`, `outline` [alias `tree`], `theme`, `status`, `drop`, `nuke`, `init`) + subcommand groups (`profile list`, `vault list`, `skill {list,install,remove,print}`). Each command lives in its own module under `src/ki/commands/`. |
 | `src/ki/config.py`                | XDG-aware config loader; named profiles; 0600 mode on write; `KI_PROFILE` env-var override.                                                                             |
 | `src/ki/profile_resolve.py`       | Resolve which profile a command uses: `--profile` → the vault's `.ki` binding → config default. `ki search` resolves stricter (see `docs/scoping.md`).                  |
 | `src/ki/vault.py`                 | `.ki/vault.yaml` marker IO (slug `uri`, bound profile name, optional user-authored description); slug rules + `-N` collision; Folder/Document/Section URI construction.  |
@@ -31,9 +31,11 @@ These constrain every change you make. If a proposed feature violates one of the
 | `src/ki/ingest/batcher.py`        | UNWIND batching + Neo4j-OOM auto-recovery (halve and retry once, continue smaller).                                                                                     |
 | `src/ki/ingest/queries.py`        | Batched `UNWIND` ingest Cypher — matches `docs/data-model/ingest-cypher.md`.                                                                                            |
 | `src/ki/ingest/provenance.py`     | Builds the `User` mutable bag and `LOADED` provenance bag (best-effort detection per `docs/data-model/schema.md`).                                                       |
+| `src/ki/themes/queries.py`        | Theme producer Cypher — projection, Leiden, conductance, write-back, renderer queries. Matches `docs/data-model/theme-queries.md`. GDS is called as plain Cypher procedures over the stock driver; the `graphdatascience` client is deliberately **not** a dependency. |
+| `src/ki/themes/producer.py`       | Runs the theme pipeline and emits wire records; owns the conductance→cohesion thresholds and the GDS capability probe. Knows nothing about rendering. |
 | `src/ki/search/queries.py`        | Retrieval Cypher: `SEARCH_DOC_SECTION` (the `ki search` document+section sweep), B.12 containment tree (`ki outline`), B.4 / B.13 / B.14 (`ki get`) — see `docs/data-model/retrieval-queries.md`. |
 | `src/ki/neo4j_client.py`          | Driver lifecycle, `ensure_schema`, connectivity classification.                                                                                                         |
-| `src/ki/neo4j_podman.py`          | Thin wrapper around `podman` for the `ki configure → Local` path. Mirrors the canonical values (container `neo4j-ki`, volume `neo4j-ki-data`, image `neo4j:latest`, plugins APOC + GenAI) in `skills/knowledge-base/references/neo4j-podman.md`. |
+| `src/ki/neo4j_podman.py`          | Thin wrapper around `podman` for the `ki configure → Local` path. Mirrors the canonical values (container `neo4j-ki`, volume `neo4j-ki-data`, image `neo4j:latest`, plugins APOC + GenAI + Graph Data Science) in `skills/knowledge-base/references/neo4j-podman.md`. |
 | `src/ki/neo4j_cli.py`             | Best-effort bridge that registers a profile into `neo4j-cli`'s credential store (`ki configure` + `ki profile sync`), so agents run delegated graph-reasoning Cypher via `neo4j-cli query --credential <name>` without handling the password. neo4j-cli is optional. |
 | `tests/unit/`                     | Pure-Python unit tests — parser, slug, vault marker, config, batcher (mocked driver), CLI parsing, scope resolution.                                                    |
 | `tests/integration/`              | End-to-end tests against a real Neo4j. Auto-skip unless `KI_TEST_NEO4J_URI` / `KI_TEST_NEO4J_USER` / `KI_TEST_NEO4J_PASSWORD` are set — to bring one up, follow `skills/knowledge-base/references/neo4j-podman.md`. |
@@ -45,7 +47,7 @@ These constrain every change you make. If a proposed feature violates one of the
 | `docs/data-model/schema.md`       | Neo4j schema: `User`, `Vault`, `Folder`, `Document`, `Section` nodes; `USES_VAULT`, `LOADED`, `HAS`, `NEXT_SECTION`, `LINKS_TO` edges; uri conventions + content rules. |
 | `docs/data-model/ingest-cypher.md`| Batched `UNWIND` ingest queries and constraints / fulltext index. Modify here when changing what `ki index` writes to Neo4j.                                            |
 | `docs/data-model/retrieval-queries.md` | Retrieval Cypher (the `ki search` doc+section sweep, containment-tree walk, get-by-uri, windowing). Modify here when changing what `ki search` / `ki outline` / `ki get` expose. |
-| `docs/commands/`                  | Per-command depth docs — `search.md`, `get.md`, `outline.md` (+ `theme-format.md`, draft).                                                                              |
+| `docs/commands/`                  | Per-command depth docs — `search.md`, `get.md`, `outline.md`, `theme-format.md`.                                                                                         |
 | `skills/knowledge-base/SKILL.md`  | Agent-as-user routing rules (Trigger / Do-Not-Use / On-First-Use). Ships with the published tool. Covers the local single-vault workflow (see `docs/skills.md`).        |
 | `skills/knowledge-base/references/neo4j-podman.md` | Agent-followable runbook for the `ki configure → Local` path (Podman). Canonical values (container, volume, image, plugins, auth) here are the source of truth — `src/ki/neo4j_podman.py` must match. |
 | `install.sh`                      | One-command installer (`curl -sSfL https://knowledge-index.ai/install.sh \| bash`): uv → `ki` → `neo4j-cli` → agent skills. Idempotent. Served verbatim at the install URL. |
@@ -73,6 +75,8 @@ with `markdown-it-py` unless a measurement-driven reason to swap appears.
 
 ## Don't
 
+- Don't add a non-GDS fallback for `ki theme`. Grouping by folder hierarchy is a different question from grouping by interlinking, and shipping it under the same command would present the two as interchangeable. GDS is a hard requirement; a profile without it gets a capability error. See [#72](https://github.com/zach-blumenfeld/knowledge-index/issues/72) for the alternatives that were evaluated and rejected (label propagation, hub-seeded assignment) with the measurements.
+- Don't add the `graphdatascience` Python client as a dependency. It pulls pandas and pyarrow into a CLI with seven small dependencies, and the GDS procedures are perfectly callable as plain Cypher over the stock driver — which is what `src/ki/themes/queries.py` does.
 - Don't add vector indexes or embeddings. Fulltext is the retrieval substrate — a deliberate tenet (`docs/general-philosophy.md`: no embeddings → vendor-neutral, instant setup), not a gap. The `genai` plugin in the Podman setup is loaded for a future upgrade path but unused.
 - Don't bake conversion logic (PDF→markdown, docx→markdown) into `ki`. If the agent-as-user needs that, *the agent* does the conversion; `ki` only indexes whatever `.md` files exist. See the *On First Use* / convert-first note in `skills/knowledge-base/SKILL.md`.
 - Don't add install mechanisms beyond the one-command installer (`curl -sSfL https://knowledge-index.ai/install.sh | bash`, which runs `uv tool install`) and `uvx knowledge-index`. No Homebrew formula or standalone binaries unless real demand appears.

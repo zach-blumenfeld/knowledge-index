@@ -6,6 +6,7 @@ User-visible commands:
   ki index <path>           sync a folder of markdown into the graph (re-index = full nuke + re-ingest)
   ki search <query>         fulltext across {Document,Section,Vault} (B.1 / B.2 / B.11)
   ki outline [<uri>]        render the containment tree (B.12). `ki tree` is a kept alias.
+  ki theme                  group a vault's docs into themes by how they interlink (needs GDS)
   ki get <uri> ...          fetch metadata + content for a Document / Section URI
   ki drop <vault>           remove an entire vault from the index (vault-only — see docs/data-model/index_rm_behavior.md)
   ki nuke                   reset the entire graph and drop all schema (typed confirmation required)
@@ -39,9 +40,11 @@ from .commands.skill import cmd_list as cmd_skill_list
 from .commands.skill import cmd_print as cmd_skill_print
 from .commands.skill import cmd_remove as cmd_skill_remove
 from .commands.status import cmd_status
+from .commands.theme import DEFAULT_PER_THEME, cmd_theme
 from .commands.vault import cmd_vault_list
 from .ingest.batcher import DEFAULT_BATCH_SIZE
 from .ingest.pipeline import DEFAULT_CONCURRENCY, DEFAULT_MAX_FILE_SIZE
+from .themes.producer import DEFAULT_GRANULARITY, DEFAULT_MIN_THEME_DOCS
 
 
 @click.group(
@@ -308,6 +311,61 @@ def tree_cmd(
     full: bool,
 ) -> None:
     _run_outline(uri, at_flag, profile, depth, full, directory)
+
+
+@main.command(
+    "theme",
+    help="Group a vault's documents into themes by how they interlink, and "
+         "show the evidence for each. Themes come from wikilinks only — "
+         "folders are never used. Theme numbers (T1, T2…) are stable only "
+         "within a single run: store URIs, never T<id>. Requires the Graph "
+         "Data Science plugin. See docs/commands/theme-format.md.",
+)
+@click.option(
+    "--profile", default=None,
+    help="Profile to use; else the vault's .ki binding, else $KI_PROFILE (no default)",
+)
+@_directory_option
+@click.option(
+    "--granularity", type=float, default=DEFAULT_GRANULARITY, metavar="N",
+    help=f"How finely to split themes (default: {DEFAULT_GRANULARITY}). "
+         "Higher gives more, smaller themes; lower gives fewer, broader ones.",
+)
+@click.option(
+    "--min-docs", type=int, default=DEFAULT_MIN_THEME_DOCS, metavar="N",
+    help=f"Groups smaller than this many docs aren't themes — their docs "
+         f"count as ungrouped instead (default: {DEFAULT_MIN_THEME_DOCS}).",
+)
+@click.option(
+    "--per-theme", type=int, default=DEFAULT_PER_THEME, metavar="N",
+    help=f"Documents listed per theme (default: {DEFAULT_PER_THEME}). The "
+         "rest are counted in the `(+N more docs)` line, never dropped.",
+)
+@click.option(
+    "--top-k", type=int, default=None, metavar="K",
+    help="Show only the K biggest themes. Display-only — the header still "
+         "accounts for the hidden ones, and they stay grouped.",
+)
+@click.option(
+    "--exclude", multiple=True, metavar="DOC",
+    help="Drop a document from the whole analysis (grouping, evidence, and "
+         "counts) — basename or vault-relative path, repeatable. Use it on "
+         "hub pages like CLAUDE.md or index.md, which link to everything and "
+         "so blur the themes together. Excluded docs are reported in the header.",
+)
+def theme_cmd(
+    profile: str | None,
+    directory: Path | None,
+    granularity: float,
+    min_docs: int,
+    per_theme: int,
+    top_k: int | None,
+    exclude: tuple[str, ...],
+) -> None:
+    sys.exit(cmd_theme(
+        profile=profile, granularity=granularity, min_docs=min_docs,
+        per_theme=per_theme, top_k=top_k, exclude=exclude, directory=directory,
+    ))
 
 
 @main.command(

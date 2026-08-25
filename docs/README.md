@@ -27,7 +27,8 @@ Per-command depth docs.
 - [commands/add-rm.md](commands/add-rm.md) — `ki add` / `ki rm`: the incremental
   write surface (index-only; never touches disk), the rename workflow, and why
   there's no `ki mv`.
-- [commands/theme-format.md](commands/theme-format.md) — `ki theme` output format.
+- [commands/theme-format.md](commands/theme-format.md) — `ki theme` output format
+  and flags.
   **Draft — not yet shipped.**
 
 ## Data model & internals — [`data-model/`](data-model/)
@@ -45,7 +46,7 @@ The graph, how it's built, and how it's queried.
 - [data-model/index_rm_behavior.md](data-model/index_rm_behavior.md) — vault-level
   sync + removal behavior (`ki drop` / re-index = nuke-and-rebuild).
 - [data-model/theme-queries.md](data-model/theme-queries.md) — GDS Leiden
-  clustering for themes. **Draft — not yet shipped.**
+  clustering for themes (the `ki theme` producer).
 
 ## Experiments — [`experiments/`](experiments/)
 

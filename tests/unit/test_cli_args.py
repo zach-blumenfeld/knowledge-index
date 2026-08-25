@@ -12,7 +12,7 @@ def test_help_lists_all_commands():
     runner = CliRunner()
     res = runner.invoke(main, ["--help"])
     assert res.exit_code == 0
-    for cmd in ("configure", "index", "search", "drop", "init", "vault"):
+    for cmd in ("configure", "index", "search", "drop", "init", "vault", "theme"):
         assert cmd in res.output
 
 
@@ -216,3 +216,25 @@ def test_tree_alias_accepts_positional_uri(monkeypatch):
     res = runner.invoke(main, ["tree", "vault://test-uri"])
     assert res.exit_code == 0, res.output
     assert captured.get("at") == "vault://test-uri"
+
+
+def test_theme_help_lists_its_flags():
+    runner = CliRunner()
+    res = runner.invoke(main, ["theme", "--help"])
+    assert res.exit_code == 0
+    for flag in ("--granularity", "--min-docs", "--per-theme", "--top-k",
+                 "--exclude", "--profile", "--directory"):
+        assert flag in res.output
+
+
+def test_theme_takes_no_positional_argument():
+    """Themes are per-vault; the target comes from -C, not a uri."""
+    runner = CliRunner()
+    res = runner.invoke(main, ["theme", "some-vault-uri"])
+    assert res.exit_code != 0
+
+
+def test_theme_help_warns_theme_ids_are_run_scoped():
+    runner = CliRunner()
+    res = runner.invoke(main, ["theme", "--help"])
+    assert "stable only" in res.output

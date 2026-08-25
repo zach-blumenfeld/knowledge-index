@@ -15,6 +15,20 @@ exact pattern. Editorial prose is fine; just don't change the heading.
 
 ## [Unreleased]
 
+### Added
+
+- **`ki theme` — group a vault's documents into themes by how they interlink** ([#72](https://github.com/zach-blumenfeld/knowledge-index/issues/72)). Runs Leiden community detection over the vault's document-level wikilink graph and prints, per theme, a cohesion word, the wikilink targets its members converge on, the most-linked member docs as outline rows with full URIs, and one crossover doc per connected theme. **ki never names a theme** — it ships the evidence and the agent does the naming (no LLM at read time). Flags: `--granularity`, `--min-docs`, `--per-theme`, `--top-k`, `--exclude`, plus the usual `-C` / `--profile`. Theme numbers are stable only within a single run — store URIs, never `T<id>`. See `docs/commands/theme-format.md` (output) and `docs/data-model/theme-queries.md` (pipeline).
+- **Graph Data Science in the default local container.** `ki configure → Local` now creates Neo4j with `NEO4J_PLUGINS=["apoc","genai","graph-data-science"]`, since `ki theme` requires it.
+
+### Changed
+
+- **`ki theme` has no folder-derived fallback, by design.** Grouping by directory hierarchy answers a different question than grouping by interlinking, so it isn't a degraded version of the same thing. A profile without GDS gets a capability error naming the plugin — with the exact recreate commands for a local container, or an explanation that the Aura plugin is create-time only. Every other ki command is unaffected. Two non-GDS substitutes (label propagation, hub-seeded assignment) were evaluated against Leiden on real vaults and rejected; the measurements are in [#72](https://github.com/zach-blumenfeld/knowledge-index/issues/72).
+
+### Notes
+
+- **Containers created before this release don't have the GDS plugin.** `ki theme` detects that and prints the `podman stop` / `rm` / `run` sequence to recreate it. The named data volume survives, so **no re-index is needed**. Everything else keeps working on an older container.
+- **Known gap (ingest-side, pre-existing):** ki never creates `WIKILINK_UNRESOLVED` nodes — a wikilink whose target has no file is dropped at ingest. Themes therefore get no signal from `[[concept]]` links that point at nothing, which is the vault shape (journal-style) the co-citation design was aimed at. Co-citation through *resolved* targets works and is covered by tests. Tracked separately.
+
 ## [0.5.0] — 2026-06-16
 
 ### Added

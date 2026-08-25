@@ -155,9 +155,16 @@ Sometimes the question is about the vault as a whole, not a specific slice:
 - *"What's load-bearing here — what should I read first to understand it?"*
 - *"If I refactor this, what else will it affect?"*
 
-Two strategies:
+Three strategies:
 1. **Outline as overview** — read `ki outline --full` as a high-level map of the *whole* vault to summarize its coverage and structure (adjust --depth and recurse on uris as needed). Follow with `ki search/get` for any specifics. Best for *"what's in here."*
-2. **Reason over the graph (via `neo4j-cli`)** — for counts, aggregates, paths, and structural questions search can't express, query the Neo4j graph directly with **`neo4j-cli`**. **Reason over the graph; don't translate the question into a query** — read the schema, think in nodes / relationships / **paths / neighborhoods / centrality**, *then* express that reasoning as Cypher. (`neo4j-cli` and its installed skills already drive this schema-first, graph-shaped flow — lean on them rather than re-deriving it.)
+2. **Themes as overview** — `ki theme` groups the vault's documents by how they interlink and prints, per group, the wikilink targets its members converge on plus the most-linked docs with their URIs. Best for *"what is this vault actually about"* on a vault whose folder names don't tell you (or where the structure and the subject matter disagree). It does **not** name the themes — that's your job, from the evidence it prints. Start with `ki theme --top-k 5` for a cheap lay-of-the-land; the header tells you how much sits below the cut. If hub pages like `CLAUDE.md` or `index.md` show up as the connector for every pair of themes, re-run with `--exclude CLAUDE.md --exclude index.md` — they link to everything and blur the groups.
+   ```sh
+   ki theme                                     # all themes for the vault you're in
+   ki theme --top-k 5                           # the 5 biggest, cheapest first look
+   ki theme --exclude CLAUDE.md --exclude index.md   # drop hub pages that blur the grouping
+   ```
+   **Theme numbers (T1, T2…) are stable only within a single run** — they're recomputed each time and may renumber. Store the URIs, never `T<id>`. Needs the Graph Data Science plugin; if it's missing, `ki theme` says so and tells you how to fix it — every other command still works.
+3. **Reason over the graph (via `neo4j-cli`)** — for counts, aggregates, paths, and structural questions search can't express, query the Neo4j graph directly with **`neo4j-cli`**. **Reason over the graph; don't translate the question into a query** — read the schema, think in nodes / relationships / **paths / neighborhoods / centrality**, *then* express that reasoning as Cypher. (`neo4j-cli` and its installed skills already drive this schema-first, graph-shaped flow — lean on them rather than re-deriving it.)
 
    **Connect by credential *name*, never a password** — `ki configure` / `ki profile sync` registered each profile as a neo4j-cli credential, so pass `--credential <profile>` and the secret stays in neo4j-cli's store:
    ```sh
@@ -170,7 +177,7 @@ Two strategies:
 ### Making Inferences
 
 Sometimes the user wants analysis, not just retrieval:
-- *"What are the main themes running through these notes?"*
+- *"What are the main themes running through these notes?"* — try `ki theme` first; drop to Cypher only if you need something it doesn't print.
 - *"How does [X] connect to [Y] — what's the throughline between them?"*
 - *"Pull together everything related to [X] and synthesize where it lands."*
 - *"Where do these notes reinforce or contradict each other on [topic]?"*

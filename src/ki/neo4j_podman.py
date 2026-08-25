@@ -27,7 +27,12 @@ BROWSER_PORT = 7474
 DEFAULT_USER = "neo4j"
 DEFAULT_PASSWORD = "password"
 # Quoted JSON list — Neo4j reads this env var literally.
-PLUGINS_ENV = '["apoc","genai"]'
+# `graph-data-science` is what `ki theme` runs Leiden and conductance on; it
+# is a hard requirement there (there is no non-GDS fallback — see issue #72),
+# so it ships in the default container rather than being an opt-in the user
+# only discovers by hitting an error. Containers created before this landed
+# don't have it; `ki theme` detects that and prints the recreate commands.
+PLUGINS_ENV = '["apoc","genai","graph-data-science"]'
 # JVM heap ceiling for the canonical container. Conservatively sized for a
 # personal-laptop tool — total Neo4j footprint (heap + pagecache + native
 # overhead) lands around ~2 GB so `ki` is a good citizen alongside the
