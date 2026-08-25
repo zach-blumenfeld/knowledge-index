@@ -118,6 +118,7 @@ files on disk are untouched. (See `docs/general-philosophy.md`.)
 |---|---|---|
 | **Index & update (write)** | `index`, `add`, `rm` | Build/refresh the graph from source markdown. `index` = full (re)build of a vault; `add`/`rm` = incremental per-target (see `docs/commands/add-rm.md`). There is no `mv` — to ki a move is just `rm` + `add`. |
 | **Search & retrieval (read)** | `search`, `outline`, `get`, `status` | Query and read the index. No source files needed. |
+| **Analysis (read-shaped)** | `theme` | Group one vault's documents by how they interlink, and print the evidence (`docs/commands/theme-format.md`). Reads like the group above and needs no source files, but it *does* write a ki-owned `themeId` onto the index nodes as it goes — index state, never user data. Needs the Graph Data Science plugin. |
 | **Remove from index** | `drop`, `nuke` | `drop` = one vault; `nuke` = a whole profile. Index only — source files stay. |
 | **Admin & info** | `configure`, `profile list`, `vault list`, `init`, `skill` | Manage profiles, inspect what exists, install the agent skill. |
 
@@ -233,6 +234,7 @@ a vault, so **if the command needs a specific vault, you supply it** alongside
 |---|---|
 | `search` | `--vault <uri,…>` (comma-separated; omit → **all vaults**) or `--under <uri>` for a subtree |
 | `outline` | the positional `<uri>`; omit → **all vaults** |
+| `theme` | `-C <dir>` — a theme is a statement about **one** vault's link graph, so there is no all-vaults mode and no uri argument |
 | `get` | the `<uri…>` you're fetching (self-addressing) |
 | `drop` | the slug or path target (required — the target *is* the vault) |
 | `index` / `init` | the positional `<path>` — and `--profile` (re)binds that vault's marker |

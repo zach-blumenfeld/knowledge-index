@@ -194,6 +194,7 @@ Internal non-md stubs are discovered link-driven (`[Slides](./deck.pptx)`) — t
 | `sourceType`           | enum         | yes      | `LOCAL_FILE` (parsed primary doc) \| `LOCAL_STUB` (on-disk file stubbed via a link, not parsed) \| `URL_LINK` \| `WIKILINK_UNRESOLVED`.                                                          |
 | `firstLoadedAt`        | `datetime` | yes      | Timestamp when the document was ingested. Set on CREATE only (not overwritten on re-ingest).                                                                                                    |
 | `lastLoadedAt`         | datetime | yes      | updated on each ingest for vault.                                                                                                                                                               |
+| `themeId`              | integer      | no       | Which theme this document was grouped into. **Not written by ingest** — set by `ki theme` and regenerated wholesale on every run of it (absent until the first run, and absent again for any doc that falls below the theme floor). ki-owned index state, never user data: `ki index` / `ki drop` are free to discard it. Meaningful only within one (vault, `ki theme` run) — the raw integers repeat across vaults, and every theme query is vault-prefix-scoped. See [`theme-queries.md`](theme-queries.md). |
 
 ### `Section`
 `Section.uri` is globally unique by virtue of including `Vault.uri` (which is itself globally unique — a slug from the `.ki/vault.yaml` marker, with a `-N` suffix on collision).

@@ -1,11 +1,12 @@
 # Theme producer — GDS queries + pipeline script
 
-> **⚠️ Status: DRAFT — not yet implemented.** Producer side of `docs/commands/theme-format.md`. No CLI integration yet — there is no `ki theme` command; the pipeline below runs only via the standalone `scripts/theme_producer.py`. This documents the Cypher + GDS pipeline that emits the wire records the theme renderer consumes. Requires the **GDS plugin** (Leiden ships in GDS ≥ 2.x; not available on Aura Free) and the `graphdatascience` Python client (`uv add graphdatascience`).
+Producer side of [`docs/commands/theme-format.md`](../commands/theme-format.md). Shipped as `ki theme`; the executable copies of these queries live in `src/ki/themes/queries.py` and the pipeline in `src/ki/themes/producer.py` — change the doc and the code together (AGENTS.md *Conventions*).
+
+Requires the **GDS plugin**, which ships in ki's default local container (`NEO4J_PLUGINS` in `src/ki/neo4j_podman.py`). It is a **hard requirement with no fallback** — a GDS-less profile gets a capability error naming the plugin, never a second-class grouping ([#72](https://github.com/zach-blumenfeld/knowledge-index/issues/72)).
+
+**Driven by plain Cypher, not the `graphdatascience` Python client.** The procedures are called directly over the stock driver (`CALL gds.leiden.mutate(...) YIELD ...`). The client would drag pandas and pyarrow into a CLI whose entire dependency set is seven small packages, and buys nothing here — the pipeline is nine statements. Signatures below are verified against **GDS 2026.04.0**. The Python-client form (`gds.v2.leiden.mutate(...)`) appears nowhere in the shipped code; earlier drafts of this doc used it because the prototype was a standalone script.
 
 Pipeline: **project doc-level link graph (docs + glue nodes) → Leiden (mutate `themeId`) → per-community conductance → write `themeId` → renderer queries → drop projection.**
-
-> **Runnable version: `scripts/theme_producer.py`** — same pipeline as the embedded script below, plus ki-style vault/profile resolution (`.ki/vault.yaml` → `~/.config/ki/config.yaml`), a friendly GDS-missing error, and a theme-format renderer (`--json` for raw wire records). Run from a vault directory:
-> `uv run --with graphdatascience python scripts/theme_producer.py [vault-path] [--gamma 1.0] [--min-docs 3] [--exclude CLAUDE.md] [--top-k 5] [--json]`
 
 Design decisions baked in:
 
@@ -80,60 +81,59 @@ The Cypher-projection aggregation function — called once per row, building the
 
 ## 2. Projection (plugin Cypher projection, undirected + weighted)
 
-```python
-G, _ = gds.graph.cypher.project(
-    """
-    MATCH (src)-[l:LINKS_TO]->(tgt)
-    WHERE src.uri STARTS WITH $vaultPrefix
-      AND tgt.uri STARTS WITH $vaultPrefix
-    MATCH (s:Document {uri: split(src.uri, '#')[0]})
-    MATCH (t:Document {uri: split(tgt.uri, '#')[0]})
-    WHERE s.sourceType = 'LOCAL_FILE'
-      AND t.sourceType IN ['LOCAL_FILE', 'LOCAL_STUB', 'WIKILINK_UNRESOLVED']
-      AND s <> t
-    WITH s, t, count(*) AS weight
-    RETURN gds.graph.project(
-      $graph_name, s, t,
-      { relationshipProperties: { weight: weight } },
-      { undirectedRelationshipTypes: ['*'] }
-    )
-    """,
-    graph_name=graph_name,
-    vaultPrefix=vault_prefix,
-)
+```cypher
+// $graphName = ki-theme-<sanitized vault uri>, $vaultPrefix = '<vaultUri>/'
+MATCH (src)-[l:LINKS_TO]->(tgt)
+WHERE src.uri STARTS WITH $vaultPrefix AND tgt.uri STARTS WITH $vaultPrefix
+MATCH (s:Document {uri: split(src.uri, '#')[0]})
+MATCH (t:Document {uri: split(tgt.uri, '#')[0]})
+WHERE s.sourceType = 'LOCAL_FILE'
+  AND t.sourceType IN ['LOCAL_FILE', 'LOCAL_STUB', 'WIKILINK_UNRESOLVED']
+  AND s <> t
+WITH s, t, count(*) AS weight
+RETURN gds.graph.project(
+  $graphName, s, t,
+  { relationshipProperties: { weight: weight } },
+  { undirectedRelationshipTypes: ['*'] }
+) AS g
 ```
+
+`gds.graph.project` here is the **aggregation function**, not the procedure of the same name — it is called once per row as pairs stream through, building the in-memory graph incrementally.
 
 This is the §1 match with the target filter relaxed to admit **glue nodes** (`LOCAL_STUB`, `WIKILINK_UNRESOLVED`) — see the step-by-step above. Docs with no links at all never enter the projection — they come out as **ungrouped** (header `<U>`), computed in step 6 as `total_docs − grouped`. No WCC pre-pass needed: Leiden handles a disconnected projection (each component clusters independently).
 
 ## 3. Leiden → `themeId` (mutate, not write)
 
-```python
-res = gds.v2.leiden.mutate(
-    G,
-    mutate_property="themeId",
-    relationship_weight_property="weight",
-    gamma=1.0,                 # resolution; >1 → more, smaller themes
-    random_seed=42,
-    concurrency=1,             # required for the seed to make runs deterministic
-)
-# res.community_count, res.modularity (overall — sanity: > 0.3 means real structure)
+```cypher
+CALL gds.leiden.mutate($graphName, {
+  mutateProperty: 'themeId',
+  relationshipWeightProperty: 'weight',
+  gamma: $gamma,               // resolution; >1 -> more, smaller themes
+  randomSeed: 42,
+  concurrency: 1               // required for the seed to make runs deterministic
+}) YIELD communityCount, modularity
+RETURN communityCount, modularity
 ```
 
-**`mutate`, deliberately not `write`:** §4's conductance metric reads `themeId` from the *in-memory* graph, and the projection never sees DB writes — so a one-step `leiden.write` would persist the property but leave the projection without it, breaking §4. Mutate first; persistence to Neo4j happens in §4 via `gds.v2.graph.node_properties.write(G, ["themeId"])` after the metric runs.
+`modularity` is kept only as a whole-run sanity number (> 0.3 means real structure); it plays no part in per-theme cohesion.
+
+
+**`mutate`, deliberately not `write`:** §4's conductance metric reads `themeId` from the *in-memory* graph, and the projection never sees DB writes — so a one-step `leiden.write` would persist the property but leave the projection without it, breaking §4. Mutate first; persistence to Neo4j happens in §4 via ``gds.graph.nodeProperties.write` after the metric runs.
 
 `themeId` lands on every projected node — `LOCAL_FILE` docs *and* glue nodes. That's fine: membership queries filter to `LOCAL_FILE` at read time, and a glue node's `themeId` is potentially useful later (e.g. tagging `top wikilink targets` with their home theme). It is index-generation state, owned by ki (not user-authored — consistent with design principle #1); a re-index that reruns the producer overwrites it.
 
 ## 4. Per-community conductance (cohesion input)
 
-```python
-cond_df = gds.v2.conductance.stream(
-    G,
-    community_property="themeId",        # property must be in the projection — see note
-    relationship_weight_property="weight",
-)
-# columns: community, conductance — fraction of the community's link mass
-# that crosses its boundary. 0 = fully self-contained, →1 = mostly leaks out.
+```cypher
+CALL gds.conductance.stream($graphName, {
+  communityProperty: 'themeId',
+  relationshipWeightProperty: 'weight'
+}) YIELD community, conductance
+RETURN community, conductance
 ```
+
+`conductance` is the fraction of the community's link mass that crosses its boundary: 0 = fully self-contained, →1 = mostly leaks out.
+
 
 > **Note — mutate vs write ordering.** The in-memory graph does not see DB writes, so `community_property` must exist *in the projection*. Run Leiden in **`mutate`** mode first (`mutate_property="themeId"`), stream conductance off the mutated property, then persist (below). The script does exactly this.
 
@@ -153,8 +153,10 @@ REMOVE d.themeId
 
 **4b. Persist the new assignment:**
 
-```python
-gds.v2.graph.node_properties.write(G, ["themeId"])
+```cypher
+CALL gds.graph.nodeProperties.write($graphName, ['themeId'])
+YIELD propertiesWritten
+RETURN propertiesWritten
 ```
 
 **4c. Fold sub-floor themes into ungrouped.** Themes with fewer than `min_theme_doc_count` (default **3**) member docs aren't themes — remove their `themeId` so those docs count as ungrouped. This is deliberately *not* Leiden's `minCommunitySize`: that floor counts projected nodes **including glue**, but ours is on `LOCAL_FILE` member docs — the count below uses the right unit:
@@ -174,13 +176,15 @@ The second MATCH is label-wide on purpose — it strips folded themes' glue node
 
 ## 5. Cohesion word (from conductance)
 
-**Starting thresholds — tune against real vaults; the output contract is only the three phrases:**
+**Thresholds, calibrated against real vaults. The output contract is only the three phrases, so these may move freely:**
 
 | `cohesion` | Rule |
 |---|---|
-| `tight` | conductance ≤ 0.2 |
-| `loose` | conductance ≥ 0.5 |
+| `tight` | conductance ≤ 0.35 |
+| `loose` | conductance ≥ 0.60 |
 | `moderate` | everything else |
+
+These replace an earlier 0.2 / 0.5 split that was theoretical. Measured against two independent real vaults, **that split produced zero `tight` themes** — a third of the vocabulary never appeared, which is worse than not having the word. Real document graphs leak more than the theory suggests: a genuinely coherent theme still cites its neighbours. Observed conductances across the calibration set were 0.067, 0.299, 0.333, 0.364, 0.420, 0.573, 0.620; the bands above split that spread across all three phrases. Re-check when a third vault shape (especially a journal-style one) is available.
 
 Why conductance alone: it's per-community, computed in-memory next to the Leiden call (no post-write Cypher pass), not size-biased the way `n·(n−1)/2` edge density is (large themes are sparse by nature and would always read loose), and it runs on the full projection so co-citation glue counts toward cohesion. A singleton or barely-connected community conducts ~1.0 and correctly reads `loose`. (An earlier draft blended per-community modularity with a doc–doc edge-density Cypher query — both size-biased in opposite directions, and the density pass cost as much as the projection itself.)
 
@@ -240,224 +244,45 @@ RETURN count(d) AS totalDocs,
        count(d.themeId) AS groupedDocs
 ```
 
-## 7. Pipeline script
+## 7. Statement order
 
-```python
-"""Theme producer: Leiden over the doc-level wikilink graph of one vault.
+The pipeline lives in `src/ki/themes/producer.py` (`produce()`); the Cypher constants it runs are in `src/ki/themes/queries.py`, named to match the sections above. Nine statements, in this order — the ordering is load-bearing at three points, flagged below:
 
-Usage:  uv run python theme_producer.py <vault-uri> [gamma] [min-theme-doc-count]
-        gamma: Leiden resolution, default 1.0 — >1 → more, smaller themes
-        min-theme-doc-count: themes with fewer member docs fold into ungrouped (default 3)
-Env:    NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD  (the vault's ki profile)
-Output: wire records per docs/commands/theme-format.md, as JSON on stdout.
-"""
+| # | Statement | Constant | Note |
+|---|-----------|----------|------|
+| 1 | `RETURN gds.version()` | `GDS_VERSION` | Capability probe. Fails fast with a capability error before any work. |
+| 2 | `gds.graph.drop($g, false)` | `DROP_GRAPH` | `failIfMissing = false`: no-op normally, **self-heal** when a previous run crashed before its own drop and left the named graph behind. |
+| 3 | projection | `PROJECT` | §2. |
+| 4 | `gds.leiden.mutate` | `LEIDEN_MUTATE` | §3. **Must precede 5** — the in-memory graph never sees DB writes, so `write` mode would leave the projection without `themeId` and break the metric. |
+| 5 | `gds.conductance.stream` | `CONDUCTANCE` | §4. Reads the mutated property. |
+| 6 | clear stale `themeId` | `CLEAR_STALE` | §4a. **Must precede 7** — `nodeProperties.write` only touches projected nodes, so a doc whose links vanished would keep a stale id. |
+| 7 | `gds.graph.nodeProperties.write` | `NODE_PROPERTIES_WRITE` | §4b. |
+| 8 | fold sub-floor themes | `FOLD_SMALL_THEMES` | §4c. **Must follow 7** — it counts persisted member docs. |
+| 9 | `gds.graph.drop($g, false)` | `DROP_GRAPH` | In a `finally`, so a mid-pipeline failure still releases the projection. |
 
-import json
-import os
-import sys
+Then the four read-only renderer queries of §6 (`MEMBERS`, `TOP_TARGETS`, `CROSSOVERS`, `HEADER_SCALARS`) plus `VAULT_NAME`, and the producer assembles the wire records.
 
-from graphdatascience import GraphDataScience
+Steps 6–7 leave the vault briefly themeless — the same "don't query mid-rebuild" caveat as `ki index`. A crash in that window leaves docs **missing** `themeId`, never holding wrong ones, and the next run self-heals.
 
-PAIR_MATCH = """
-MATCH (src)-[l:LINKS_TO]->(tgt)
-WHERE src.uri STARTS WITH $vaultPrefix AND tgt.uri STARTS WITH $vaultPrefix
-MATCH (s:Document {uri: split(src.uri, '#')[0]})
-MATCH (t:Document {uri: split(tgt.uri, '#')[0]})
-WHERE s.sourceType = 'LOCAL_FILE' AND t.sourceType = 'LOCAL_FILE' AND s <> t
-"""
+## Tested against a real vault
 
-# Projection variant: target side also admits glue nodes (co-citation signal).
-PROJECTION_MATCH = """
-MATCH (src)-[l:LINKS_TO]->(tgt)
-WHERE src.uri STARTS WITH $vaultPrefix AND tgt.uri STARTS WITH $vaultPrefix
-MATCH (s:Document {uri: split(src.uri, '#')[0]})
-MATCH (t:Document {uri: split(tgt.uri, '#')[0]})
-WHERE s.sourceType = 'LOCAL_FILE'
-  AND t.sourceType IN ['LOCAL_FILE', 'LOCAL_STUB', 'WIKILINK_UNRESOLVED']
-  AND s <> t
-"""
-
-COHESION_COND_TIGHT, COHESION_COND_LOOSE = 0.2, 0.5
-
-
-def cohesion(conductance: float) -> str:
-    if conductance <= COHESION_COND_TIGHT:
-        return "tight"
-    if conductance >= COHESION_COND_LOOSE:
-        return "loose"
-    return "moderate"
-
-
-def main(vault_uri: str, gamma: float = 1.0, min_theme_doc_count: int = 3) -> None:
-    vault_prefix = vault_uri.rstrip("/") + "/"
-    graph_name = f"ki-theme-{vault_uri.replace('/', '-')}"
-    gds = GraphDataScience(
-        os.environ["NEO4J_URI"],
-        auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]),
-    )
-
-    # 1. Project: undirected, weighted, docs + glue nodes
-    G, _ = gds.graph.cypher.project(
-        PROJECTION_MATCH
-        + """
-        WITH s, t, count(*) AS weight
-        RETURN gds.graph.project(
-          $graph_name, s, t,
-          { relationshipProperties: { weight: weight } },
-          { undirectedRelationshipTypes: ['*'] }
-        )
-        """,
-        graph_name=graph_name,
-        vaultPrefix=vault_prefix,
-    )
-
-    try:
-        # 2. Leiden (mutate first — conductance metric needs the property in-memory)
-        gds.v2.leiden.mutate(
-            G,
-            mutate_property="themeId",
-            relationship_weight_property="weight",
-            gamma=gamma,
-            random_seed=42,
-            concurrency=1,
-        )
-
-        # 3. Per-community conductance → cohesion word
-        cond_df = gds.v2.conductance.stream(
-            G, community_property="themeId", relationship_weight_property="weight"
-        )
-        coh = {r.community: cohesion(r.conductance) for r in cond_df.itertuples()}
-
-        # 4a. Clear stale themeIds from prior runs (write only touches projected nodes)
-        gds.run_cypher(
-            """
-            MATCH (d:Document)
-            WHERE d.uri STARTS WITH $vaultPrefix AND d.themeId IS NOT NULL
-            REMOVE d.themeId
-            """,
-            params={"vaultPrefix": vault_prefix},
-        )
-
-        # 4b. Persist themeId to Neo4j
-        gds.v2.graph.node_properties.write(G, ["themeId"])
-    finally:
-        gds.v2.graph.drop(G)
-
-    # 4c. Fold sub-floor themes (member-doc count, not projected-node count) into ungrouped
-    gds.run_cypher(
-        """
-        MATCH (m:Document {sourceType: 'LOCAL_FILE'})
-        WHERE m.uri STARTS WITH $vaultPrefix AND m.themeId IS NOT NULL
-        WITH m.themeId AS theme, count(m) AS docCount
-        WHERE docCount < $minThemeDocCount
-        WITH collect(theme) AS smallThemes
-        MATCH (d:Document)
-        WHERE d.uri STARTS WITH $vaultPrefix AND d.themeId IN smallThemes
-        REMOVE d.themeId
-        """,
-        params={"vaultPrefix": vault_prefix, "minThemeDocCount": min_theme_doc_count},
-    )
-
-    # 5. Wire records
-    members = gds.run_cypher(
-        PAIR_MATCH
-        + """
-        AND s.themeId = t.themeId
-        UNWIND [s, t] AS d
-        WITH d.themeId AS theme, d, count(*) AS withinThemeLinks
-        RETURN theme, d.uri AS uri, d.displayName AS displayName, withinThemeLinks
-        ORDER BY theme, withinThemeLinks DESC, uri
-        """,
-        params={"vaultPrefix": vault_prefix},
-    )
-    targets = gds.run_cypher(
-        """
-        MATCH (src)-[l:LINKS_TO {wikilink: true}]->(tgt)
-        WHERE src.uri STARTS WITH $vaultPrefix
-        MATCH (s:Document {uri: split(src.uri, '#')[0]})
-        WHERE s.sourceType = 'LOCAL_FILE' AND s.themeId IS NOT NULL
-          AND split(tgt.uri, '#')[0] <> s.uri
-        WITH s.themeId AS theme, tgt, count(DISTINCT s) AS linkingDocs
-        ORDER BY theme, linkingDocs DESC, tgt.uri
-        WITH theme,
-             collect({uri: tgt.uri, displayName: tgt.displayName, docs: linkingDocs})[..5]
-               AS targets
-        RETURN theme, targets
-        """,
-        params={"vaultPrefix": vault_prefix},
-    )
-    crossovers = gds.run_cypher(
-        PAIR_MATCH.replace("AND s <> t", "")
-        + """
-        AND s.themeId IS NOT NULL AND t.themeId IS NOT NULL AND s.themeId <> t.themeId
-        WITH s.themeId AS theme, t.themeId AS otherTheme, s, count(*) AS crossLinks
-        ORDER BY theme, otherTheme, crossLinks DESC, s.uri
-        WITH theme, otherTheme, collect({uri: s.uri, displayName: s.displayName})[0] AS via
-        RETURN theme, otherTheme, via
-        """,
-        params={"vaultPrefix": vault_prefix},
-    )
-    header = gds.run_cypher(
-        """
-        MATCH (d:Document {sourceType: 'LOCAL_FILE'})
-        WHERE d.uri STARTS WITH $vaultPrefix
-        RETURN count(d) AS totalDocs, count(d.themeId) AS groupedDocs
-        """,
-        params={"vaultPrefix": vault_prefix},
-    ).iloc[0]
-
-    rows = []
-    for r in members.itertuples():
-        rank = {"exemplar_pos": None}  # renderer assigns top-N exemplar positions
-        rows.append({"cluster_key": str(r.theme), "kind": "member", "uri": r.uri,
-                     "displayName": r.displayName, "count": int(r.withinThemeLinks),
-                     "other_cluster_key": None,
-                     "cohesion": coh.get(r.theme, "loose"), **rank})
-    for r in targets.itertuples():
-        for t in r.targets:
-            rows.append({"cluster_key": str(r.theme), "kind": "link_target",
-                         "uri": t["uri"], "displayName": t["displayName"],
-                         "count": int(t["docs"]), "other_cluster_key": None,
-                         "cohesion": None, "exemplar_pos": None})
-    for r in crossovers.itertuples():
-        rows.append({"cluster_key": str(r.theme), "kind": "crossover",
-                     "uri": r.via["uri"], "displayName": r.via["displayName"],
-                     "count": None, "other_cluster_key": str(r.otherTheme),
-                     "cohesion": None, "exemplar_pos": None})
-
-    print(json.dumps({
-        "method": "links",
-        "total_docs": int(header.totalDocs),
-        "grouped_docs": int(header.groupedDocs),
-        "rows": rows,
-    }, indent=2))
-
-
-if __name__ == "__main__":
-    main(
-        sys.argv[1],
-        gamma=float(sys.argv[2]) if len(sys.argv) > 2 else 1.0,
-        min_theme_doc_count=int(sys.argv[3]) if len(sys.argv) > 3 else 3,
-    )
-```
-
-## Tested against a real vault (2026-06-12)
-
-Ran verbatim against `content-research-wiki` (91 docs, 940 links; local Podman Neo4j 2026.04.0 recreated with `NEO4J_PLUGINS=["apoc","genai","graph-data-science"]` — GDS landed at 2026.04.0, data volume preserved). Result: 73/91 grouped into 5 themes (defaults: gamma 1.0, floor 3), all coherent on eyeball (AIP content / blog concepts / ki-feedback / wiki-feedback / workshops). Fold, stale-clear, write-back, and projection drop all verified in the DB afterward. Findings:
+Re-verified through the shipped `ki theme` against `content-research-wiki` (91 docs, 940 links; local Podman Neo4j 2026.04.0 with GDS 2026.04.0). Result: 73/91 grouped into 5 themes at defaults (granularity 1.0, floor 3), all coherent on eyeball (AIP content / blog concepts / ki-feedback / wiki-feedback / workshops), whole-run modularity 0.350. Fold, stale-clear, write-back, and projection drop all verified in the DB afterward. Findings:
 
 - **`Document.displayName` is the filename today** (per data-model "for now"), so the binds line renders `[[aip-paper.md]]` rather than pretty link text. Format survives; improves automatically if displayName ever carries H1/link text.
-- **No theme read `tight`** — T1–T3 moderate, T4–T5 loose. Thresholds plausibly need loosening (or this vault is genuinely diffuse); tune with more vaults.
+- **No theme read `tight`** under the original 0.2/0.5 thresholds — T1–T3 moderate, T4–T5 loose. **Resolved:** thresholds recalibrated to 0.35/0.60 (see §5); the same vault now reads T1 tight, T2–T3 moderate, T4 loose.
 - **Hub docs dominate crossover picks** — `CLAUDE.md` / `index.md` were the "via" doc for most theme pairs. **Resolved via `--exclude`:** rerunning with `--exclude CLAUDE.md --exclude index.md` produced meaningful via-docs *and* better communities (one theme grew 11→14 docs — the hub edges were distorting Leiden itself, which is why exclusion filters the projection, not just the output).
-- **Glue-node path untested here** — this vault has zero `LOCAL_STUB` / `WIKILINK_UNRESOLVED` nodes (every wikilink resolves). Needs a journal-style vault to validate co-citation clustering.
+- **Co-citation clustering is verified** by `tests/integration/test_theme.py`, whose fixture is two stars of documents that *never link each other* and share only a common target. They cluster correctly, which is the design's central claim.
+- **`WIKILINK_UNRESOLVED` glue nodes do not exist in ki today** — see *Notes / open items*. The `LOCAL_STUB` half of the glue path does work (a shared attachment clusters the docs that link it) and is covered by the same test.
 
 ## Notes / open items
 
 - **Small-theme floor: resolved.** `min_theme_doc_count` (default 3) folds sub-floor themes into ungrouped at step 4c. Deliberately not Leiden's `minCommunitySize` — that counts projected nodes including glue; ours counts `LOCAL_FILE` member docs.
 - **Null `themeId` handling: verified.** Members/crossovers filter via `s.themeId = t.themeId` (null propagates → row dropped) plus explicit `IS NOT NULL`; the header's `count(d.themeId)` skips nulls. Docs cleared by 4a/4c land in ungrouped with no further handling.
 - **Concurrent producers (two agents, same vault): no locking needed.** The deterministic projection name (`ki-theme-<vault>`) is a de-facto mutex — a second concurrent run fails at `gds.graph.project` with "graph already exists" before touching any `themeId`. Races that slip past it are benign: seeded `concurrency=1` runs are deterministic, so concurrent writers produce *identical* values and interleavings converge; the worst case (one run clears via 4a then crashes before 4b) leaves docs **missing** themeIds, never wrong ones, and the next run self-heals. Readers mid-rebuild inherit the same "don't query during re-index" caveat as `ki index`. One operational consequence: a crashed run leaves the named graph behind — drop it (`gds.graph.drop`) before retrying.
-- **Multi-user: no namespacing needed.** `themeId` is *vault*-derived, not user-derived: the seeded, `concurrency=1` Leiden run is deterministic, so two users producing themes on the same vault converge to identical assignments rather than colliding. Across vaults, raw integer ids can repeat, but every theme query is vault-prefix-scoped, so they never mix. Contract: `themeId` is meaningful only within (vault, index generation) — same rule as theme numbering in theme-format.md. If per-user theme *parameters* (different gamma per user on a shared graph) ever become real, that's per-user property names or separate profiles — out of scope now.
+- **Multi-user: no namespacing needed.** `themeId` is *vault*-derived, not user-derived: the seeded, `concurrency=1` Leiden run is deterministic, so two users producing themes on the same vault converge to identical assignments rather than colliding. Across vaults, raw integer ids can repeat, but every theme query is vault-prefix-scoped, so they never mix. Contract: `themeId` is meaningful only within (vault, producer run) — same rule as theme numbering in theme-format.md. If per-user theme *parameters* (different gamma per user on a shared graph) ever become real, that's per-user property names or separate profiles — out of scope now.
 - **`themeId` write is destructive-ish state** — overwritten per producer run; `ki drop`/`ki index` rebuild paths must not treat it as user data (it isn't — ki-owned, like `uri`).
-- **Folder fallback** (`method: folders` in the header) is not in this script — it's plain Cypher over `HAS`, no GDS; add when wiring `ki theme` so GDS-less profiles degrade per theme-format.md.
-- **Determinism caveat:** `random_seed` with `concurrency=1` makes Leiden runs repeatable on the same projection; a changed graph can still relabel communities — consistent with the "theme ids stable only within one index generation" contract.
-- Member rows carry `exemplar_pos: null`; the renderer derives exemplar order from `count` (within-theme links) per theme-format.md *Ordering* — the field exists in the wire contract for producers that want to override.
+- **No folder fallback — resolved, and deliberately so.** Grouping by directory hierarchy answers a different question than grouping by interlinking, so it is not a "degraded" version of this; it would be a different command. GDS is a hard requirement and a GDS-less profile gets a capability error ([#72](https://github.com/zach-blumenfeld/knowledge-index/issues/72)).
+- **⚠️ `WIKILINK_UNRESOLVED` nodes are never created by ki today.** The projection admits them and this doc describes them as the co-citation carrier for journal-style vaults, but `_emit_link` in `src/ki/ingest/pipeline.py` drops a wikilink whose target doesn't resolve (`if target is None: return`) — no node, no edge. So the glue path currently rests on `LOCAL_STUB` only. **Consequence:** in a vault where people write `[[concept]]` with no backing file, those links contribute *nothing* to theme formation — exactly the vault shape the glue design was aimed at. Co-citation via *resolved* targets works fine and is the common case in a wiki-style vault. Keeping the label in the projection query costs nothing and makes `ki theme` correct the day ingest starts materializing them. This is an **ingest-side gap, not a theme-side one**; it needs its own issue.
+- **Determinism caveat:** `random_seed` with `concurrency=1` makes Leiden runs repeatable on the same projection; a changed graph can still relabel communities — consistent with the "theme ids stable only within a single run" contract.
+- **`exemplar_pos` dropped from the wire contract.** An earlier draft carried it on member rows, always null, so a producer could override exemplar order. Nothing ever set it and the renderer derives the order from `count` (within-theme links) per theme-format.md *Ordering*; a field that is always null is a field that drifts. Re-add it the day a producer actually needs it.
 - **Explored and deferred: co-citation collapse (bipartite projection).** Instead of glue nodes, materialize direct doc–doc edges weighted by *shared link targets* (two docs each citing `[[GraphRAG]]` get an edge), keeping the projection homogeneous — modularity-based clustering is more principled on a unipartite graph. Not done now because of **quadratic blowup around popular targets**: a concept cited by *k* docs expands to *k·(k−1)/2* edges (one `[[ki]]` tag on 200 journal entries → ~20k edges), while the glue-node form carries the same connectivity in *k* edges. Revisit if community quality on the docs+glue projection disappoints — and if so, cap or TF-IDF-downweight high-degree targets before collapsing.

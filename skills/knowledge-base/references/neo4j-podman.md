@@ -7,7 +7,7 @@ Agent runbook. Brings up a local Neo4j container that `ki configure → Local` c
 - Container name: `neo4j-ki`
 - Volume: `neo4j-ki-data` (named volume → data survives container removal)
 - Image: `neo4j:latest` (Community)
-- Plugins: `apoc`, `genai`
+- Plugins: `apoc`, `genai`, `graph-data-science` (GDS powers `ki theme`)
 - Auth: `neo4j` / `password` (plaintext, local-only)
 - Bolt: `bolt://localhost:7687` · Browser: `http://localhost:7474`
 - JVM heap (max): `1G` · Page cache: `512M` — total Neo4j footprint ~2 GB. Sized as a personal-laptop citizen; the batcher's OOM auto-recovery covers occasional fat transactions on bigger vaults. See `docs/architecture.md` *Scalability envelopes* for when to bump.
@@ -52,7 +52,7 @@ podman ps --filter name=neo4j-ki
 One container, one volume, detached, auto-restart:
 
 ```bash
-podman run -d --name neo4j-ki --restart unless-stopped -p 7474:7474 -p 7687:7687 -v neo4j-ki-data:/data -e NEO4J_AUTH=neo4j/password -e 'NEO4J_PLUGINS=["apoc","genai"]' -e NEO4J_server_memory_heap_max__size=1G -e NEO4J_server_memory_pagecache_size=512M neo4j:latest
+podman run -d --name neo4j-ki --restart unless-stopped -p 7474:7474 -p 7687:7687 -v neo4j-ki-data:/data -e NEO4J_AUTH=neo4j/password -e 'NEO4J_PLUGINS=["apoc","genai","graph-data-science"]' -e NEO4J_server_memory_heap_max__size=1G -e NEO4J_server_memory_pagecache_size=512M neo4j:latest
 ```
 
 **If `:7687` (or `:7474`) is busy**, substitute a free host port in the `-p` mapping — e.g. `-p 7688:7687`. The container's *internal* ports stay `7474`/`7687`; only the host side moves. (`ki configure → Local` does this automatically and records the chosen port in the profile's `uri`.)
