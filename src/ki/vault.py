@@ -28,6 +28,7 @@ preserved so the hierarchy stays queryable via prefix match.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import unicodedata
@@ -340,16 +341,47 @@ def remove_vault_marker(vault_root: Path) -> None:
         parent.rmdir()
 
 
-# Slug rules — segment-wise. Each segment is normalised to ASCII, lowercased,
-# whitespace → '-', non-alphanumeric (except '_', '-', '.') stripped, and
-# collapsed. Empty segments fall back to "section".
+# Slug rules — segment-wise. Lowercased; whitespace/punctuation → '-'; '_', '-'
+# and '.' preserved; collapsed. Headings that reduce to nothing fall back to
+# "section" (same-level duplicates get the caller's `-N` numbering). Path
+# segments (`unique=True`) keep non-ASCII word characters instead, because their
+# slug is part of a MERGE key — see `slugify_segment`.
 _SLUG_REPLACE_RE = re.compile(r"[^\w.\-]+")
 _SLUG_COLLAPSE_RE = re.compile(r"-+")
 
 
-def slugify_segment(s: str) -> str:
-    """Slugify a single path/heading segment. Preserves '_' and '.'."""
-    ascii_only = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+def slugify_segment(s: str, *, unique: bool = False) -> str:
+    """Slugify a single path/heading segment. Preserves '_' and '.'.
+
+    `unique=True` is for **path segments** (file and folder names), whose slug
+    becomes part of a MERGE key (`Document.uri` / `Folder.uri`), so distinct
+    names must never slugify to the same string. ASCII-folding breaks that for
+    non-ASCII names: the stem disappears while the extension survives, so
+    `高精度运算.md` and `最大区间异或值.md` in one directory both became `.md` —
+    one MERGE key, and every other file was silently absorbed into it. The same
+    happened to names that differ *only* in their non-ASCII part
+    (`GESP八级教辅资料_编程题冲刺（26.04.07）.md` vs `…_选择判断冲刺（26.04.07）.md`).
+    Path segments therefore keep non-ASCII word characters (NFKD-normalised,
+    combining marks dropped, so `café` → `cafe` but `高精度运算` stays itself),
+    which keeps URIs unique *and* readable/quotable as the schema promises.
+
+    Headings (`unique=False`, the default) keep the plain `"section"` sentinel:
+    they are not MERGE keys on their own, same-level duplicates are already
+    disambiguated by the caller's `-N` numbering, and switching them to CJK
+    anchors would churn every existing Section URI for no correctness gain.
+    """
+    decomposed = unicodedata.normalize("NFKD", s)
+    if unique:
+        # Drop combining marks (é → e) but keep other word characters (CJK).
+        kept = "".join(c for c in decomposed if not unicodedata.combining(c))
+        out = kept.lower()
+        out = _SLUG_REPLACE_RE.sub("-", out)
+        out = _SLUG_COLLAPSE_RE.sub("-", out)
+        out = out.strip("-")
+        # Nothing but punctuation/whitespace: rare, but two such siblings would
+        # otherwise share the "section" sentinel and collide on the MERGE key.
+        return out or f"s{hashlib.sha1(s.encode('utf-8')).hexdigest()[:8]}"
+    ascii_only = decomposed.encode("ascii", "ignore").decode("ascii")
     out = ascii_only.lower()
     out = _SLUG_REPLACE_RE.sub("-", out)
     out = _SLUG_COLLAPSE_RE.sub("-", out)
@@ -359,7 +391,7 @@ def slugify_segment(s: str) -> str:
 
 def slugify_path(rel_path: str) -> str:
     """Slugify a relative path segment-wise, preserving '/' as separator."""
-    parts = [slugify_segment(p) for p in rel_path.split("/") if p]
+    parts = [slugify_segment(p, unique=True) for p in rel_path.split("/") if p]
     return "/".join(parts)
 
 
@@ -378,7 +410,7 @@ def folder_uri(vault_id: str, segments: tuple[str, ...] | list[str]) -> str:
     """
     if not segments:
         raise ValueError("folder_uri requires at least one path segment")
-    slugified = "/".join(slugify_segment(p) for p in segments)
+    slugified = "/".join(slugify_segment(p, unique=True) for p in segments)
     return f"{vault_id}/{slugified}"
 
 
