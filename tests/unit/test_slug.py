@@ -67,6 +67,62 @@ def test_folder_uri_handles_special_chars_per_segment():
     assert folder_uri("v", ("Hello, World!",)) == "v/hello-world"
 
 
+# --- non-ASCII path segments (unique=True) ---------------------------------
+#
+# The URI is a MERGE key, so distinct files must never slugify to the same one.
+# ASCII-folding used to drop the whole stem while the extension survived, so
+# every non-ASCII sibling collapsed onto e.g. `.md` and was absorbed.
+
+
+def test_non_ascii_path_segments_stay_distinct():
+    a = slugify_segment("高精度运算.md", unique=True)
+    b = slugify_segment("最大区间异或值.md", unique=True)
+    c = slugify_segment("末班车.md", unique=True)
+    assert len({a, b, c}) == 3, f"distinct filenames collided: {a} {b} {c}"
+
+
+def test_names_differing_only_in_non_ascii_stay_distinct():
+    # Same ASCII skeleton, different CJK: ASCII-folding made these identical.
+    a = slugify_segment("GESP八级教辅资料_编程题冲刺（26.04.07）.md", unique=True)
+    b = slugify_segment("GESP八级教辅资料_选择判断冲刺（26.04.07）.md", unique=True)
+    assert a != b
+
+
+def test_non_ascii_path_segment_keeps_readable_characters():
+    # URIs are documented as readable and quotable, so CJK survives.
+    assert slugify_segment("高精度运算.md", unique=True) == "高精度运算.md"
+    assert slugify_segment("KMP算法.md", unique=True) == "kmp算法.md"
+
+
+def test_ascii_path_segments_are_unchanged():
+    assert slugify_segment("Big Idea.md", unique=True) == "big-idea.md"
+    assert slugify_segment("_index.md", unique=True) == "_index.md"
+    assert slugify_segment("Hello, World!", unique=True) == "hello-world"
+    assert slugify_path("notes/My Projects/Big Idea.md") == "notes/my-projects/big-idea.md"
+    assert document_uri("v", "notes/My Projects/Big Idea.md") == "v/notes/my-projects/big-idea.md"
+
+
+def test_combining_marks_are_dropped_for_path_segments():
+    assert slugify_segment("café.md", unique=True) == "cafe.md"
+
+
+def test_same_basename_in_different_folders_yields_distinct_uris():
+    assert document_uri("v", "a/末班车.md") != document_uri("v", "b/末班车.md")
+
+
+def test_heading_segments_keep_section_sentinel():
+    # unique=False (default) — headings are not MERGE keys on their own and rely
+    # on the sentinel plus the caller's `-N` numbering.
+    assert slugify_segment("定义") == "section"
+    assert slugify_segment("") == "section"
+    assert slugify_segment("---") == "section"
+
+
+def test_folder_uri_non_ascii_segments_stay_distinct():
+    assert folder_uri("v", ("教材",)) != folder_uri("v", ("课堂笔记",))
+    assert folder_uri("v", ("教材",)) == "v/教材"
+
+
 def test_folder_uri_accepts_list_segments():
     # Documented signature is tuple[str, ...] | list[str].
     assert folder_uri("v", ["notes", "ideas"]) == "v/notes/ideas"

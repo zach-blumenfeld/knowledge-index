@@ -333,7 +333,7 @@ def _build_folder_and_tree_rows(
                 folders[f_uri] = {
                     "uri": f_uri,
                     "props": {
-                        "name": slugify_segment(dir_parts[depth]),
+                        "name": slugify_segment(dir_parts[depth], unique=True),
                         "displayName": dir_parts[depth],
                         "path": str(folder_abs_path),
                     },
