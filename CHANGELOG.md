@@ -15,6 +15,10 @@ exact pattern. Editorial prose is fine; just don't change the heading.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Non-ASCII path segments no longer collapse onto one `Document.uri`.** Slugification folded every segment to ASCII, which drops the whole stem of a non-ASCII name while its extension survives: `高精度运算.md` and `最大区间异或值.md` in the same folder both slugified to `.md`. Because `Document.uri` is the MERGE key, every file after the first was silently absorbed into it — no error, no warning. The same happened to names differing *only* in their non-ASCII part (`GESP八级教辅资料_编程题冲刺（26.04.07）.md` vs `…_选择判断冲刺（26.04.07）.md`). File and folder segments now keep non-ASCII word characters (NFKD-normalised, combining marks dropped, so `café` → `cafe` but `高精度运算` stays itself), which keeps URIs unique *and* readable/quotable. Heading segments are unchanged: they keep the ASCII fold and the `"section"` sentinel, since a heading is not a MERGE key on its own and same-level duplicates are already disambiguated by `-N` numbering. Measured on a real 934-document CJK vault: 767 → 934 documents indexed, 15 collapsed URIs → 0, `LINKS_TO` 3144 → 5196 (links of the absorbed documents come back too). **Re-index required** — URIs of non-ASCII-named files change.
+
 ## [0.5.0] — 2026-06-16
 
 ### Added

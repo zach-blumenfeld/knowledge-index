@@ -77,6 +77,8 @@ Every `:Vault`, `:Folder`, `:Document`, and `:Section` is identified by a single
 
 Every segment is slugified independently (lowercased; whitespace/punctuation → `-`) and the separators are preserved, so the hierarchy stays queryable. A nested section carries its **full heading path** (`#h1/h2/…`), not just the leaf.
 
+**Path segments keep non-ASCII word characters; heading segments do not.** The uri is a MERGE key, so distinct paths must never slugify to the same string. Folding a path segment to ASCII drops the whole stem of a non-ASCII name while its extension survives — `高精度运算.md` and `最大区间异或值.md` in one folder both reduced to `.md`, so a single MERGE key silently absorbed every other file (same for names differing *only* in their non-ASCII part, e.g. `GESP八级教辅资料_编程题冲刺（26.04.07）.md` vs `…_选择判断冲刺（26.04.07）.md`). File and folder names are therefore NFKD-normalised, stripped of combining marks (`café` → `cafe`), lowercased, and otherwise **kept as-is** — `高精度运算.md` → `高精度运算.md`. Heading segments keep the ASCII fold plus the `"section"` sentinel: a heading is not a MERGE key on its own, and same-level duplicates are already disambiguated by the caller's `-N` numbering.
+
 **Navigate by trimming — no query needed.** Because the uri *is* the path, dropping the last segment yields the ancestor:
 
 - `…/plan.md#goals/q3` → drop `/q3` → parent section `…/plan.md#goals`
